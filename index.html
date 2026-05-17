@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+<title>주식회사 다우세라믹앤석재</title>
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#f7f5f0" />
+<link rel="icon" href="icon-192.png" sizes="192x192" type="image/png" />
+
+<!-- iOS -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="다우세라믹" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+
+<link rel="preload" href="fonts/Pretendard-Regular.subset.woff2" as="font" type="font/woff2" crossorigin />
+<link rel="preload" href="fonts/Pretendard-SemiBold.subset.woff2" as="font" type="font/woff2" crossorigin />
+<link rel="stylesheet" href="app.css" />
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <div class="brand">
+      <div class="logo" aria-label="다우세라믹앤석재"></div>
+      <h1>주식회사 다우세라믹앤석재</h1>
+    </div>
+    <div class="status" id="status" onclick="openModal('team')">
+      <span class="dot"></span>
+      <span id="statusText">연결 확인 중…</span>
+    </div>
+  </div>
+
+  <div class="team-row">
+    <span style="font-size:12px; color:var(--muted);">팀:</span>
+    <span class="team-chip" id="teamChip" onclick="openModal('team')">— 설정 안 됨 —</span>
+    <span style="font-size:12px; color:var(--muted); margin-left:6px;">나:</span>
+    <button class="user-chip" id="user-chip" onclick="openModal('user')">내 이름 선택</button>
+  </div>
+  <div class="team-row admin-only">
+    <span style="font-size:12px; color:var(--muted);">마스터 관리:</span>
+    <button class="btn ghost" style="padding:4px 10px; font-size:12px;" onclick="openModal('managers')">담당자</button>
+    <button class="btn ghost" style="padding:4px 10px; font-size:12px;" onclick="openModal('crews')">시공팀</button>
+    <button class="btn ghost" style="padding:4px 10px; font-size:12px;" onclick="openModal('factories')">공장</button>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-tab="site"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>시공현장</button>
+    <button class="tab" data-tab="sale"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10H3M16 21H8a2 2 0 0 1-2-2v-9h12v9a2 2 0 0 1-2 2zM5 6l3-4h8l3 4"/></svg>자재판매</button>
+    <button class="tab" data-tab="order"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>발주</button>
+    <button class="tab" data-tab="stock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>재고</button>
+    <button class="tab" data-tab="hold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>홀딩</button>
+    <button class="tab" data-tab="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>이력</button>
+  </div>
+
+  <div class="notice">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+    <span id="noticeText">설정 확인 중…</span>
+  </div>
+
+  <!-- 관리자 초기 설정 가이드 (마스터가 비어있으면 노출) -->
+  <div class="setup-card admin-only hidden" id="setup-card">
+    <div class="setup-title">초기 마스터 설정이 필요합니다</div>
+    <div class="setup-desc">앱을 본격적으로 쓰려면 아래 항목들을 먼저 등록해주세요.</div>
+    <div class="setup-actions" id="setup-actions"></div>
+  </div>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="label">전체 현장</div>
+      <div class="value" id="stat-sites">0</div>
+      <div class="sublabel" id="stat-sites-breakdown">—</div>
+    </div>
+    <div class="stat">
+      <div class="label">이번 달 발주</div>
+      <div class="value"><span id="stat-month-orders">0</span><span class="unit">건</span></div>
+      <div class="sublabel">전월 대비 <span id="stat-month-delta">—</span></div>
+    </div>
+    <div class="stat">
+      <div class="label">납품 대기 자재</div>
+      <div class="value"><span id="stat-pending">0</span><span class="unit">종</span></div>
+      <div class="sublabel" id="stat-delay-risk">—</div>
+    </div>
+    <div class="stat issue">
+      <div class="label">이슈 현장</div>
+      <div class="value" id="stat-issues">0</div>
+      <div class="sublabel" id="stat-issues-sub">즉시 확인 필요</div>
+    </div>
+  </div>
+
+  <!-- 시공현장 -->
+  <div class="section" id="panel-site">
+    <div class="section-head">
+      <h2>현장 목록</h2>
+      <div class="filter-pills">
+        <button class="filter-pill site-filter-pill active" data-filter="all" onclick="setSiteFilter('all')">전체</button>
+        <button class="filter-pill site-filter-pill" data-filter="시공중" onclick="setSiteFilter('시공중')">시공중</button>
+        <button class="filter-pill site-filter-pill" data-filter="대기" onclick="setSiteFilter('대기')">대기</button>
+        <button class="filter-pill site-filter-pill" data-filter="이슈" onclick="setSiteFilter('이슈')">이슈</button>
+      </div>
+      <button class="btn" onclick="openModal('site')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>현장 추가</button>
+    </div>
+    <div id="site-list"></div>
+  </div>
+
+  <!-- 자재판매 -->
+  <div class="section hidden" id="panel-sale">
+    <div class="section-head">
+      <h2>자재판매 (시공 없음)</h2>
+      <button class="btn" onclick="openModal('sale')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>판매 등록</button>
+    </div>
+    <div id="sale-list"></div>
+  </div>
+
+  <!-- 발주 -->
+  <div class="section hidden" id="panel-order">
+    <div class="section-head">
+      <h2>공장 발주</h2>
+      <button class="btn" onclick="openModal('order')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>발주 추가</button>
+    </div>
+    <div id="order-list"></div>
+  </div>
+
+  <!-- 재고 -->
+  <div class="section hidden" id="panel-stock">
+    <div class="section-head">
+      <h2>실시간 재고</h2>
+      <div style="display:flex; gap:6px;">
+        <button class="btn ghost" onclick="openModal('material')">자재 등록</button>
+        <button class="btn ghost" onclick="openModal('in')">입고</button>
+        <button class="btn" onclick="openModal('out')">출고</button>
+      </div>
+    </div>
+    <div style="margin-bottom:12px;">
+      <input type="search" id="stock-search" placeholder="🔍 제품명 검색 (예: 화이트, 600x600)"
+             oninput="onStockSearch(event)" autocomplete="off"
+             style="width:100%; padding:10px 14px; background:var(--panel-soft); border:1px solid var(--border); border-radius:10px; font-size:14px; font-family:inherit; color:var(--text);" />
+    </div>
+    <div id="stock-list"></div>
+  </div>
+
+  <!-- 홀딩 -->
+  <div class="section hidden" id="panel-hold">
+    <div class="section-head">
+      <h2>홀딩 (자재 예약)</h2>
+      <button class="btn" onclick="openModal('hold')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>홀딩 추가</button>
+    </div>
+    <div id="hold-list"></div>
+  </div>
+
+  <!-- 이력 -->
+  <div class="section hidden" id="panel-history">
+    <div class="section-head">
+      <h2>활동 이력</h2>
+      <button class="btn ghost" onclick="clearHistory()">이력 초기화</button>
+    </div>
+    <div id="history-list"></div>
+  </div>
+</div>
+
+<!-- ===== Modals ===== -->
+
+<div class="modal-bg" id="modal-team"><div class="modal">
+  <h3>팀 코드 설정</h3>
+  <p class="muted small">같은 팀 코드를 입력한 사람들은 모두 같은 데이터를 실시간으로 공유합니다.</p>
+  <div class="field"><label>팀 코드</label><input id="team-code" placeholder="예: tile-1234" /></div>
+  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('team')">취소</button><button class="btn" onclick="setTeamCode()">저장</button></div>
+</div></div>
+
+<!-- 시공현장 -->
+<div class="modal-bg" id="modal-site"><div class="modal">
+  <h3>시공현장 추가</h3>
+  <div class="field"><label>거래처 *</label><input id="site-customer" placeholder="고객/시공사 이름" /></div>
+  <div class="field"><label>현장명</label><input id="site-name" placeholder="예: 서초동 빌라 리모델링 (선택)" /></div>
+  <div class="field"><label>주소 *</label><input id="site-addr" placeholder="시공 현장 주소" /></div>
+  <div class="field row2">
+    <div>
+      <label>담당자 <span style="color:var(--muted); font-weight:400;">(자동 = 내 이름)</span></label>
+      <div id="site-manager-display" style="padding:10px 12px; background:var(--accent-soft); border:1px solid rgba(184,134,46,0.15); border-radius:8px; color:var(--accent-dark); font-size:14px; font-weight:600;"></div>
+    </div>
+    <div><label>발주 공장</label>
+      <div style="display:flex; gap:6px;">
+        <select id="site-factory" style="flex:1;"></select>
+        <button type="button" class="btn ghost small-btn" onclick="openModal('factories')" title="공장 추가/관리">+</button>
+      </div>
+    </div>
+  </div>
+  <div class="field row2">
+    <div><label>시공팀 *</label>
+      <div style="display:flex; gap:6px;">
+        <select id="site-crew" style="flex:1;"></select>
+        <button type="button" class="btn ghost small-btn" onclick="openModal('crews')" title="시공팀 추가/관리">+</button>
+      </div>
+    </div>
+    <div><label>상태</label>
+      <select id="site-status">
+        <option value="대기">대기</option><option value="시공중" selected>시공중</option>
+        <option value="완료">완료</option><option value="이슈">이슈</option>
+      </select>
+    </div>
+  </div>
+  <div class="field row2">
+    <div><label>실측 여부 *</label>
+      <select id="site-measure" onchange="onMeasureChange()">
+        <option value="">(선택)</option>
+        <option value="measured">실측 완료</option>
+        <option value="drawing">도면발주</option>
+      </select>
+    </div>
+    <div><label>실측 일자</label><input id="site-measure-date" type="date" /></div>
+  </div>
+  <div class="field"><label>시공 일자 *</label><input id="site-install-date" type="date" /></div>
+  <div class="field"><label>메모</label><textarea id="site-note" rows="2"></textarea></div>
+  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('site')">취소</button><button class="btn" onclick="addSite()">저장</button></div>
+</div></div>
+
+<!-- 자재판매 -->
+<div class="modal-bg" id="modal-sale"><div class="modal">
+  <h3>자재판매 등록</h3>
+  <p class="muted small">시공 없이 자재만 판매하는 경우. 저장 시 자동으로 출고 처리됩니다.</p>
+  <div class="field row2">
+    <div><label>거래처 *</label><input id="sale-customer" placeholder="구매자" /></div>
+    <div><label>판매일</label><input id="sale-date" type="date" /></div>
+  </div>
+  <div class="field"><label>출고지 (배송 주소)</label><input id="sale-shipto" placeholder="예: 서울 강남구 ..." /></div>
+  <div class="field row2">
+    <div><label>발주처 (자재 구매한 공장)</label>
+      <div style="display:flex; gap:6px;">
+        <select id="sale-factory" style="flex:1;"></select>
+        <button type="button" class="btn ghost small-btn" onclick="openModal('factories')" title="공장 추가/관리">+</button>
+      </div>
+    </div>
+    <div>
+      <label>담당자 <span style="color:var(--muted); font-weight:400;">(자동 = 내 이름)</span></label>
+      <div id="sale-manager-display" style="padding:10px 12px; background:var(--accent-soft); border:1px solid rgba(184,134,46,0.15); border-radius:8px; color:var(--accent-dark); font-size:14px; font-weight:600;"></div>
+    </div>
+  </div>
+
+  <div class="field"><label>판매 자재</label></div>
+  <div id="sale-items"></div>
+  <button type="button" class="btn ghost small-btn" onclick="addSaleItem()">+ 자재 추가</button>
+
+  <div class="field" style="margin-top:12px;"><label>메모</label><textarea id="sale-note" rows="2"></textarea></div>
+  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('sale')">취소</button><button class="btn" onclick="addSale()">저장 & 출고</button></div>
+</div></div>
+
+<!-- 발주 -->
+<div class="modal-bg" id="modal-order"><div class="modal">
+  <h3>공장 발주</h3>
+  <div class="field row2">
+    <div><label>발주 공장 *</label>
+      <div style="display:flex; gap:6px;">
+        <select id="order-factory" style="flex:1;"></select>
+        <button type="button" class="btn ghost small-btn" onclick="openModal('factories')" title="공장 추가/관리">+</button>
+      </div>
+    </div>
+    <div><label>발주일</label><input id="order-date" type="date" /></div>
+  </div>
+  <div class="field">
+    <label>품목 * <span style="color:var(--muted); font-weight:400;">(등록 자재 선택 or 직접 입력)</span></label>
+    <div style="display:flex; gap:6px;">
+      <select id="order-item-select" style="flex:1;" onchange="onOrderMaterialChange()"></select>
+      <button type="button" class="btn ghost small-btn" onclick="openModal('material')" title="자재 신규 등록">+</button>
+    </div>
+  </div>
+  <div class="field row2">
+    <div><label>품목명 (선택 안 했을 때)</label><input id="order-item" placeholder="예: 600x600 포세린 화이트" /></div>
+    <div><label>규격</label><input id="order-spec" placeholder="예: 600x600x9T" /></div>
+  </div>
+  <div class="field row2">
+    <div><label>수량</label><input id="order-qty" type="number" inputmode="numeric" /></div>
+    <div><label>단위</label><input id="order-unit" value="장" /></div>
+  </div>
+  <div class="field row2">
+    <div><label>상차 예정일</label><input id="order-expected" type="date" /></div>
+    <div><label>연관 현장 *</label><select id="order-site"></select></div>
+  </div>
+  <div class="field row2">
+    <div>
+      <label>발주 담당자 <span style="color:var(--muted); font-weight:400;">(자동 = 내 이름)</span></label>
+      <div id="order-manager-display" style="padding:10px 12px; background:var(--accent-soft); border:1px solid rgba(184,134,46,0.15); border-radius:8px; color:var(--accent-dark); font-size:14px; font-weight:600;"></div>
+    </div>
+    <div></div>
+  </div>
+  <div class="field"><label>메모</label><textarea id="order-note" rows="2"></textarea></div>
+  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('order')">취소</button><button class="btn" onclick="addOrder()">저장</button></div>
+</div></div>
+
+<!-- 자재 마스터 -->
+<div class="modal-bg" id="modal-material"><div class="modal">
+  <h3>자재 등록</h3>
+  <div class="field"><label>자재명 *</label><input id="material-name" placeholder="예: 600x600 포세린 화이트" /></div>
+  <div class="field row2">
+    <div><label>규격</label>
+      <select id="material-spec-select" onchange="onMaterialSpecChange()"></select>
+      <input id="material-spec" type="text" placeholder="예: 600*600*9T" class="hidden" style="margin-top:6px;" />
+    </div>
+    <div><label>기본 단위</label>
+      <select id="material-unit">
+        <option value="장" selected>장</option>
+        <option value="박스">박스</option>
+        <option value="EA">EA</option>
+        <option value="kg">kg</option>
+        <option value="m²">m²</option>
+      </select>
+    </div>
+  </div>
+  <div class="field row2">
+    <div><label>박스당 장수 (선택)</label>
+      <input id="material-per-box" type="number" inputmode="numeric" placeholder="예: 4" />
+    </div>
+    <div><label>메모</label><input id="material-note" /></div>
+  </div>
+  <div class="field"><label>패턴 (선택) <span style="color:var(--muted); font-weight:400;">쉼표로 구분 — 예: 1, 2, 3</span></label>
+    <input id="material-patterns" placeholder="비워두면 패턴 구분 없이 단일 자재로 관리" autocomplete="off" />
+  </div>
+  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('material')">취소</button><button class="btn" onclick="addMaterial()">저장</button></div>
+</div></div>
+
+<!-- 입고 -->
+<div class="modal-bg" id="modal-in"><div class="modal">
+  <h3>입고 등록</h3>
+  <p class="muted small">자재가 들어왔을 때 등록. 롯트 넘버는 세라믹의 경우 반드시 입력하세요.</p>
+  <div class="field"><label>자재 *</label><select id="in-material" onchange="onInMaterialChange()"></select></div>
+  <div class="field"><label>롯트 넘버 *</label>
+    <input id="in-lot" placeholder="예: L20260517A" list="in-lot-list" autocomplete="off" />
+    <datalist id="in-lot-list"></datalist>
+    <div id="in-lot-chips" class="chip-row"></div>
+  </div>
+  <!-- 수량 영역: 패턴 없으면 단일 input, 있으면 패턴별 input 그리드 -->
+  <div class="field" id="in-qty-field">
+    <label id="in-qty-label">수량 *</label>
+    <input id="in-qty" type="number" inputmode="numeric" />
+    <div id="in-qty-patterns" class="hidden"></div>
+  </div>
+  <div class="field row2">
+    <div><label>입고일</label><input id="in-date" type="date" /></div>
+    <div><label>발주처(공장)</label>
+      <div style="display:flex; gap:6px;">
+        <select id="in-factory" style="flex:1;"></select>
+        <button type="button" class="btn ghost small-btn" onclick="openModal('factories')" title="공장 추가/관리">+</button>
+      </div>
+    </div>
+  </div>
+  <div class="field"><label>메모</label><input id="in-note" /></div>
+  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('in')">취소</button><button class="btn" onclick="addIn()">저장</button></div>
+</div></div>
+
+<!-- 출고 -->
+<div class="modal-bg" id="modal-out"><div class="modal">
+  <h3>수동 출고</h3>
+  <p class="muted small">자재판매 폼에서 자동 출고가 되지 않을 때만 사용. (반품/조정 등)</p>
+  <div class="field"><label>자재 *</label><select id="out-material" onchange="fillOutLots()"></select></div>
+  <div class="field"><label>롯트 *</label><select id="out-lot"></select></div>
+  <div class="field row2">
+    <div><label>수량 *</label><input id="out-qty" type="number" inputmode="numeric" /></div>
+    <div><label>출고일</label><input id="out-date" type="date" /></div>
+  </div>
+  <div class="field"><label>출고처/사유</label><input id="out-target" placeholder="예: ○○현장, 반품, 파손폐기" /></div>
+  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('out')">취소</button><button class="btn" onclick="addOut()">저장</button></div>
+</div></div>
+
+<!-- 홀딩 -->
+<div class="modal-bg" id="modal-hold"><div class="modal">
+  <h3>홀딩 (자재 예약)</h3>
+  <p class="muted small">예약 즉시 가용 재고에서 차감됩니다. 시공/판매 시 자동 소진하거나 수동 해제 가능.</p>
+  <div class="field"><label>자재 *</label><select id="hold-material" onchange="fillHoldLots()"></select></div>
+  <div class="field row2">
+    <div><label>롯트 *</label><select id="hold-lot"></select></div>
+    <div><label>수량 *</label><input id="hold-qty" type="number" inputmode="numeric" /></div>
+  </div>
+  <div class="field"><label>거래처명 *</label>
+    <input id="hold-for" placeholder="예: ○○고객, 서초동 빌라 등" list="hold-customers" autocomplete="off" />
+    <datalist id="hold-customers"></datalist>
+  </div>
+  <div class="field row2">
+    <div><label>예약일</label><input id="hold-start" type="date" /></div>
+    <div><label>만료일(선택)</label><input id="hold-end" type="date" /></div>
+  </div>
+  <div class="field"><label>메모</label><input id="hold-note" /></div>
+  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('hold')">취소</button><button class="btn" onclick="addHold()">저장</button></div>
+</div></div>
+
+<!-- 담당자 관리 (가장 위에 떠야 하므로 마지막에 배치) -->
+<div class="modal-bg" id="modal-managers" style="z-index:60;"><div class="modal">
+  <h3>담당자 관리</h3>
+  <p class="muted small">예: 조은수 실장, 임창걸 부장. 등록한 담당자는 시공현장·발주·자재판매에서 드롭다운으로 선택할 수 있습니다.</p>
+  <di
