@@ -388,4 +388,79 @@
 <div class="modal-bg" id="modal-managers" style="z-index:60;"><div class="modal">
   <h3>담당자 관리</h3>
   <p class="muted small">예: 조은수 실장, 임창걸 부장. 등록한 담당자는 시공현장·발주·자재판매에서 드롭다운으로 선택할 수 있습니다.</p>
-  <di
+  <div class="field row2">
+    <div><label>이름 *</label><input id="manager-name" placeholder="홍길동" /></div>
+    <div><label>직책</label><input id="manager-title" placeholder="실장, 부장, 과장 등" /></div>
+  </div>
+  <div style="display:flex; justify-content:flex-end; gap:8px; margin-bottom:14px;">
+    <button class="btn" onclick="addManager()">담당자 추가</button>
+  </div>
+  <hr style="border:0; border-top:1px solid var(--border); margin:0 0 12px;" />
+  <div id="managers-list" style="max-height:280px; overflow-y:auto;"></div>
+  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('managers')">닫기</button></div>
+</div></div>
+
+<!-- 내 이름 선택 (사용자 미설정시 강제) -->
+<div class="modal-bg open" id="modal-user" style="z-index:65;"><div class="modal">
+  <h3>내 이름 선택</h3>
+  <p class="muted small">앱을 쓰려면 본인 이름이 필요합니다. 모든 활동에 자동 기록됩니다.</p>
+  <div class="field"><label>담당자 목록에서 선택</label>
+    <select id="user-select"></select>
+  </div>
+  <div class="field"><label>또는 직접 입력</label>
+    <input id="user-custom" placeholder="예: 조은수 실장" />
+  </div>
+  <div class="field" style="background:var(--accent-soft); padding:10px 12px; border-radius:8px; margin-top:14px;">
+    <label style="display:flex; align-items:center; gap:8px; color:var(--accent-dark); font-weight:500; cursor:pointer; margin-bottom:0;">
+      <input type="checkbox" id="user-admin" style="width:auto;" />
+      <span>관리자 권한 (담당자 · 시공팀 · 공장 마스터 편집 가능)</span>
+    </label>
+  </div>
+  <div class="modal-actions">
+    <button class="btn ghost" id="user-clear" onclick="clearUser()">설정 지우기</button>
+    <div style="flex:1"></div>
+    <button class="btn ghost" id="user-cancel" onclick="closeModal('user')">취소</button>
+    <button class="btn" onclick="saveUser()">저장</button>
+  </div>
+</div></div>
+
+<!-- 공장 관리 -->
+<div class="modal-bg" id="modal-factories" style="z-index:60;"><div class="modal">
+  <h3>공장 관리</h3>
+  <p class="muted small">발주·입고·자재판매에서 드롭다운으로 선택할 수 있는 공장 목록.</p>
+  <div class="field row2">
+    <div><label>공장명 *</label><input id="factory-name" placeholder="예: ○○세라믹" /></div>
+    <div><label>연락처</label><input id="factory-contact" placeholder="전화/담당자" /></div>
+  </div>
+  <div class="field"><label>메모</label><input id="factory-note" /></div>
+  <div style="display:flex; justify-content:flex-end; gap:8px; margin-bottom:14px;">
+    <button class="btn" onclick="addFactory()">공장 추가</button>
+  </div>
+  <hr style="border:0; border-top:1px solid var(--border); margin:0 0 12px;" />
+  <div id="factories-list" style="max-height:280px; overflow-y:auto;"></div>
+  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('factories')">닫기</button></div>
+</div></div>
+
+<!-- 시공팀 관리 -->
+<div class="modal-bg" id="modal-crews" style="z-index:60;"><div class="modal">
+  <h3>시공팀 관리</h3>
+  <p class="muted small">예: 김반장팀, 박씨팀. 시공현장 추가 시 드롭다운으로 선택합니다.</p>
+  <div class="field row2">
+    <div><label>팀명 *</label><input id="crew-name" placeholder="예: 김반장팀" /></div>
+    <div><label>반장</label><input id="crew-leader" placeholder="이름" /></div>
+  </div>
+  <div class="field"><label>연락처</label><input id="crew-phone" placeholder="010-0000-0000" /></div>
+  <div style="display:flex; justify-content:flex-end; gap:8px; margin-bottom:14px;">
+    <button class="btn" onclick="addCrew()">시공팀 추가</button>
+  </div>
+  <hr style="border:0; border-top:1px solid var(--border); margin:0 0 12px;" />
+  <div id="crews-list" style="max-height:280px; overflow-y:auto;"></div>
+  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('crews')">닫기</button></div>
+</div></div>
+
+<div class="toast" id="toast"></div>
+
+<script src="firebase-config.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
