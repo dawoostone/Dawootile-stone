@@ -1,466 +1,361 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
-<title>주식회사 다우세라믹앤석재</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0F6E56">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<title>다우세라믹앤석재 통합관리</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/tabler-icons.min.css">
+<style>
+:root{
+  --g:#1D9E75; --gd:#0F6E56; --gdd:#0A4F3E; --gl:#E1F5EE; --gl2:#EFF9F5; --gbd:#9FE1CB;
+  --amber:#EF9F27; --amber-bg:#FDF3E0; --amber-t:#8A560B; --amber-bd:#F2D9A6;
+  --red:#E24B4A; --red-bg:#FDECEC; --red-t:#9E2B2B; --red-bd:#F5C9C9;
+  --blue:#2F7DB8; --blue-bg:#E9F2FA; --blue-t:#1B5285; --blue-bd:#BFDBF0;
+  --lime:#639922; --lime-bg:#EFF6E2; --lime-t:#3B6D11;
+  --bg:#EEF2F0; --card:#FFFFFF; --soft:#F3F6F4;
+  --t1:#16201D; --t2:#566661; --t3:#8C9A95;
+  --bd:#E3E9E6; --bd2:#CDD6D2;
+  --r:11px; --rl:16px; --rs:8px;
+  --sh:0 1px 2px rgba(16,40,33,.05),0 2px 8px rgba(16,40,33,.05);
+  --sh2:0 4px 16px rgba(16,40,33,.10);
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{font-family:'Pretendard',-apple-system,BlinkMacSystemFont,sans-serif;background:var(--bg);color:var(--t1);font-size:14px;line-height:1.45;overflow-x:hidden;-webkit-text-size-adjust:100%}
+button{font-family:inherit;cursor:pointer;border:none;background:none}
+input,select,textarea{font-family:inherit}
+.hidden{display:none!important}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 
-<!-- PWA -->
-<link rel="manifest" href="manifest.json" />
-<meta name="theme-color" content="#f7f5f0" />
-<link rel="icon" href="icon-192.png" sizes="192x192" type="image/png" />
+/* ===== Login ===== */
+#login{position:fixed;inset:0;background:radial-gradient(120% 120% at 50% 0%,#1D9E75 0%,#0F6E56 55%,#0A4F3E 100%);display:flex;align-items:center;justify-content:center;padding:24px;z-index:100}
+.login-box{background:#fff;border-radius:22px;padding:32px 26px;width:100%;max-width:360px;box-shadow:0 24px 60px rgba(0,0,0,.3)}
+.login-logo{display:flex;flex-direction:column;align-items:center;gap:11px;margin-bottom:24px}
+.login-logo .ico{width:60px;height:60px;background:linear-gradient(150deg,#1D9E75,#0A4F3E);border-radius:17px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:31px;box-shadow:0 8px 18px rgba(15,110,86,.35)}
+.login-logo h1{font-size:19px;font-weight:700;color:var(--t1);letter-spacing:-.3px}
+.login-logo p{font-size:12px;color:var(--t3)}
+.member-list{display:flex;flex-direction:column;gap:8px;max-height:248px;overflow-y:auto}
+.member-btn{display:flex;align-items:center;gap:11px;padding:12px 14px;border:1.5px solid var(--bd);border-radius:var(--r);background:#fff;text-align:left;font-size:14.5px;font-weight:500;transition:.15s}
+.member-btn:hover{border-color:var(--g);background:var(--gl2)}
+.member-btn .av{width:34px;height:34px;border-radius:50%;background:var(--gl);color:var(--gd);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px}
+.member-btn .role{margin-left:auto;font-size:11px;color:var(--t3);font-weight:500}
+.pin-area{text-align:center}
+.pin-dots{display:flex;justify-content:center;gap:13px;margin:20px 0}
+.pin-dot{width:15px;height:15px;border-radius:50%;border:2px solid var(--bd2);transition:.1s}
+.pin-dot.on{background:var(--g);border-color:var(--g);transform:scale(1.05)}
+.keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:11px}
+.key{padding:15px 0;border:1px solid var(--bd);border-radius:var(--r);background:#fff;font-size:21px;font-weight:600;color:var(--t1)}
+.key:active{background:var(--soft);transform:scale(.97)}
+.key.fn{font-size:14px;color:var(--t2);font-weight:500}
+.login-err{color:var(--red-t);font-size:12px;min-height:17px;margin-top:8px}
+.link-btn{color:var(--gd);font-size:12.5px;text-decoration:underline;margin-top:12px}
 
-<!-- iOS -->
-<meta name="apple-mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-status-bar-style" content="default" />
-<meta name="apple-mobile-web-app-title" content="다우세라믹" />
-<link rel="apple-touch-icon" href="apple-touch-icon.png" />
-<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+/* ===== Shell ===== */
+#app{display:none;min-height:100%;padding-bottom:74px}
+.topbar{position:sticky;top:0;z-index:30;background:linear-gradient(120deg,#0F6E56,#127C61);color:#fff;padding:13px 16px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 10px rgba(10,79,62,.18)}
+.tb-logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:15.5px;letter-spacing:-.2px}
+.tb-logo .ico{width:32px;height:32px;background:rgba(255,255,255,.16);border-radius:9px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px}
+.tb-logo small{display:block;font-size:10px;color:rgba(255,255,255,.72);font-weight:500;margin-top:1px}
+.tb-right{display:flex;align-items:center;gap:8px}
+.sync-dot{display:flex;align-items:center;gap:5px;font-size:11px;color:#fff;padding:5px 10px;background:rgba(255,255,255,.15);border-radius:20px;font-weight:500}
+.sync-dot .d{width:7px;height:7px;border-radius:50%;background:#7BEFC6;box-shadow:0 0 0 0 rgba(123,239,198,.7);animation:pulse 2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(123,239,198,.6)}70%{box-shadow:0 0 0 6px rgba(123,239,198,0)}100%{box-shadow:0 0 0 0 rgba(123,239,198,0)}}
+.sync-dot.local .d{background:#FAC775;animation:none}
+.tb-user{display:flex;align-items:center;gap:7px;font-size:12.5px;color:#fff;font-weight:500}
+.tb-user .av{width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.22);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px}
 
-<link rel="preload" href="fonts/Pretendard-Regular.subset.woff2" as="font" type="font/woff2" crossorigin />
-<link rel="preload" href="fonts/Pretendard-SemiBold.subset.woff2" as="font" type="font/woff2" crossorigin />
-<link rel="stylesheet" href="app.css" />
+.wrap{max-width:940px;margin:0 auto;padding:15px 14px 8px}
+@media(min-width:760px){ .wrap{padding:20px} }
+
+.botnav{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--bd);display:flex;z-index:40;padding-bottom:env(safe-area-inset-bottom);box-shadow:0 -2px 12px rgba(16,40,33,.06)}
+.nav-i{flex:1;padding:9px 2px 8px;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--t3);font-size:10.5px;font-weight:500;position:relative}
+.nav-i i{font-size:22px}
+.nav-i.active{color:var(--gd);font-weight:700}
+.nav-i.active i{color:var(--g)}
+.nav-i.active::before{content:"";position:absolute;top:0;width:30px;height:3px;border-radius:0 0 3px 3px;background:var(--g)}
+
+.page{display:none;animation:fade .2s}
+.page.active{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.ph{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:14px}
+.ph h2{font-size:19px;font-weight:700;letter-spacing:-.4px;display:flex;align-items:center;gap:8px}
+.ph h2 i{color:var(--g);font-size:21px}
+.ph p{font-size:12px;color:var(--t3);margin-top:2px}
+
+.stat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:11px;margin-bottom:16px}
+@media(min-width:640px){ .stat-grid{grid-template-columns:repeat(4,1fr)} }
+.stat{background:var(--card);border:1px solid var(--bd);border-radius:var(--rl);padding:15px;box-shadow:var(--sh);position:relative;overflow:hidden}
+.stat .ic{width:40px;height:40px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:22px;margin-bottom:10px}
+.stat .v{font-size:27px;font-weight:800;letter-spacing:-1px;line-height:1}
+.stat .l{font-size:12.5px;color:var(--t2);margin-top:4px;font-weight:500}
+.stat .s{font-size:11px;color:var(--t3);margin-top:3px}
+.stat.tap{cursor:pointer;text-align:left;width:100%;font:inherit;display:block}
+.stat.tap:active{transform:scale(.985)}
+.stat .l .tap-arrow{font-size:13px;color:var(--t3);vertical-align:-2px;margin-left:1px}
+.search-box{display:flex;align-items:center;gap:8px;background:#fff;border:1.5px solid var(--bd2);border-radius:var(--r);padding:0 12px;margin-bottom:12px}
+.search-box:focus-within{border-color:var(--g);box-shadow:0 0 0 3px var(--gl)}
+.search-box > i{font-size:18px;color:var(--t3)}
+.search-box input{flex:1;border:none;outline:none;background:none;font-size:15px;padding:11px 0;color:var(--t1)}
+.search-box .search-x{color:var(--t3);font-size:18px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px}
+.search-box .search-x:active{background:var(--soft)}
+.ic.g{background:var(--gl);color:var(--gd)}
+.ic.r{background:var(--red-bg);color:var(--red-t)}
+.ic.a{background:var(--amber-bg);color:var(--amber-t)}
+.ic.b{background:var(--blue-bg);color:var(--blue-t)}
+
+.card{background:var(--card);border:1px solid var(--bd);border-radius:var(--rl);padding:16px;box-shadow:var(--sh);margin-bottom:14px}
+.card-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:13px}
+.card-h h3{font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:7px}
+.card-h h3 i{color:var(--g);font-size:18px}
+.card-h .more{font-size:12px;color:var(--gd);font-weight:600;display:flex;align-items:center;gap:2px}
+
+.alert-i{display:flex;align-items:center;gap:12px;padding:12px;border-radius:var(--r);margin-bottom:8px;border:1px solid var(--bd)}
+.alert-i:last-child{margin-bottom:0}
+.alert-i.r{background:var(--red-bg);border-color:var(--red-bd)}
+.alert-i.a{background:var(--amber-bg);border-color:var(--amber-bd)}
+.alert-i.b{background:var(--blue-bg);border-color:var(--blue-bd)}
+.alert-i .ai{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0;background:#fff}
+.alert-i.r .ai{color:var(--red-t)} .alert-i.a .ai{color:var(--amber-t)} .alert-i.b .ai{color:var(--blue-t)}
+.alert-i .at{flex:1;min-width:0}
+.alert-i .at b{font-size:13px;font-weight:700;display:block;color:var(--t1)}
+.alert-i .at span{font-size:11.5px;color:var(--t2)}
+.alert-i .tag{font-size:11px;padding:4px 10px;border-radius:20px;white-space:nowrap;font-weight:700;background:#fff}
+.alert-i.r .tag{color:var(--red-t)} .alert-i.a .tag{color:var(--amber-t)} .alert-i.b .tag{color:var(--blue-t)}
+
+.qa-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+@media(min-width:640px){ .qa-grid{grid-template-columns:repeat(4,1fr)} }
+.qa{display:flex;align-items:center;gap:11px;padding:13px;border:1px solid var(--bd);border-radius:var(--r);background:var(--card);text-align:left;box-shadow:var(--sh)}
+.qa:active{background:var(--soft);transform:scale(.98)}
+.qa .qi{font-size:20px;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.qa b{font-size:13px;font-weight:700;display:block}
+.qa small{font-size:11px;color:var(--t3)}
+
+.pill{font-size:11px;padding:4px 10px;border-radius:20px;white-space:nowrap;font-weight:700;display:inline-flex;align-items:center;gap:4px}
+.p-prog{background:var(--gl);color:var(--gd)}
+.p-wait{background:var(--amber-bg);color:var(--amber-t)}
+.p-done{background:var(--lime-bg);color:var(--lime-t)}
+.p-issue{background:var(--red-bg);color:var(--red-t)}
+.p-hold{background:var(--blue-bg);color:var(--blue-t)}
+.p-gray{background:var(--soft);color:var(--t2)}
+
+.chips{display:flex;gap:7px;overflow-x:auto;padding-bottom:4px;margin-bottom:13px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{font-size:12.5px;padding:7px 14px;border:1px solid var(--bd);border-radius:20px;background:#fff;color:var(--t2);white-space:nowrap;font-weight:600}
+.chip.active{background:var(--g);color:#fff;border-color:var(--g)}
+
+.site-grid{display:grid;grid-template-columns:1fr;gap:12px}
+@media(min-width:700px){ .site-grid{grid-template-columns:1fr 1fr} }
+.site{background:var(--card);border:1px solid var(--bd);border-radius:var(--rl);padding:15px;box-shadow:var(--sh);cursor:pointer;transition:.15s}
+.site:active{transform:scale(.995)}
+.site-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:11px}
+.site-top .nm{font-size:15.5px;font-weight:700;letter-spacing:-.2px}
+.site-top .ad{font-size:12px;color:var(--t2);margin-top:3px;display:flex;align-items:center;gap:4px}
+.site-meta{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin:11px 0}
+.mi{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--t2);min-width:0}
+.mi i{font-size:16px;color:var(--g);flex-shrink:0;width:18px;text-align:center}
+.mi b{color:var(--t1);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mi .k{color:var(--t3);font-weight:500}
+.date-row{display:flex;gap:10px;margin:11px 0}
+.date-row .db{flex:1;background:var(--soft);border-radius:var(--rs);padding:8px 11px}
+.date-row .db .k{font-size:10.5px;color:var(--t3);font-weight:600}
+.date-row .db .v{font-size:13.5px;font-weight:700;margin-top:1px}
+.date-row .db.soon{background:var(--amber-bg)} .date-row .db.soon .v{color:var(--amber-t)}
+
+/* date timeline */
+.tline{display:flex;align-items:flex-start;margin-top:13px;border-top:1px solid var(--bd);padding-top:13px}
+.tnode{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;position:relative;text-align:center}
+.tnode::before{content:"";position:absolute;top:8px;left:-50%;width:100%;height:2.5px;background:var(--bd);z-index:0}
+.tnode:first-child::before{display:none}
+.tnode.done::before,.tnode.cur::before{background:var(--g)}
+.tnode.skip::before{background:repeating-linear-gradient(90deg,var(--bd) 0 4px,transparent 4px 8px)}
+.tnode .c{width:17px;height:17px;border-radius:50%;background:#fff;border:2.5px solid var(--bd2);z-index:1;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff}
+.tnode.done .c{background:var(--g);border-color:var(--g)}
+.tnode.cur .c{background:#fff;border-color:var(--g);box-shadow:0 0 0 3px var(--gl)}
+.tnode.cur .c::after{content:"";width:7px;height:7px;border-radius:50%;background:var(--g)}
+.tnode.skip .c{border-style:dashed}
+.tnode .lb{font-size:10px;color:var(--t3);font-weight:600;line-height:1.2}
+.tnode.done .lb,.tnode.cur .lb{color:var(--t1)}
+.tnode .dt{font-size:9px;color:var(--t3);line-height:1}
+
+.tbl-wrap{overflow-x:auto;border:1px solid var(--bd);border-radius:var(--rl);background:#fff;box-shadow:var(--sh)}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{text-align:left;padding:11px 12px;font-size:11px;font-weight:700;color:var(--t2);background:var(--soft);border-bottom:1px solid var(--bd);white-space:nowrap}
+.tbl td{padding:12px;border-bottom:1px solid var(--bd);vertical-align:middle}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tr:active{background:var(--gl2)}
+
+.bar{height:7px;background:var(--soft);border-radius:5px;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--g);border-radius:5px;transition:width .3s}
+.bar>i.warn{background:var(--amber)}
+.bar>i.dang{background:var(--red)}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:13.5px;padding:10px 16px;border-radius:var(--r);border:1.5px solid var(--bd2);background:#fff;color:var(--t1);font-weight:600}
+.btn:active{background:var(--soft);transform:scale(.98)}
+.btn-pri{background:var(--g);border-color:var(--g);color:#fff;box-shadow:0 2px 8px rgba(29,158,117,.3)}
+.btn-pri:active{background:var(--gd)}
+.btn-sm{padding:8px 13px;font-size:12.5px}
+.btn-block{width:100%}
+.btn-danger{color:var(--red-t);border-color:var(--red-bd);background:var(--red-bg)}
+.btn-ghost{border-color:transparent;background:var(--soft)}
+
+.mchart{display:flex;align-items:flex-end;gap:6px;height:160px;padding:8px 0}
+.mcol{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;justify-content:flex-end;height:100%}
+.mcol .bb{width:74%;max-width:30px;background:linear-gradient(180deg,#34BC91,#0F6E56);border-radius:5px 5px 0 0;min-height:3px;transition:height .35s;position:relative}
+.mcol .bb.cur{background:linear-gradient(180deg,#F0A93A,#D98612)}
+.mcol .val{font-size:9.5px;color:var(--t2);font-weight:700}
+.mcol .lb{font-size:10px;color:var(--t3)}
+
+.abar{display:flex;align-items:center;gap:11px;padding:9px 0}
+.abar .rk{width:20px;height:20px;border-radius:6px;background:var(--gl);color:var(--gd);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.abar .nm{font-size:13px;width:118px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.abar .tr{flex:1;height:24px;background:var(--soft);border-radius:7px;overflow:hidden}
+.abar .tr>i{display:block;height:100%;background:linear-gradient(90deg,#34BC91,#0F6E56);border-radius:7px}
+.abar .vv{font-size:12px;font-weight:700;width:78px;text-align:right;flex-shrink:0}
+
+.modal{position:fixed;inset:0;background:rgba(16,30,26,.5);z-index:90;display:none;align-items:flex-end;justify-content:center}
+.modal.open{display:flex}
+@media(min-width:620px){ .modal{align-items:center} }
+.sheet{background:#fff;border-radius:22px 22px 0 0;width:100%;max-width:580px;max-height:93vh;overflow-y:auto;padding:0 18px 28px}
+@media(min-width:620px){ .sheet{border-radius:20px} }
+.sheet-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;position:sticky;top:0;background:#fff;padding:18px 0 12px;z-index:2;border-bottom:1px solid var(--bd)}
+.sheet-h h3{font-size:17px;font-weight:700;display:flex;align-items:center;gap:8px}
+.sheet-h h3 i{color:var(--g)}
+.x{font-size:24px;color:var(--t3);line-height:1;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:8px}
+.x:active{background:var(--soft)}
+.frm{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+.fld{display:flex;flex-direction:column;gap:6px}
+.fld.full{grid-column:1/-1}
+.fld label{font-size:12.5px;color:var(--t2);font-weight:600}
+.fld label .req{color:var(--red);margin-left:2px}
+.fld input,.fld select,.fld textarea{font-size:15px;padding:11px 12px;border:1.5px solid var(--bd2);border-radius:var(--r);background:#fff;color:var(--t1);width:100%}
+.fld textarea{min-height:66px;resize:vertical}
+.fld input:focus,.fld select:focus,.fld textarea:focus{outline:none;border-color:var(--g);box-shadow:0 0 0 3px var(--gl)}
+.chk{display:flex;align-items:center;gap:9px;padding:11px 12px;border:1.5px solid var(--bd2);border-radius:var(--r);font-size:13.5px;font-weight:600;cursor:pointer}
+.chk input{width:19px;height:19px;accent-color:var(--g)}
+.chk.on{border-color:var(--g);background:var(--gl2)}
+.seg{display:flex;gap:0;border:1.5px solid var(--bd2);border-radius:var(--r);overflow:hidden}
+.seg button{flex:1;padding:10px;font-size:13.5px;font-weight:600;color:var(--t2);background:#fff;border-right:1.5px solid var(--bd2)}
+.seg button:last-child{border-right:none}
+.seg button.on{background:var(--g);color:#fff}
+.frm-foot{display:flex;gap:9px;margin-top:20px}
+
+.dl{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.dl .df{background:var(--soft);border-radius:var(--r);padding:11px 12px}
+.dl .df.full{grid-column:1/-1}
+.dl .df .k{font-size:11px;color:var(--t3);font-weight:600}
+.dl .df .v{font-size:14px;font-weight:700;margin-top:3px}
+
+.reco{background:var(--gl2);border:1.5px solid var(--gbd);border-radius:var(--r);padding:13px;margin-top:8px}
+.reco-h{font-size:13px;font-weight:700;color:var(--gd);display:flex;align-items:center;gap:6px;margin-bottom:8px}
+.reco .row{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:7px 0;border-bottom:1px dashed var(--gbd);font-size:13px}
+.reco .row:last-child{border-bottom:none}
+.reco .row .rl{color:var(--t2);font-weight:600;flex-shrink:0}
+.reco .row .rv{text-align:right}
+.reco .row .rv b{color:var(--gd);font-weight:800}
+.reco .row .rv small{display:block;color:var(--t3);font-size:11px;margin-top:1px}
+
+.empty{text-align:center;padding:46px 16px;color:var(--t3);font-size:13.5px}
+.empty i{font-size:40px;display:block;margin-bottom:10px;color:var(--bd2)}
+.fab{position:fixed;right:16px;bottom:84px;width:56px;height:56px;border-radius:50%;background:linear-gradient(145deg,#27B187,#0F6E56);color:#fff;font-size:28px;box-shadow:0 8px 20px rgba(15,110,86,.45);z-index:35;display:flex;align-items:center;justify-content:center}
+.fab:active{transform:scale(.93)}
+.toast{position:fixed;bottom:96px;left:50%;transform:translateX(-50%);background:#16201D;color:#fff;padding:12px 20px;border-radius:24px;font-size:13.5px;font-weight:600;z-index:200;opacity:0;transition:.25s;pointer-events:none;white-space:nowrap;box-shadow:var(--sh2)}
+.toast.show{opacity:1}
+.banner{border-radius:var(--r);padding:12px 14px;font-size:12.5px;margin-bottom:14px;display:flex;gap:9px;align-items:flex-start;line-height:1.5}
+.banner.warn{background:var(--amber-bg);border:1px solid var(--amber-bd);color:var(--amber-t)}
+.banner.info{background:var(--blue-bg);border:1px solid var(--blue-bd);color:var(--blue-t)}
+.banner i{font-size:18px;flex-shrink:0}
+.banner b{font-weight:700}
+.help-step{display:flex;gap:12px;padding:13px 0;border-bottom:1px solid var(--bd)}
+.help-step:last-child{border-bottom:none}
+.help-step .n{width:26px;height:26px;border-radius:50%;background:var(--g);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.help-step b{font-size:13.5px}
+.help-step p{font-size:12.5px;color:var(--t2);margin-top:3px;line-height:1.5}
+.help-step code{background:var(--soft);padding:1px 6px;border-radius:4px;font-size:11.5px;font-family:ui-monospace,monospace;word-break:break-all}
+.mem{display:flex;align-items:center;gap:11px;padding:11px 0;border-bottom:1px solid var(--bd)}
+.mem:last-child{border-bottom:none}
+.mem .av{width:36px;height:36px;border-radius:50%;background:var(--gl);color:var(--gd);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px}
+.mem .info{flex:1}
+.mem .info .nm{font-size:13.5px;font-weight:700}
+.mem .info .rl{font-size:11.5px;color:var(--t3)}
+.sec-label{font-size:12px;font-weight:700;color:var(--t2);margin:14px 0 8px;display:flex;align-items:center;gap:6px}
+.sec-label i{color:var(--g)}
+</style>
 </head>
 <body>
-<div class="app">
-  <div class="header">
-    <div class="brand">
-      <div class="logo" aria-label="다우세라믹앤석재"></div>
-      <h1>주식회사 다우세라믹앤석재</h1>
+<!-- ===================== LOGIN ===================== -->
+<div id="login">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="ico"><i class="ti ti-diamond"></i></div>
+      <h1>다우세라믹앤석재</h1>
+      <p>자재 · 현장 통합관리 시스템</p>
     </div>
-    <div class="status" id="status" onclick="openModal('team')">
-      <span class="dot"></span>
-      <span id="statusText">연결 확인 중…</span>
+    <div id="login-members"></div>
+    <div id="login-pin" class="pin-area hidden">
+      <div style="font-size:13.5px;color:var(--t2);font-weight:600" id="pin-name"></div>
+      <div class="pin-dots" id="pin-dots"></div>
+      <div class="keypad" id="keypad"></div>
+      <div class="login-err" id="login-err"></div>
+      <button class="link-btn" onclick="backToMembers()">← 다른 사용자 선택</button>
     </div>
-  </div>
-
-  <div class="team-row">
-    <span style="font-size:12px; color:var(--muted);">팀:</span>
-    <span class="team-chip" id="teamChip" onclick="openModal('team')">— 설정 안 됨 —</span>
-    <span style="font-size:12px; color:var(--muted); margin-left:6px;">나:</span>
-    <button class="user-chip" id="user-chip" onclick="openModal('user')">내 이름 선택</button>
-  </div>
-  <div class="team-row admin-only">
-    <span style="font-size:12px; color:var(--muted);">마스터 관리:</span>
-    <button class="btn ghost" style="padding:4px 10px; font-size:12px;" onclick="openModal('managers')">담당자</button>
-    <button class="btn ghost" style="padding:4px 10px; font-size:12px;" onclick="openModal('crews')">시공팀</button>
-    <button class="btn ghost" style="padding:4px 10px; font-size:12px;" onclick="openModal('factories')">공장</button>
-  </div>
-
-  <div class="tabs" id="tabs">
-    <button class="tab active" data-tab="site"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>시공현장</button>
-    <button class="tab" data-tab="sale"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10H3M16 21H8a2 2 0 0 1-2-2v-9h12v9a2 2 0 0 1-2 2zM5 6l3-4h8l3 4"/></svg>자재판매</button>
-    <button class="tab" data-tab="order"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>발주</button>
-    <button class="tab" data-tab="stock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>재고</button>
-    <button class="tab" data-tab="hold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>홀딩</button>
-    <button class="tab" data-tab="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>이력</button>
-  </div>
-
-  <div class="notice">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-    <span id="noticeText">설정 확인 중…</span>
-  </div>
-
-  <!-- 관리자 초기 설정 가이드 (마스터가 비어있으면 노출) -->
-  <div class="setup-card admin-only hidden" id="setup-card">
-    <div class="setup-title">초기 마스터 설정이 필요합니다</div>
-    <div class="setup-desc">앱을 본격적으로 쓰려면 아래 항목들을 먼저 등록해주세요.</div>
-    <div class="setup-actions" id="setup-actions"></div>
-  </div>
-
-  <div class="stats">
-    <div class="stat">
-      <div class="label">전체 현장</div>
-      <div class="value" id="stat-sites">0</div>
-      <div class="sublabel" id="stat-sites-breakdown">—</div>
-    </div>
-    <div class="stat">
-      <div class="label">이번 달 발주</div>
-      <div class="value"><span id="stat-month-orders">0</span><span class="unit">건</span></div>
-      <div class="sublabel">전월 대비 <span id="stat-month-delta">—</span></div>
-    </div>
-    <div class="stat">
-      <div class="label">납품 대기 자재</div>
-      <div class="value"><span id="stat-pending">0</span><span class="unit">종</span></div>
-      <div class="sublabel" id="stat-delay-risk">—</div>
-    </div>
-    <div class="stat issue">
-      <div class="label">이슈 현장</div>
-      <div class="value" id="stat-issues">0</div>
-      <div class="sublabel" id="stat-issues-sub">즉시 확인 필요</div>
-    </div>
-  </div>
-
-  <!-- 시공현장 -->
-  <div class="section" id="panel-site">
-    <div class="section-head">
-      <h2>현장 목록</h2>
-      <div class="filter-pills">
-        <button class="filter-pill site-filter-pill active" data-filter="all" onclick="setSiteFilter('all')">전체</button>
-        <button class="filter-pill site-filter-pill" data-filter="시공중" onclick="setSiteFilter('시공중')">시공중</button>
-        <button class="filter-pill site-filter-pill" data-filter="대기" onclick="setSiteFilter('대기')">대기</button>
-        <button class="filter-pill site-filter-pill" data-filter="이슈" onclick="setSiteFilter('이슈')">이슈</button>
-      </div>
-      <button class="btn" onclick="openModal('site')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>현장 추가</button>
-    </div>
-    <div id="site-list"></div>
-  </div>
-
-  <!-- 자재판매 -->
-  <div class="section hidden" id="panel-sale">
-    <div class="section-head">
-      <h2>자재판매 (시공 없음)</h2>
-      <button class="btn" onclick="openModal('sale')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>판매 등록</button>
-    </div>
-    <div id="sale-list"></div>
-  </div>
-
-  <!-- 발주 -->
-  <div class="section hidden" id="panel-order">
-    <div class="section-head">
-      <h2>공장 발주</h2>
-      <button class="btn" onclick="openModal('order')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>발주 추가</button>
-    </div>
-    <div id="order-list"></div>
-  </div>
-
-  <!-- 재고 -->
-  <div class="section hidden" id="panel-stock">
-    <div class="section-head">
-      <h2>실시간 재고</h2>
-      <div style="display:flex; gap:6px;">
-        <button class="btn ghost" onclick="openModal('material')">자재 등록</button>
-        <button class="btn ghost" onclick="openModal('in')">입고</button>
-        <button class="btn" onclick="openModal('out')">출고</button>
-      </div>
-    </div>
-    <div style="margin-bottom:12px;">
-      <input type="search" id="stock-search" placeholder="🔍 제품명 검색 (예: 화이트, 600x600)"
-             oninput="onStockSearch(event)" autocomplete="off"
-             style="width:100%; padding:10px 14px; background:var(--panel-soft); border:1px solid var(--border); border-radius:10px; font-size:14px; font-family:inherit; color:var(--text);" />
-    </div>
-    <div id="stock-list"></div>
-  </div>
-
-  <!-- 홀딩 -->
-  <div class="section hidden" id="panel-hold">
-    <div class="section-head">
-      <h2>홀딩 (자재 예약)</h2>
-      <button class="btn" onclick="openModal('hold')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>홀딩 추가</button>
-    </div>
-    <div id="hold-list"></div>
-  </div>
-
-  <!-- 이력 -->
-  <div class="section hidden" id="panel-history">
-    <div class="section-head">
-      <h2>활동 이력</h2>
-      <button class="btn ghost" onclick="clearHistory()">이력 초기화</button>
-    </div>
-    <div id="history-list"></div>
   </div>
 </div>
 
-<!-- ===== Modals ===== -->
-
-<div class="modal-bg" id="modal-team"><div class="modal">
-  <h3>팀 코드 설정</h3>
-  <p class="muted small">같은 팀 코드를 입력한 사람들은 모두 같은 데이터를 실시간으로 공유합니다.</p>
-  <div class="field"><label>팀 코드</label><input id="team-code" placeholder="예: tile-1234" /></div>
-  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('team')">취소</button><button class="btn" onclick="setTeamCode()">저장</button></div>
-</div></div>
-
-<!-- 시공현장 -->
-<div class="modal-bg" id="modal-site"><div class="modal">
-  <h3>시공현장 추가</h3>
-  <div class="field"><label>거래처 *</label><input id="site-customer" placeholder="고객/시공사 이름" /></div>
-  <div class="field"><label>현장명</label><input id="site-name" placeholder="예: 서초동 빌라 리모델링 (선택)" /></div>
-  <div class="field"><label>주소 *</label><input id="site-addr" placeholder="시공 현장 주소" /></div>
-  <div class="field row2">
-    <div>
-      <label>담당자 <span style="color:var(--muted); font-weight:400;">(자동 = 내 이름)</span></label>
-      <div id="site-manager-display" style="padding:10px 12px; background:var(--accent-soft); border:1px solid rgba(184,134,46,0.15); border-radius:8px; color:var(--accent-dark); font-size:14px; font-weight:600;"></div>
+<!-- ===================== APP ===================== -->
+<div id="app">
+  <div class="topbar">
+    <div class="tb-logo">
+      <div class="ico"><i class="ti ti-diamond"></i></div>
+      <div>다우세라믹앤석재<small>통합관리 시스템</small></div>
     </div>
-    <div><label>발주 공장</label>
-      <div style="display:flex; gap:6px;">
-        <select id="site-factory" style="flex:1;"></select>
-        <button type="button" class="btn ghost small-btn" onclick="openModal('factories')" title="공장 추가/관리">+</button>
-      </div>
-    </div>
-  </div>
-  <div class="field row2">
-    <div><label>시공팀 *</label>
-      <div style="display:flex; gap:6px;">
-        <select id="site-crew" style="flex:1;"></select>
-        <button type="button" class="btn ghost small-btn" onclick="openModal('crews')" title="시공팀 추가/관리">+</button>
-      </div>
-    </div>
-    <div><label>상태</label>
-      <select id="site-status">
-        <option value="대기">대기</option><option value="시공중" selected>시공중</option>
-        <option value="완료">완료</option><option value="이슈">이슈</option>
-      </select>
-    </div>
-  </div>
-  <div class="field row2">
-    <div><label>실측 여부 *</label>
-      <select id="site-measure" onchange="onMeasureChange()">
-        <option value="">(선택)</option>
-        <option value="measured">실측 완료</option>
-        <option value="drawing">도면발주</option>
-      </select>
-    </div>
-    <div><label>실측 일자</label><input id="site-measure-date" type="date" /></div>
-  </div>
-  <div class="field"><label>시공 일자 *</label><input id="site-install-date" type="date" /></div>
-  <div class="field"><label>메모</label><textarea id="site-note" rows="2"></textarea></div>
-  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('site')">취소</button><button class="btn" onclick="addSite()">저장</button></div>
-</div></div>
-
-<!-- 자재판매 -->
-<div class="modal-bg" id="modal-sale"><div class="modal">
-  <h3>자재판매 등록</h3>
-  <p class="muted small">시공 없이 자재만 판매하는 경우. 저장 시 자동으로 출고 처리됩니다.</p>
-  <div class="field row2">
-    <div><label>거래처 *</label><input id="sale-customer" placeholder="구매자" /></div>
-    <div><label>판매일</label><input id="sale-date" type="date" /></div>
-  </div>
-  <div class="field"><label>출고지 (배송 주소)</label><input id="sale-shipto" placeholder="예: 서울 강남구 ..." /></div>
-  <div class="field row2">
-    <div><label>발주처 (자재 구매한 공장)</label>
-      <div style="display:flex; gap:6px;">
-        <select id="sale-factory" style="flex:1;"></select>
-        <button type="button" class="btn ghost small-btn" onclick="openModal('factories')" title="공장 추가/관리">+</button>
-      </div>
-    </div>
-    <div>
-      <label>담당자 <span style="color:var(--muted); font-weight:400;">(자동 = 내 이름)</span></label>
-      <div id="sale-manager-display" style="padding:10px 12px; background:var(--accent-soft); border:1px solid rgba(184,134,46,0.15); border-radius:8px; color:var(--accent-dark); font-size:14px; font-weight:600;"></div>
+    <div class="tb-right">
+      <span class="sync-dot" id="sync"><span class="d"></span><span id="sync-t">실시간</span></span>
+      <span class="tb-user"><span class="av" id="me-av"></span><span id="me-nm"></span></span>
     </div>
   </div>
 
-  <div class="field"><label>판매 자재</label></div>
-  <div id="sale-items"></div>
-  <button type="button" class="btn ghost small-btn" onclick="addSaleItem()">+ 자재 추가</button>
+  <div class="wrap">
+    <div class="page active" id="pg-home"></div>
+    <div class="page" id="pg-sites"></div>
+    <div class="page" id="pg-stock"></div>
+    <div class="page" id="pg-ship"></div>
+    <div class="page" id="pg-hold"></div>
+    <div class="page" id="pg-settings"></div>
+  </div>
 
-  <div class="field" style="margin-top:12px;"><label>메모</label><textarea id="sale-note" rows="2"></textarea></div>
-  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('sale')">취소</button><button class="btn" onclick="addSale()">저장 & 출고</button></div>
-</div></div>
+  <button class="fab" id="fab" onclick="fabAction()" aria-label="추가">+</button>
 
-<!-- 발주 -->
-<div class="modal-bg" id="modal-order"><div class="modal">
-  <h3>공장 발주</h3>
-  <div class="field row2">
-    <div><label>발주 공장 *</label>
-      <div style="display:flex; gap:6px;">
-        <select id="order-factory" style="flex:1;"></select>
-        <button type="button" class="btn ghost small-btn" onclick="openModal('factories')" title="공장 추가/관리">+</button>
-      </div>
-    </div>
-    <div><label>발주일</label><input id="order-date" type="date" /></div>
-  </div>
-  <div class="field">
-    <label>품목 * <span style="color:var(--muted); font-weight:400;">(등록 자재 선택 or 직접 입력)</span></label>
-    <div style="display:flex; gap:6px;">
-      <select id="order-item-select" style="flex:1;" onchange="onOrderMaterialChange()"></select>
-      <button type="button" class="btn ghost small-btn" onclick="openModal('material')" title="자재 신규 등록">+</button>
-    </div>
-  </div>
-  <div class="field row2">
-    <div><label>품목명 (선택 안 했을 때)</label><input id="order-item" placeholder="예: 600x600 포세린 화이트" /></div>
-    <div><label>규격</label><input id="order-spec" placeholder="예: 600x600x9T" /></div>
-  </div>
-  <div class="field row2">
-    <div><label>수량</label><input id="order-qty" type="number" inputmode="numeric" /></div>
-    <div><label>단위</label><input id="order-unit" value="장" /></div>
-  </div>
-  <div class="field row2">
-    <div><label>상차 예정일</label><input id="order-expected" type="date" /></div>
-    <div><label>연관 현장 *</label><select id="order-site"></select></div>
-  </div>
-  <div class="field row2">
-    <div>
-      <label>발주 담당자 <span style="color:var(--muted); font-weight:400;">(자동 = 내 이름)</span></label>
-      <div id="order-manager-display" style="padding:10px 12px; background:var(--accent-soft); border:1px solid rgba(184,134,46,0.15); border-radius:8px; color:var(--accent-dark); font-size:14px; font-weight:600;"></div>
-    </div>
-    <div></div>
-  </div>
-  <div class="field"><label>메모</label><textarea id="order-note" rows="2"></textarea></div>
-  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('order')">취소</button><button class="btn" onclick="addOrder()">저장</button></div>
-</div></div>
+  <nav class="botnav">
+    <button class="nav-i active" data-tab="home" onclick="go('home')"><i class="ti ti-home-2"></i>홈</button>
+    <button class="nav-i" data-tab="sites" onclick="go('sites')"><i class="ti ti-building-community"></i>현장</button>
+    <button class="nav-i" data-tab="stock" onclick="go('stock')"><i class="ti ti-packages"></i>재고·입고</button>
+    <button class="nav-i" data-tab="ship" onclick="go('ship')"><i class="ti ti-truck-delivery"></i>출고</button>
+    <button class="nav-i" data-tab="hold" onclick="go('hold')"><i class="ti ti-lock-square-rounded"></i>홀딩</button>
+    <button class="nav-i" data-tab="settings" onclick="go('settings')"><i class="ti ti-settings"></i>설정</button>
+  </nav>
+</div>
 
-<!-- 자재 마스터 -->
-<div class="modal-bg" id="modal-material"><div class="modal">
-  <h3>자재 등록</h3>
-  <div class="field"><label>자재명 *</label><input id="material-name" placeholder="예: 600x600 포세린 화이트" /></div>
-  <div class="field row2">
-    <div><label>규격</label>
-      <select id="material-spec-select" onchange="onMaterialSpecChange()"></select>
-      <input id="material-spec" type="text" placeholder="예: 600*600*9T" class="hidden" style="margin-top:6px;" />
-    </div>
-    <div><label>기본 단위</label>
-      <select id="material-unit">
-        <option value="장" selected>장</option>
-        <option value="박스">박스</option>
-        <option value="EA">EA</option>
-        <option value="kg">kg</option>
-        <option value="m²">m²</option>
-      </select>
-    </div>
-  </div>
-  <div class="field row2">
-    <div><label>박스당 장수 (선택)</label>
-      <input id="material-per-box" type="number" inputmode="numeric" placeholder="예: 4" />
-    </div>
-    <div><label>메모</label><input id="material-note" /></div>
-  </div>
-  <div class="field"><label>패턴 (선택) <span style="color:var(--muted); font-weight:400;">쉼표로 구분 — 예: 1, 2, 3</span></label>
-    <input id="material-patterns" placeholder="비워두면 패턴 구분 없이 단일 자재로 관리" autocomplete="off" />
-  </div>
-  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('material')">취소</button><button class="btn" onclick="addMaterial()">저장</button></div>
-</div></div>
-
-<!-- 입고 -->
-<div class="modal-bg" id="modal-in"><div class="modal">
-  <h3>입고 등록</h3>
-  <p class="muted small">자재가 들어왔을 때 등록. 롯트 넘버는 세라믹의 경우 반드시 입력하세요.</p>
-  <div class="field"><label>자재 *</label><select id="in-material" onchange="onInMaterialChange()"></select></div>
-  <div class="field"><label>롯트 넘버 *</label>
-    <input id="in-lot" placeholder="예: L20260517A" list="in-lot-list" autocomplete="off" />
-    <datalist id="in-lot-list"></datalist>
-    <div id="in-lot-chips" class="chip-row"></div>
-  </div>
-  <!-- 수량 영역: 패턴 없으면 단일 input, 있으면 패턴별 input 그리드 -->
-  <div class="field" id="in-qty-field">
-    <label id="in-qty-label">수량 *</label>
-    <input id="in-qty" type="number" inputmode="numeric" />
-    <div id="in-qty-patterns" class="hidden"></div>
-  </div>
-  <div class="field row2">
-    <div><label>입고일</label><input id="in-date" type="date" /></div>
-    <div><label>발주처(공장)</label>
-      <div style="display:flex; gap:6px;">
-        <select id="in-factory" style="flex:1;"></select>
-        <button type="button" class="btn ghost small-btn" onclick="openModal('factories')" title="공장 추가/관리">+</button>
-      </div>
-    </div>
-  </div>
-  <div class="field"><label>메모</label><input id="in-note" /></div>
-  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('in')">취소</button><button class="btn" onclick="addIn()">저장</button></div>
-</div></div>
-
-<!-- 출고 -->
-<div class="modal-bg" id="modal-out"><div class="modal">
-  <h3>수동 출고</h3>
-  <p class="muted small">자재판매 폼에서 자동 출고가 되지 않을 때만 사용. (반품/조정 등)</p>
-  <div class="field"><label>자재 *</label><select id="out-material" onchange="fillOutLots()"></select></div>
-  <div class="field"><label>롯트 *</label><select id="out-lot"></select></div>
-  <div class="field row2">
-    <div><label>수량 *</label><input id="out-qty" type="number" inputmode="numeric" /></div>
-    <div><label>출고일</label><input id="out-date" type="date" /></div>
-  </div>
-  <div class="field"><label>출고처/사유</label><input id="out-target" placeholder="예: ○○현장, 반품, 파손폐기" /></div>
-  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('out')">취소</button><button class="btn" onclick="addOut()">저장</button></div>
-</div></div>
-
-<!-- 홀딩 -->
-<div class="modal-bg" id="modal-hold"><div class="modal">
-  <h3>홀딩 (자재 예약)</h3>
-  <p class="muted small">예약 즉시 가용 재고에서 차감됩니다. 시공/판매 시 자동 소진하거나 수동 해제 가능.</p>
-  <div class="field"><label>자재 *</label><select id="hold-material" onchange="fillHoldLots()"></select></div>
-  <div class="field row2">
-    <div><label>롯트 *</label><select id="hold-lot"></select></div>
-    <div><label>수량 *</label><input id="hold-qty" type="number" inputmode="numeric" /></div>
-  </div>
-  <div class="field"><label>거래처명 *</label>
-    <input id="hold-for" placeholder="예: ○○고객, 서초동 빌라 등" list="hold-customers" autocomplete="off" />
-    <datalist id="hold-customers"></datalist>
-  </div>
-  <div class="field row2">
-    <div><label>예약일</label><input id="hold-start" type="date" /></div>
-    <div><label>만료일(선택)</label><input id="hold-end" type="date" /></div>
-  </div>
-  <div class="field"><label>메모</label><input id="hold-note" /></div>
-  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('hold')">취소</button><button class="btn" onclick="addHold()">저장</button></div>
-</div></div>
-
-<!-- 담당자 관리 (가장 위에 떠야 하므로 마지막에 배치) -->
-<div class="modal-bg" id="modal-managers" style="z-index:60;"><div class="modal">
-  <h3>담당자 관리</h3>
-  <p class="muted small">예: 조은수 실장, 임창걸 부장. 등록한 담당자는 시공현장·발주·자재판매에서 드롭다운으로 선택할 수 있습니다.</p>
-  <div class="field row2">
-    <div><label>이름 *</label><input id="manager-name" placeholder="홍길동" /></div>
-    <div><label>직책</label><input id="manager-title" placeholder="실장, 부장, 과장 등" /></div>
-  </div>
-  <div style="display:flex; justify-content:flex-end; gap:8px; margin-bottom:14px;">
-    <button class="btn" onclick="addManager()">담당자 추가</button>
-  </div>
-  <hr style="border:0; border-top:1px solid var(--border); margin:0 0 12px;" />
-  <div id="managers-list" style="max-height:280px; overflow-y:auto;"></div>
-  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('managers')">닫기</button></div>
-</div></div>
-
-<!-- 내 이름 선택 (사용자 미설정시 강제) -->
-<div class="modal-bg open" id="modal-user" style="z-index:65;"><div class="modal">
-  <h3>내 이름 선택</h3>
-  <p class="muted small">앱을 쓰려면 본인 이름이 필요합니다. 모든 활동에 자동 기록됩니다.</p>
-  <div class="field"><label>담당자 목록에서 선택</label>
-    <select id="user-select"></select>
-  </div>
-  <div class="field"><label>또는 직접 입력</label>
-    <input id="user-custom" placeholder="예: 조은수 실장" />
-  </div>
-  <div class="field" style="background:var(--accent-soft); padding:10px 12px; border-radius:8px; margin-top:14px;">
-    <label style="display:flex; align-items:center; gap:8px; color:var(--accent-dark); font-weight:500; cursor:pointer; margin-bottom:0;">
-      <input type="checkbox" id="user-admin" style="width:auto;" />
-      <span>관리자 권한 (담당자 · 시공팀 · 공장 마스터 편집 가능)</span>
-    </label>
-  </div>
-  <div class="modal-actions">
-    <button class="btn ghost" id="user-clear" onclick="clearUser()">설정 지우기</button>
-    <div style="flex:1"></div>
-    <button class="btn ghost" id="user-cancel" onclick="closeModal('user')">취소</button>
-    <button class="btn" onclick="saveUser()">저장</button>
-  </div>
-</div></div>
-
-<!-- 공장 관리 -->
-<div class="modal-bg" id="modal-factories" style="z-index:60;"><div class="modal">
-  <h3>공장 관리</h3>
-  <p class="muted small">발주·입고·자재판매에서 드롭다운으로 선택할 수 있는 공장 목록.</p>
-  <div class="field row2">
-    <div><label>공장명 *</label><input id="factory-name" placeholder="예: ○○세라믹" /></div>
-    <div><label>연락처</label><input id="factory-contact" placeholder="전화/담당자" /></div>
-  </div>
-  <div class="field"><label>메모</label><input id="factory-note" /></div>
-  <div style="display:flex; justify-content:flex-end; gap:8px; margin-bottom:14px;">
-    <button class="btn" onclick="addFactory()">공장 추가</button>
-  </div>
-  <hr style="border:0; border-top:1px solid var(--border); margin:0 0 12px;" />
-  <div id="factories-list" style="max-height:280px; overflow-y:auto;"></div>
-  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('factories')">닫기</button></div>
-</div></div>
-
-<!-- 시공팀 관리 -->
-<div class="modal-bg" id="modal-crews" style="z-index:60;"><div class="modal">
-  <h3>시공팀 관리</h3>
-  <p class="muted small">예: 김반장팀, 박씨팀. 시공현장 추가 시 드롭다운으로 선택합니다.</p>
-  <div class="field row2">
-    <div><label>팀명 *</label><input id="crew-name" placeholder="예: 김반장팀" /></div>
-    <div><label>반장</label><input id="crew-leader" placeholder="이름" /></div>
-  </div>
-  <div class="field"><label>연락처</label><input id="crew-phone" placeholder="010-0000-0000" /></div>
-  <div style="display:flex; justify-content:flex-end; gap:8px; margin-bottom:14px;">
-    <button class="btn" onclick="addCrew()">시공팀 추가</button>
-  </div>
-  <hr style="border:0; border-top:1px solid var(--border); margin:0 0 12px;" />
-  <div id="crews-list" style="max-height:280px; overflow-y:auto;"></div>
-  <div class="modal-actions"><button class="btn ghost" onclick="closeModal('crews')">닫기</button></div>
-</div></div>
-
+<div class="modal" id="modal"><div class="sheet" id="sheet"></div></div>
 <div class="toast" id="toast"></div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+/* 옛 서비스워커/캐시 정리 — 구버전이 캐시로 뜨는 것 방지 */
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
+  if (window.caches && caches.keys) caches.keys().then(ks => ks.forEach(k => caches.delete(k)));
+}
+</script>
+<!-- Firebase 설정: 같은 폴더의 firebase-config.js 가 window.FIREBASE_CONFIG 를 설정.
+     파일이 없으면 이 기기에만 저장되는 미리보기 모드로 동작합니다. -->
 <script src="firebase-config.js"></script>
-<script type="module" src="app.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
