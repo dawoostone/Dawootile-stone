@@ -77,7 +77,8 @@ const state = { members: [], sites: [], inventory: [], holdings: [], transaction
 let me = null;          // 로그인한 사용자
 let tab = 'home';
 let filters = { sites: 'all', stock: 'all', stockSearch: '' };
-let _consumeHolding = null;
+let _holdLinkSite = null;   // 현장 저장 시 이 홀딩을 현장에 '연결'(소진 아님)
+let _holdConfirm = null;    // 출고 저장 시 이 홀딩을 '확정' 처리
 function openStockTab(filter) { filters.stock = filter || 'all'; filters.stockSearch = ''; go('stock'); }
 
 /* ---------- 2. 유틸 ---------- */
@@ -393,7 +394,7 @@ function stockState(it) {
   return { k: '정상', cls: 'p-prog' };
 }
 /* 활성 홀딩 목록 (현장/출고에서 골라쓰기용) */
-function activeHoldings() { return state.holdings.filter(h => h.status !== '해제' && h.status !== '소진'); }
+function activeHoldings() { return state.holdings.filter(h => (h.status || '홀딩') === '홀딩'); }
 function holdingOptions() {
   const list = activeHoldings();
   if (!list.length) return '';
@@ -416,7 +417,7 @@ function renderHome() {
   const lowItems = state.inventory.filter(i => { const s = stockState(i).k; return s === '부족' || s === '없음'; });
   const activeSites = state.sites.filter(s => s.stage !== '완료');
   const soonConstruct = state.sites.filter(s => { const d = daysFromNow(s.constructDate); return s.stage !== '완료' && d != null && d >= 0 && d <= 3; });
-  const soonHold = state.holdings.filter(h => { const d = daysFromNow(h.useDate); return (h.status !== '해제' && h.status !== '소진') && d != null && d >= 0 && d <= 3; });
+  const soonHold = state.holdings.filter(h => { const d = daysFromNow(h.useDate); return (h.status || '홀딩') === '홀딩' && d != null && d >= 0 && d <= 3; });
   const waitQuote = state.sites.filter(s => ['접수', '가견적', '견적'].includes(s.stage));
 
   const alerts = [];
@@ -431,7 +432,7 @@ function renderHome() {
       <button class="stat tap" onclick="openStockTab('all')"><div class="ic g"><i class="ti ti-packages"></i></div><div class="v">${state.inventory.length}</div><div class="l">재고 품종 <i class="ti ti-chevron-right tap-arrow"></i></div><div class="s">총 ${state.inventory.reduce((a, b) => a + (+b.jang || 0), 0)}장 · ${state.inventory.reduce((a, b) => a + itemHebe(b), 0).toFixed(0)}㎡</div></button>
       <button class="stat tap" onclick="openStockTab('low')"><div class="ic r"><i class="ti ti-alert-triangle"></i></div><div class="v" style="color:${lowItems.length ? 'var(--red-t)' : 'inherit'}">${lowItems.length}</div><div class="l">재고 부족 <i class="ti ti-chevron-right tap-arrow"></i></div><div class="s">${lowItems.length ? '입고 필요' : '정상 운영'}</div></button>
       <button class="stat tap" onclick="filters.sites='prog';go('sites')"><div class="ic b"><i class="ti ti-building-community"></i></div><div class="v">${activeSites.length}</div><div class="l">진행 현장 <i class="ti ti-chevron-right tap-arrow"></i></div><div class="s">시공임박 ${soonConstruct.length}</div></button>
-      <button class="stat tap" onclick="go('hold')"><div class="ic a"><i class="ti ti-lock"></i></div><div class="v">${state.holdings.filter(h => h.status !== '해제' && h.status !== '소진').length}</div><div class="l">홀딩 건수 <i class="ti ti-chevron-right tap-arrow"></i></div><div class="s">사용임박 ${soonHold.length}</div></button>
+      <button class="stat tap" onclick="go('hold')"><div class="ic a"><i class="ti ti-lock"></i></div><div class="v">${state.holdings.filter(h => (h.status || '홀딩') === '홀딩').length}</div><div class="l">홀딩 건수 <i class="ti ti-chevron-right tap-arrow"></i></div><div class="s">사용임박 ${soonHold.length}</div></button>
     </div>
 
     <div class="card">
@@ -459,7 +460,7 @@ function renderHome() {
    모달 헬퍼
    =================================================================== */
 function openModal(html) { el('sheet').innerHTML = html; el('modal').classList.add('open'); document.body.style.overflow = 'hidden'; }
-function closeModal() { el('modal').classList.remove('open'); document.body.style.overflow = ''; _consumeHolding = null; }
+function closeModal() { el('modal').classList.remove('open'); document.body.style.overflow = ''; _holdLinkSite = null; _holdConfirm = null; }
 el('modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 
 /* 자재명 datalist (입고/출고/홀딩 공통) */
@@ -559,10 +560,16 @@ function openSiteDetail(id) {
     <div class="seg" style="flex-wrap:wrap">
       ${SITE_STAGES.filter(st => !(skip && st === '실측')).map(st => `<button class="${(s.stage || '접수') === st ? 'on' : ''}" onclick="advanceStage('${s.id}','${st}')">${st}</button>`).join('')}
     </div>
+    <button class="btn btn-ghost btn-block" style="margin-top:6px" onclick="holdFromSite('${s.id}')"><i class="ti ti-lock-plus"></i>이 현장 자재 홀딩 잡기</button>
     <div class="frm-foot">
       <button class="btn" style="flex:1" onclick="openSiteForm('${s.id}')"><i class="ti ti-edit"></i>수정</button>
       ${isAdmin() ? `<button class="btn btn-danger" onclick="delSite('${s.id}')"><i class="ti ti-trash"></i></button>` : ''}
     </div>`);
+}
+/* 현장 → 홀딩 생성 (현장 정보로 홀딩 폼 프리필) */
+function holdFromSite(id) {
+  const s = state.sites.find(x => x.id === id); if (!s) return;
+  openHoldForm(null, { forSiteId: id, materialName: s.materialName, jang: s.qty, useDate: s.constructDate });
 }
 async function advanceStage(id, stage) {
   const s = state.sites.find(x => x.id === id); if (!s) return;
@@ -640,16 +647,16 @@ function runRecommend() {
     </div>`;
 }
 function applyReco(team, factory) { setSelectValue('s-team', 'teams', team); setSelectValue('s-factory', 'factories', factory); toast('추천값을 입력했습니다'); }
-/* 현장 폼에서 홀딩 선택 → 자재·수량·업체 자동 입력 + 등록 시 그 홀딩 소진 */
+/* 현장 폼에서 홀딩 선택 → 자재·수량·업체 자동 입력 + 등록 시 그 홀딩을 현장에 연결(유지) */
 function pickSiteHolding() {
   const id = el('s-hold').value;
-  if (!id) { _consumeHolding = null; return; }
+  if (!id) { _holdLinkSite = null; return; }
   const h = state.holdings.find(x => x.id === id); if (!h) return;
   el('s-material').value = h.materialName || '';
   el('s-qty').value = h.jang || '';
   if (!el('s-client').value) el('s-client').value = h.vendor || '';
-  _consumeHolding = id;
-  toast('홀딩 자재를 불러왔습니다 (등록 시 소진)');
+  _holdLinkSite = id;
+  toast('홀딩 자재를 불러왔습니다 (등록 시 현장에 연결)');
 }
 
 async function submitSite(id) {
@@ -685,7 +692,8 @@ async function submitSite(id) {
     obj.history = { '접수': todayStr() }; if (obj.stage !== '접수') obj.history[obj.stage] = todayStr();
     await Store.add('sites', obj); toast('현장 등록 완료');
   }
-  await consumeHolding('현장');
+  // 선택한 홀딩을 이 현장에 '연결'(소진 아님 — 홀딩은 그대로 살아있음)
+  if (_holdLinkSite) { await Store.update('holdings', _holdLinkSite, { forSiteName: obj.name }); _holdLinkSite = null; }
   closeModal();
 }
 
@@ -939,7 +947,7 @@ function renderShip() {
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-list-details"></i>최근 출고</h3></div>
-      ${outs.length ? outs.slice(0, 10).map(t => `<div class="alert-i b"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${esc(t.itemName)} ${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · ${esc(t.targetName || '')} · ${esc(t.by || '')}</span></div>${t.target ? `<span class="tag">${esc(t.target)}</span>` : ''}</div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`}
+      ${outs.length ? outs.slice(0, 10).map(t => `<div class="alert-i b"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${esc(t.itemName)} ${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · ${esc(t.targetName || '')}${t.factory ? ' · 공장 ' + esc(t.factory) : ''} · ${esc(t.by || '')}</span></div></div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`}
     </div>`;
 }
 function openShipForm(pre) {
@@ -951,6 +959,8 @@ function openShipForm(pre) {
       <div class="fld full"><label>출고 자재<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(자동완성 · 재고에 없어도 직접 입력)</span></label><input id="o-material" list="dl-out" placeholder="자재명 직접 입력 또는 위 목록에서 선택" oninput="computeOutHebe()">${matDatalistCombined('dl-out')}</div>
       <div class="fld"><label>출고 장수<span class="req">*</span></label><input id="o-jang" inputmode="numeric" placeholder="예) 4" oninput="computeOutHebe()"></div>
       <div class="fld"><label>출고일<span class="req">*</span></label><input type="date" id="o-date" value="${todayStr()}"></div>
+      <div class="fld"><label>발주/출고 공장</label><select id="o-factory" onchange="onMasterChange('o-factory','factories')">${masterOptions('factories', '')}</select></div>
+      <div class="fld full hidden" id="o-factory-add"><label>새 공장 입력 후 추가</label><div style="display:flex;gap:8px"><input id="o-factory-new" placeholder="예) ○○석재" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('o-factory','factories')"><i class="ti ti-plus"></i>추가</button></div></div>
       <div class="fld full"><label>메모</label><input id="o-note" placeholder="선택"></div>
     </div>
     <div class="reco" id="o-summary" style="margin-top:6px"><div class="row" id="o-hebe-info" style="border:none"><span class="rl">재고 연동</span><span class="rv">자재·장수 입력 시 표시</span></div></div>
@@ -986,8 +996,10 @@ async function submitShip() {
   const it = state.inventory.find(i => i.name === material);
   const hebe = it ? +(jang * (+it.hebePerJang || 0)).toFixed(2) : 0;
   if (it) await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) - jang) });
-  await Store.add('transactions', { type: 'out', itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, target: '', targetName, date, note: el('o-note').value.trim(), by: me.name });
-  await consumeHolding('출고');
+  const factory = (el('o-factory') && el('o-factory').value !== '__add') ? el('o-factory').value : '';
+  await Store.add('transactions', { type: 'out', itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, factory, target: '', targetName, date, note: el('o-note').value.trim(), by: me.name });
+  // 홀딩에서 넘어온 출고면 → 그 홀딩을 '확정'(출고 완료)으로
+  if (_holdConfirm) { await Store.update('holdings', _holdConfirm, { status: '확정', shippedDate: date, shippedJang: jang }); _holdConfirm = null; toast('홀딩 확정 (출고 완료)'); }
   toast(`출고 완료 · ${jang}장${it ? ` (${hebe}㎡)` : ''}`); closeModal();
 }
 
@@ -995,30 +1007,40 @@ async function submitShip() {
    홀딩 (업체 · 장수/헤베 · 사용일정)
    =================================================================== */
 function renderHold() {
-  const list = state.holdings.filter(h => h.status !== '해제' && h.status !== '소진').sort((a, b) => (a.useDate || '').localeCompare(b.useDate || ''));
-  const soon = list.filter(h => { const d = daysFromNow(h.useDate); return d != null && d >= 0 && d <= 3; });
-  const totJang = list.reduce((a, b) => a + (+b.jang || 0), 0), totHebe = list.reduce((a, b) => a + (+b.hebe || 0), 0);
+  const isResv = h => (h.status || '홀딩') === '홀딩';
+  const list = state.holdings.filter(h => h.status !== '해제').sort((a, b) => {
+    const ra = isResv(a) ? 0 : 1, rb = isResv(b) ? 0 : 1;
+    if (ra !== rb) return ra - rb;
+    return (a.useDate || '').localeCompare(b.useDate || '');
+  });
+  const reserved = list.filter(isResv);
+  const confirmed = list.filter(h => h.status === '확정');
+  const soon = reserved.filter(h => { const d = daysFromNow(h.useDate); return d != null && d >= 0 && d <= 3; });
   el('pg-hold').innerHTML = `
-    <div class="ph"><div><h2><i class="ti ti-lock"></i>자재 홀딩</h2><p>업체별 · 장수/헤베 · 사용일정</p></div>
+    <div class="ph"><div><h2><i class="ti ti-lock"></i>자재 홀딩</h2><p>예약 → 출고 시 '확정' · 현장과 연결</p></div>
       <button class="btn btn-pri btn-sm" onclick="openHoldForm()"><i class="ti ti-plus"></i>홀딩 등록</button></div>
     <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
-      <div class="stat"><div class="ic b"><i class="ti ti-lock"></i></div><div class="v">${list.length}</div><div class="l">홀딩 중</div></div>
+      <div class="stat"><div class="ic b"><i class="ti ti-lock"></i></div><div class="v">${reserved.length}</div><div class="l">홀딩 중</div><div class="s">예약</div></div>
       <div class="stat"><div class="ic a"><i class="ti ti-clock-exclamation"></i></div><div class="v" style="color:${soon.length ? 'var(--amber-t)' : 'inherit'}">${soon.length}</div><div class="l">사용 임박</div><div class="s">3일 이내</div></div>
-      <div class="stat"><div class="ic g"><i class="ti ti-stack-2"></i></div><div class="v">${totHebe.toFixed(0)}<span style="font-size:13px">㎡</span></div><div class="l">홀딩 헤베</div><div class="s">${totJang}장</div></div>
+      <div class="stat"><div class="ic g"><i class="ti ti-circle-check"></i></div><div class="v">${confirmed.length}</div><div class="l">확정</div><div class="s">출고완료</div></div>
     </div>
+    <div class="banner info"><i class="ti ti-info-circle"></i><span>홀딩 → <b>현장으로</b>는 연결만 되고 홀딩은 유지됩니다. <b>출고</b>를 입력해야 '확정'으로 넘어갑니다.</span></div>
     ${list.length ? list.map(h => {
       const d = daysFromNow(h.useDate);
-      const cls = d != null && d >= 0 && d <= 3 ? 'p-wait' : 'p-hold';
-      return `<div class="card" style="margin-bottom:11px">
+      const conf = h.status === '확정';
+      const cls = conf ? 'p-done' : (d != null && d >= 0 && d <= 3 ? 'p-wait' : 'p-hold');
+      return `<div class="card" style="margin-bottom:11px;${conf ? 'opacity:.92' : ''}">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
           <div><div style="font-size:15px;font-weight:700">${esc(h.vendor || '-')}</div><div style="font-size:12.5px;color:var(--t2);margin-top:2px">${esc(h.materialName || '')}</div>${h.forSiteName ? `<div style="margin-top:5px"><span class="pill p-hold"><i class="ti ti-building-community"></i>${esc(h.forSiteName)}</span></div>` : ''}</div>
-          <span class="pill ${cls}"><i class="ti ti-calendar"></i>${h.useDate || '미정'}${d != null && d >= 0 && d <= 7 ? ' · D-' + d : ''}</span>
+          ${conf ? `<span class="pill p-done"><i class="ti ti-circle-check"></i>확정</span>` : `<span class="pill ${cls}"><i class="ti ti-calendar"></i>${h.useDate || '미정'}${d != null && d >= 0 && d <= 7 ? ' · D-' + d : ''}</span>`}
         </div>
         <div style="display:flex;gap:18px;font-size:13px;margin-bottom:4px">
           <span style="color:var(--t2)">장수 <b style="color:var(--t1)">${+h.jang || 0}장</b></span>
           <span style="color:var(--t2)">헤베 <b style="color:var(--t1)">${(+h.hebe || 0).toFixed(1)}㎡</b></span>
         </div>
-        ${h.note ? `<div style="font-size:12px;color:var(--t3);margin-bottom:8px">${esc(h.note)}</div>` : ''}
+        ${conf ? `<div style="font-size:12px;color:var(--lime-t);margin-top:4px"><i class="ti ti-truck-delivery"></i> 출고 완료 ${esc(h.shippedDate || '')} · ${+h.shippedJang || 0}장</div>` : ''}
+        ${h.note ? `<div style="font-size:12px;color:var(--t3);margin-top:6px">${esc(h.note)}</div>` : ''}
+        ${conf ? `<div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-sm" style="flex:1" onclick="openHoldForm('${h.id}')"><i class="ti ti-edit"></i>수정</button></div>` : `
         <div style="display:flex;gap:8px;margin-top:10px">
           <button class="btn btn-pri btn-sm" style="flex:1" onclick="holdToSite('${h.id}')"><i class="ti ti-building-plus"></i>현장으로</button>
           <button class="btn btn-pri btn-sm" style="flex:1;background:var(--blue);border-color:var(--blue)" onclick="holdToShip('${h.id}')"><i class="ti ti-truck-delivery"></i>출고로</button>
@@ -1026,12 +1048,12 @@ function renderHold() {
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="btn btn-sm" style="flex:1" onclick="openHoldForm('${h.id}')"><i class="ti ti-edit"></i>수정</button>
           <button class="btn btn-sm" style="flex:1" onclick="releaseHold('${h.id}')"><i class="ti ti-lock-open"></i>해제</button>
-        </div>
+        </div>`}
       </div>`;
-    }).join('') : `<div class="empty"><i class="ti ti-lock-off"></i>홀딩 중인 자재가 없습니다</div>`}`;
+    }).join('') : `<div class="empty"><i class="ti ti-lock-off"></i>홀딩이 없습니다</div>`}`;
 }
-function openHoldForm(id) {
-  const h = id ? state.holdings.find(x => x.id === id) : null; const v = h || {};
+function openHoldForm(id, pre) {
+  const h = id ? state.holdings.find(x => x.id === id) : null; const v = h || Object.assign({}, pre || {});
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-lock-plus"></i>${h ? '홀딩 수정' : '홀딩 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
@@ -1066,22 +1088,17 @@ async function submitHold(id) {
 }
 async function releaseHold(id) { if (!confirm('홀딩을 해제할까요?')) return; await Store.update('holdings', id, { status: '해제' }); toast('홀딩 해제됨'); }
 
-/* 홀딩 → 현장 / 출고 전환 (등록 완료 시 해당 홀딩 '소진' 처리) */
+/* 홀딩 → 현장 연결 (홀딩은 그대로 살아있고, 현장에 연결만) */
 function holdToSite(id) {
   const h = state.holdings.find(x => x.id === id); if (!h) return;
-  _consumeHolding = id;
-  openSiteForm(null, { materialName: h.materialName, client: h.vendor, qty: String(h.jang || ''), note: '홀딩에서 전환' });
+  _holdLinkSite = id;
+  openSiteForm(null, { materialName: h.materialName, client: h.vendor, qty: String(h.jang || ''), note: '홀딩 연결' });
 }
+/* 홀딩 → 출고 (출고가 찍히면 그 홀딩이 '확정'으로) */
 function holdToShip(id) {
   const h = state.holdings.find(x => x.id === id); if (!h) return;
-  _consumeHolding = id;
-  openShipForm({ material: h.materialName || '', jang: h.jang || '', targetName: h.vendor || '' });
-}
-async function consumeHolding(kind) {
-  if (!_consumeHolding) return;
-  const id = _consumeHolding; _consumeHolding = null;
-  await Store.update('holdings', id, { status: '소진', consumedTo: kind || '', consumedAt: todayStr() });
-  toast('홀딩 소진 처리됨 (' + (kind || '') + ')');
+  _holdConfirm = id;
+  openShipForm({ material: h.materialName || '', jang: h.jang || '', targetName: h.forSiteName || h.vendor || '' });
 }
 
 /* ===================================================================
