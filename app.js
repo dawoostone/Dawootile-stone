@@ -283,10 +283,24 @@ function tryLogin() {
 function logout() { me = null; sessionStorage.removeItem('dws_me'); location.reload(); }
 
 /* ---------- 6. 네비게이션 ---------- */
+/* ---------- 햄버거 드로어 ---------- */
+function toggleDrawer() {
+  const d = el('drawer');
+  if (d.classList.contains('open')) closeDrawer();
+  else {
+    if (me) { el('dw-name').textContent = me.name; el('dw-role').textContent = isAdmin() ? '관리자' : '직원'; }
+    document.querySelectorAll('.drawer-i[data-tab]').forEach(n => n.classList.toggle('active', n.dataset.tab === tab));
+    d.classList.add('open'); el('drawer-ov').classList.add('open');
+  }
+}
+function closeDrawer() { el('drawer').classList.remove('open'); el('drawer-ov').classList.remove('open'); }
+function goD(t) { closeDrawer(); go(t); }
+
 function go(t) {
   tab = t;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-i').forEach(n => n.classList.toggle('active', n.dataset.tab === t));
+  document.querySelectorAll('.drawer-i[data-tab]').forEach(n => n.classList.toggle('active', n.dataset.tab === t));
   el('pg-' + t).classList.add('active');
   el('fab').style.display = (t === 'sites' || t === 'stock' || t === 'hold') ? 'flex' : 'none';
   render();

@@ -285,6 +285,24 @@ input,select,textarea{font-family:inherit}
 .mem .info .rl{font-size:11.5px;color:var(--t3)}
 .sec-label{font-size:12px;font-weight:700;color:var(--t2);margin:14px 0 8px;display:flex;align-items:center;gap:6px}
 .sec-label i{color:var(--g)}
+.tb-menu{color:#fff;font-size:22px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:8px;margin-right:4px;flex-shrink:0}
+.tb-menu:active{background:rgba(255,255,255,.18)}
+.drawer-ov{position:fixed;inset:0;background:rgba(16,30,26,.45);z-index:60;opacity:0;pointer-events:none;transition:opacity .22s}
+.drawer-ov.open{opacity:1;pointer-events:auto}
+.drawer{position:fixed;top:0;left:0;bottom:0;width:80%;max-width:282px;background:#fff;z-index:61;transform:translateX(-100%);transition:transform .25s ease;display:flex;flex-direction:column;box-shadow:6px 0 26px rgba(0,0,0,.24)}
+.drawer.open{transform:translateX(0)}
+.drawer-h{background:linear-gradient(135deg,#0F6E56,#1D9E75);color:#fff;padding:18px 16px;padding-top:max(18px,env(safe-area-inset-top))}
+.drawer-h .lg{width:40px;height:40px;border-radius:11px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:21px;margin-bottom:10px}
+.drawer-h b{font-size:15px;font-weight:700}
+.drawer-h small{display:block;font-size:11.5px;opacity:.85;margin-top:2px}
+.drawer-nav{display:flex;flex-direction:column;padding:8px 0;flex:1;overflow-y:auto}
+.drawer-i{display:flex;align-items:center;gap:13px;padding:13px 16px;font-size:14.5px;font-weight:500;color:var(--t1);border-left:3px solid transparent;text-align:left;background:none}
+.drawer-i i{font-size:20px;color:var(--t3);width:22px;text-align:center}
+.drawer-i:active{background:var(--soft)}
+.drawer-i.active{background:var(--gl2);color:var(--gd);font-weight:700;border-left-color:var(--g)}
+.drawer-i.active i{color:var(--g)}
+.drawer-i.lo{margin-top:auto;color:var(--red-t);border-top:1px solid var(--bd)}
+.drawer-i.lo i{color:var(--red-t)}
 </style>
 </head>
 <body>
@@ -310,15 +328,35 @@ input,select,textarea{font-family:inherit}
 <!-- ===================== APP ===================== -->
 <div id="app">
   <div class="topbar">
-    <div class="tb-logo">
-      <div class="ico"><i class="ti ti-diamond"></i></div>
-      <div>다우세라믹앤석재<small>통합관리 시스템</small></div>
+    <div style="display:flex;align-items:center;gap:6px;min-width:0">
+      <button class="tb-menu" onclick="toggleDrawer()" aria-label="메뉴"><i class="ti ti-menu-2"></i></button>
+      <div class="tb-logo">
+        <div class="ico"><i class="ti ti-diamond"></i></div>
+        <div>다우세라믹앤석재<small>통합관리 시스템</small></div>
+      </div>
     </div>
     <div class="tb-right">
       <span class="sync-dot" id="sync"><span class="d"></span><span id="sync-t">실시간</span></span>
       <span class="tb-user"><span class="av" id="me-av"></span><span id="me-nm"></span></span>
     </div>
   </div>
+
+  <div class="drawer-ov" id="drawer-ov" onclick="closeDrawer()"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-h">
+      <div class="lg"><i class="ti ti-diamond"></i></div>
+      <b id="dw-name">사용자</b><small id="dw-role"></small>
+    </div>
+    <nav class="drawer-nav">
+      <button class="drawer-i active" data-tab="home" onclick="goD('home')"><i class="ti ti-home-2"></i>홈</button>
+      <button class="drawer-i" data-tab="sites" onclick="goD('sites')"><i class="ti ti-building-community"></i>현장</button>
+      <button class="drawer-i" data-tab="stock" onclick="goD('stock')"><i class="ti ti-packages"></i>재고 · 입고</button>
+      <button class="drawer-i" data-tab="ship" onclick="goD('ship')"><i class="ti ti-truck-delivery"></i>출고</button>
+      <button class="drawer-i" data-tab="hold" onclick="goD('hold')"><i class="ti ti-lock"></i>홀딩</button>
+      <button class="drawer-i" data-tab="settings" onclick="goD('settings')"><i class="ti ti-settings"></i>설정</button>
+      <button class="drawer-i lo" onclick="logout()"><i class="ti ti-logout"></i>로그아웃</button>
+    </nav>
+  </aside>
 
   <div class="wrap">
     <div class="page active" id="pg-home"></div>
