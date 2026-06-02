@@ -79,6 +79,7 @@ let tab = 'home';
 let filters = { sites: 'all', stock: 'all', stockSearch: '' };
 let _holdLinkSite = null;   // 현장 저장 시 이 홀딩을 현장에 '연결'(소진 아님)
 let _holdConfirm = null;    // 출고 저장 시 이 홀딩을 '확정' 처리
+let _busy = false;          // 등록 버튼 연속 클릭(중복 저장) 방지
 function openStockTab(filter) { filters.stock = filter || 'all'; filters.stockSearch = ''; go('stock'); }
 
 /* ---------- 2. 유틸 ---------- */
@@ -947,7 +948,7 @@ function renderShip() {
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-list-details"></i>최근 출고</h3></div>
-      ${outs.length ? outs.slice(0, 10).map(t => `<div class="alert-i b"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${esc(t.itemName)} ${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · ${esc(t.targetName || '')}${t.factory ? ' · 공장 ' + esc(t.factory) : ''} · ${esc(t.by || '')}</span></div></div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`}
+      ${outs.length ? outs.slice(0, 10).map(t => `<div class="alert-i b"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${esc(t.itemName)} ${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · ${esc(t.targetName || '')}${t.factory ? ' · 공장 ' + esc(t.factory) : ''} · ${esc(t.by || '')}</span></div>${isAdmin() ? `<button class="x" onclick="delShip('${t.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`}
     </div>`;
 }
 function openShipForm(pre) {
@@ -993,14 +994,25 @@ async function submitShip() {
   if (!material) { toast('출고 자재를 입력하세요'); return; }
   if (jang <= 0) { toast('출고 장수를 입력하세요'); return; }
   if (!date) { toast('출고일을 선택하세요'); return; }
-  const it = state.inventory.find(i => i.name === material);
-  const hebe = it ? +(jang * (+it.hebePerJang || 0)).toFixed(2) : 0;
-  if (it) await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) - jang) });
-  const factory = (el('o-factory') && el('o-factory').value !== '__add') ? el('o-factory').value : '';
-  await Store.add('transactions', { type: 'out', itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, factory, target: '', targetName, date, note: el('o-note').value.trim(), by: me.name });
-  // 홀딩에서 넘어온 출고면 → 그 홀딩을 '확정'(출고 완료)으로
-  if (_holdConfirm) { await Store.update('holdings', _holdConfirm, { status: '확정', shippedDate: date, shippedJang: jang }); _holdConfirm = null; toast('홀딩 확정 (출고 완료)'); }
-  toast(`출고 완료 · ${jang}장${it ? ` (${hebe}㎡)` : ''}`); closeModal();
+  if (_busy) return; _busy = true;
+  try {
+    const it = state.inventory.find(i => i.name === material);
+    const hebe = it ? +(jang * (+it.hebePerJang || 0)).toFixed(2) : 0;
+    if (it) await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) - jang) });
+    const factory = (el('o-factory') && el('o-factory').value !== '__add') ? el('o-factory').value : '';
+    await Store.add('transactions', { type: 'out', itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, factory, target: '', targetName, date, note: el('o-note').value.trim(), by: me.name });
+    if (_holdConfirm) { await Store.update('holdings', _holdConfirm, { status: '확정', shippedDate: date, shippedJang: jang }); _holdConfirm = null; }
+    toast(`출고 완료 · ${jang}장${it ? ` (${hebe}㎡)` : ''}`); closeModal();
+  } finally { _busy = false; }
+}
+/* 출고 삭제 (관리자) — 재고 연동분 자동 복구 */
+async function delShip(id) {
+  if (!isAdmin()) { toast('관리자만 삭제할 수 있습니다'); return; }
+  const t = state.transactions.find(x => x.id === id); if (!t) return;
+  if (!confirm(`이 출고를 삭제할까요?\n${t.itemName} ${t.jang}장 · ${t.date}\n재고 연동분은 자동 복구됩니다.`)) return;
+  if (t.itemId) { const it = state.inventory.find(i => i.id === t.itemId); if (it) await Store.update('inventory', it.id, { jang: (+it.jang || 0) + (+t.jang || 0) }); }
+  await Store.remove('transactions', id);
+  toast('출고 삭제됨 (재고 복구)');
 }
 
 /* ===================================================================
