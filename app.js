@@ -632,9 +632,9 @@ function openSiteForm(id, pre) {
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-building-plus"></i>${s ? '현장 수정' : '현장 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
-      <div class="fld"><label>현장명 <span style="color:var(--t3);font-weight:500">(미입력 시 업체명)</span></label><input id="s-name" value="${esc(v.name || '')}" placeholder="예) 반포 자이 49평"></div>
+      <div class="fld"><label>현장명 <span style="color:var(--t3);font-weight:500">(미입력 시 업체명)</span></label><input id="s-name" value="${esc(v.name || '')}" placeholder="현장명"></div>
       <div class="fld"><label>업체(거래처)<span class="req">*</span></label>${searchBox('s-client', '업체명 검색·입력', v.client, 'companyNames', '')}</div>
-      <div class="fld"><label>지역</label><input id="s-region" value="${esc(v.region || '')}" placeholder="예) 서울 서초구"></div>
+      <div class="fld"><label>지역</label><input id="s-region" value="${esc(v.region || '')}" placeholder="지역"></div>
       <div class="fld"><label>현장 담당자</label><input id="s-manager" value="${esc(v.manager || me.name)}"></div>
       <div class="fld full"><label>현장 주소</label><input id="s-address" value="${esc(v.address || '')}" placeholder="상세 주소"></div>
       <div class="fld"><label>발주 유형</label>
@@ -645,14 +645,14 @@ function openSiteForm(id, pre) {
       </div>
       <div class="fld"><label>진행 단계</label><select id="s-stage">${SITE_STAGES.map(st => `<option ${(v.stage || '접수') === st ? 'selected' : ''}>${st}</option>`).join('')}</select></div>
       ${activeHoldings().length ? `<div class="fld full"><label><i class="ti ti-lock" style="font-size:13px;color:var(--blue)"></i> 홀딩에서 불러오기 <span style="color:var(--t3);font-weight:500">(선택 — 없으면 아래에 직접 입력)</span></label><select id="s-hold" onchange="pickSiteHolding()"><option value="">— 직접 입력 —</option>${holdingOptions()}</select></div>` : ''}
-      <div class="fld"><label>자재명<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(검색·직접입력)</span></label>${searchBox('s-material', '자재명 검색 (예: 카)', v.materialName, 'matNames', '')}</div>
-      <div class="fld"><label>수량<span class="req">*</span></label><input id="s-qty" value="${esc(v.qty || '')}" placeholder="예) 28" inputmode="decimal"></div>
+      <div class="fld"><label>자재명<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(검색·직접입력)</span></label>${searchBox('s-material', '자재명 검색', v.materialName, 'matNames', '')}</div>
+      <div class="fld"><label>수량<span class="req">*</span></label><input id="s-qty" value="${esc(v.qty || '')}" placeholder="수량" inputmode="decimal"></div>
       <div class="fld"><label>실측일 <span id="s-measure-lbl" style="color:var(--t3)">${v.orderType === '도면' ? '(도면발주·생략)' : ''}</span></label><input type="date" id="s-measureDate" value="${esc(v.measureDate || '')}" ${v.orderType === '도면' ? 'disabled' : ''}></div>
       <div class="fld"><label>시공일<span class="req">*</span></label><input type="date" id="s-constructDate" value="${esc(v.constructDate || '')}"></div>
       <div class="fld"><label>가공 공장<span class="req">*</span></label><select id="s-factory" onchange="onMasterChange('s-factory','factories')">${masterOptions('factories', v.factory || '')}</select></div>
-      <div class="fld full hidden" id="s-factory-add"><label>새 공장 입력 후 추가</label><div style="display:flex;gap:8px"><input id="s-factory-new" placeholder="예) ○○석재" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('s-factory','factories')"><i class="ti ti-plus"></i>추가</button></div></div>
+      <div class="fld full hidden" id="s-factory-add"><label>새 공장 입력 후 추가</label><div style="display:flex;gap:8px"><input id="s-factory-new" placeholder="이름 입력" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('s-factory','factories')"><i class="ti ti-plus"></i>추가</button></div></div>
       <div class="fld"><label>시공팀<span class="req">*</span></label><select id="s-team" onchange="onMasterChange('s-team','teams')">${masterOptions('teams', v.team || '')}</select></div>
-      <div class="fld full hidden" id="s-team-add"><label>새 시공팀 입력 후 추가</label><div style="display:flex;gap:8px"><input id="s-team-new" placeholder="예) ○○팀" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('s-team','teams')"><i class="ti ti-plus"></i>추가</button></div></div>
+      <div class="fld full hidden" id="s-team-add"><label>새 시공팀 입력 후 추가</label><div style="display:flex;gap:8px"><input id="s-team-new" placeholder="이름 입력" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('s-team','teams')"><i class="ti ti-plus"></i>추가</button></div></div>
       <label class="chk full ${v.paid ? 'on' : ''}" id="s-paid-w"><input type="checkbox" id="s-paid" ${v.paid ? 'checked' : ''} onchange="this.closest('.chk').classList.toggle('on',this.checked)"> 결제 완료</label>
       <label class="chk full ${v.confirmed ? 'on' : ''}" id="s-confirmed-w"><input type="checkbox" id="s-confirmed" ${v.confirmed ? 'checked' : ''} onchange="this.closest('.chk').classList.toggle('on',this.checked)"> 시공 확정</label>
       <div class="fld full"><label>특이사항</label><textarea id="s-note" placeholder="현장 메모">${esc(v.note || '')}</textarea></div>
@@ -827,21 +827,21 @@ function openItemForm(id) {
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-box"></i>${it ? '품목 수정' : '품목 추가'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
-      <div class="fld"><label>자재명<span class="req">*</span></label><input id="i-name" value="${esc(v.name || '')}" placeholder="예) 카무스 화이트"></div>
+      <div class="fld"><label>자재명<span class="req">*</span></label><input id="i-name" value="${esc(v.name || '')}" placeholder="자재명"></div>
       <div class="fld"><label>규격 (가로*세로*두께)</label>
         <select id="i-spec" onchange="onSpecChange('i')">${specOptions(v.spec || '')}</select>
       </div>
       <div class="fld full hidden" id="i-spec-add">
         <label>새 규격 입력 후 추가</label>
         <div style="display:flex;gap:8px">
-          <input id="i-spec-new" placeholder="예) 1600*3200*12" inputmode="text" style="flex:1">
+          <input id="i-spec-new" placeholder="가로*세로*두께" inputmode="text" style="flex:1">
           <button class="btn btn-pri btn-sm" type="button" onclick="commitSpec('i')"><i class="ti ti-plus"></i>추가</button>
         </div>
       </div>
       <div class="fld"><label>공급처</label><input id="i-vendor" value="${esc(v.vendor || '')}" placeholder="공급처(선택)"></div>
       <div class="fld"><label>창고</label><input id="i-depot" value="${esc(v.depot || '본사')}"></div>
       <div class="fld"><label>현재 장수</label><input id="i-jang" value="${esc(v.jang || 0)}" inputmode="numeric" oninput="updateItemHebe()"></div>
-      <div class="fld"><label>안전재고(장) — 미만이면 '부족'</label><input id="i-safe" value="${esc(v.safeJang || 0)}" inputmode="numeric" placeholder="예) 12"></div>
+      <div class="fld"><label>안전재고(장) — 미만이면 '부족'</label><input id="i-safe" value="${esc(v.safeJang || 0)}" inputmode="numeric" placeholder="안전재고 장수"></div>
       <div class="fld full"><div class="reco" id="i-hebe-info" style="margin-top:0"><div class="reco-h"><i class="ti ti-ruler-2"></i>자동 환산</div><div class="row"><span class="rl">장당 헤베</span><span class="rv"><b id="i-perjang">${(parseSpec(v.spec).hebePerJang || 0).toFixed(3)}</b> ㎡/장</span></div><div class="row"><span class="rl">현재 재고 헤베</span><span class="rv"><b id="i-tothebe">${itemHebe(v).toFixed(2)}</b> ㎡</span></div></div></div>
     </div>
     ${it ? `
@@ -900,7 +900,7 @@ function openStockForm() {
         <select id="in-item" onchange="onInItemChange()">${itemOptions('')}</select>
       </div>
       <div class="fld"><label>규격</label><input id="in-spec" readonly placeholder="자재 선택 시 자동" style="background:var(--soft)"></div>
-      <div class="fld"><label>롯트 넘버<span class="req">*</span></label><input id="in-lot" placeholder="예) LOT-26-0531"></div>
+      <div class="fld"><label>롯트 넘버<span class="req">*</span></label><input id="in-lot" placeholder="롯트 넘버 입력"></div>
     </div>
     <div class="sec-label"><i class="ti ti-layout-grid"></i>패턴별 장수 <span style="font-weight:500;color:var(--t3)">(패턴이 없으면 장수만 입력)</span></div>
     <div id="in-patterns"></div>
@@ -908,7 +908,7 @@ function openStockForm() {
     <div class="frm" style="margin-top:14px">
       <div class="fld"><label>입고일</label><input type="date" id="in-date" value="${todayStr()}"></div>
       <div class="fld"><label>발주처/매입처 <span style="color:var(--t3);font-weight:500">(기본: 직발주)</span></label><select id="in-vendor" onchange="onMasterChange('in-vendor','suppliers')">${masterOptions('suppliers', '다우세라믹앤석재')}</select></div>
-      <div class="fld full hidden" id="in-vendor-add"><label>기타 발주처 입력 후 추가</label><div style="display:flex;gap:8px"><input id="in-vendor-new" placeholder="예) ○○석재" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('in-vendor','suppliers')"><i class="ti ti-plus"></i>추가</button></div></div>
+      <div class="fld full hidden" id="in-vendor-add"><label>기타 발주처 입력 후 추가</label><div style="display:flex;gap:8px"><input id="in-vendor-new" placeholder="이름 입력" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('in-vendor','suppliers')"><i class="ti ti-plus"></i>추가</button></div></div>
       <div class="fld full"><label>메모</label><input id="in-note" placeholder="선택"></div>
     </div>
     <div class="reco" id="in-summary" style="margin-top:14px"><div class="reco-h"><i class="ti ti-calculator"></i>자동 환산</div>
@@ -929,7 +929,7 @@ function addPatternRow() {
   const row = document.createElement('div');
   row.className = 'pat-row';
   row.style.cssText = 'display:flex;gap:8px;margin-bottom:8px';
-  row.innerHTML = `<input class="in-pat-name" placeholder="패턴(선택) 예) A형" style="flex:1.2;font-size:14px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px">
+  row.innerHTML = `<input class="in-pat-name" placeholder="패턴(선택)" style="flex:1.2;font-size:14px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px">
     <input class="in-pat-jang" inputmode="numeric" placeholder="장수" oninput="computeInTotal()" style="flex:1;font-size:14px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px">
     <button class="btn btn-ghost btn-sm" type="button" onclick="this.parentElement.remove();computeInTotal()"><i class="ti ti-x"></i></button>`;
   box.appendChild(row);
@@ -1002,11 +1002,11 @@ function openShipForm(pre) {
     <div class="sheet-h"><h3><i class="ti ti-logout"></i>출고 등록</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
       <div class="fld full"><label>업체명<span class="req">*</span></label>${searchBox('o-targetName', '업체명 검색·입력', '', 'companyNames', '')}</div>
-      <div class="fld full"><label>출고 자재<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(검색·직접입력)</span></label>${searchBox('o-material', '자재명 검색 (예: 카)', '', 'matNames', 'computeOutHebe')}</div>
-      <div class="fld"><label>출고 장수<span class="req">*</span></label><input id="o-jang" inputmode="numeric" placeholder="예) 4" oninput="computeOutHebe()"></div>
+      <div class="fld full"><label>출고 자재<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(검색·직접입력)</span></label>${searchBox('o-material', '자재명 검색', '', 'matNames', 'computeOutHebe')}</div>
+      <div class="fld"><label>출고 장수<span class="req">*</span></label><input id="o-jang" inputmode="numeric" placeholder="장수" oninput="computeOutHebe()"></div>
       <div class="fld"><label>출고일<span class="req">*</span></label><input type="date" id="o-date" value="${todayStr()}"></div>
       <div class="fld"><label>발주/출고 공장</label><select id="o-factory" onchange="onMasterChange('o-factory','factories')">${masterOptions('factories', '')}</select></div>
-      <div class="fld full hidden" id="o-factory-add"><label>새 공장 입력 후 추가</label><div style="display:flex;gap:8px"><input id="o-factory-new" placeholder="예) ○○석재" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('o-factory','factories')"><i class="ti ti-plus"></i>추가</button></div></div>
+      <div class="fld full hidden" id="o-factory-add"><label>새 공장 입력 후 추가</label><div style="display:flex;gap:8px"><input id="o-factory-new" placeholder="이름 입력" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('o-factory','factories')"><i class="ti ti-plus"></i>추가</button></div></div>
       <div class="fld full"><label>메모</label><input id="o-note" placeholder="선택"></div>
     </div>
     <div class="reco" id="o-summary" style="margin-top:6px"><div class="row" id="o-hebe-info" style="border:none"><span class="rl">재고 연동</span><span class="rv">자재·장수 입력 시 표시</span></div></div>
@@ -1127,9 +1127,9 @@ function openHoldForm(id, pre) {
       ${state.sites.length ? `<div class="fld full"><label><i class="ti ti-building-community" style="font-size:13px;color:var(--blue)"></i> 현장에서 선택 <span style="color:var(--t3);font-weight:500">— 고르면 자재·수량·시공일 자동 입력</span></label><select id="h-site" onchange="pickHoldSite()"><option value="">— 직접 입력 —</option>${siteOptions(v.forSiteId || '')}</select></div>` : ''}
       <div class="fld"><label>업체/거래처<span class="req">*</span></label>${searchBox('h-vendor', '업체명 검색·입력', v.vendor, 'companyNames', '')}</div>
       <div class="fld"><label>사용 예정일</label><input type="date" id="h-useDate" value="${esc(v.useDate || '')}"></div>
-      <div class="fld full"><label>자재명 <span id="h-stock" style="color:var(--t3);font-weight:500"></span></label>${searchBox('h-material', '자재명 검색 (예: 카)', v.materialName, 'matNames', 'onHoldMaterial')}</div>
-      <div class="fld"><label>장수</label><input id="h-jang" value="${esc(v.jang || '')}" inputmode="numeric"></div>
-      <div class="fld"><label>헤베(㎡)</label><input id="h-hebe" value="${esc(v.hebe || '')}" inputmode="decimal"></div>
+      <div class="fld full"><label>자재명 <span id="h-stock" style="color:var(--t3);font-weight:500"></span></label>${searchBox('h-material', '자재명 검색', v.materialName, 'matNames', 'onHoldMaterial')}</div>
+      <div class="fld"><label>장수</label><input id="h-jang" value="${esc(v.jang || '')}" inputmode="numeric" oninput="onHoldQty()"></div>
+      <div class="fld"><label>헤베(㎡) <span style="color:var(--t3);font-weight:500">자동</span></label><input id="h-hebe" value="${esc(v.hebe || '')}" inputmode="decimal" readonly style="background:var(--soft)"></div>
       <div class="fld full"><label>메모</label><input id="h-note" value="${esc(v.note || '')}" placeholder="선택"></div>
     </div>
     <div class="frm-foot">
@@ -1138,14 +1138,24 @@ function openHoldForm(id, pre) {
     </div>`);
   onHoldMaterial();
 }
-/* 홀딩 자재명 옆에 잔여 재고 표시 */
+/* 홀딩 자재명 옆에 잔여 재고 표시 + 헤베 자동환산 */
 function onHoldMaterial() {
   const nm = (el('h-material') && el('h-material').value || '').trim();
-  const box = el('h-stock'); if (!box) return;
+  const box = el('h-stock');
   const it = state.inventory.find(i => i.name === nm);
-  if (it) box.innerHTML = `· 잔여 재고 <b style="color:var(--gd)">${+it.jang || 0}장</b> (${itemHebe(it).toFixed(1)}㎡)`;
-  else if (nm) box.innerHTML = `· <span style="color:var(--amber-t)">재고에 없는 자재</span>`;
-  else box.textContent = '';
+  if (box) {
+    if (it) box.innerHTML = `· 잔여 재고 <b style="color:var(--gd)">${+it.jang || 0}장</b> (${itemHebe(it).toFixed(1)}㎡)`;
+    else if (nm) box.innerHTML = `· <span style="color:var(--amber-t)">재고에 없는 자재 (헤베 자동환산 불가)</span>`;
+    else box.textContent = '';
+  }
+  onHoldQty();
+}
+/* 홀딩 장수 → 헤베 자동환산 (자재가 재고에 있을 때, 장당 헤베 사용) */
+function onHoldQty() {
+  const nm = (el('h-material') && el('h-material').value || '').trim();
+  const it = state.inventory.find(i => i.name === nm);
+  const jang = parseFloat(el('h-jang') && el('h-jang').value) || 0;
+  if (it && el('h-hebe')) el('h-hebe').value = (jang * (+it.hebePerJang || 0)).toFixed(2);
 }
 function pickHoldSite() {
   const id = el('h-site').value; if (!id) return;
@@ -1197,7 +1207,7 @@ function renderSettings() {
       ${!isAdmin() ? `<div class="banner info" style="margin-top:12px"><i class="ti ti-info-circle"></i>직원 추가·삭제는 관리자만 가능합니다.</div>` : ''}
     </div>
     <div class="card">
-      <div class="card-h"><h3><i class="ti ti-briefcase"></i>거래처 관리</h3></div>
+      <div class="card-h"><h3><i class="ti ti-briefcase"></i>거래처 관리</h3>${isAdmin() && (state.clients || []).length ? `<button class="more" style="color:var(--red-t)" onclick="delAllClients()"><i class="ti ti-trash" style="font-size:14px"></i>전체 삭제</button>` : ''}</div>
       ${isAdmin() ? `<div style="display:flex;gap:8px;margin-bottom:10px"><input id="client-new" placeholder="거래처명 입력" autocomplete="off" style="flex:1;font-size:16px;padding:11px 12px;border:1.5px solid var(--bd2);border-radius:10px"><button class="btn btn-pri btn-sm" onclick="addClient()"><i class="ti ti-plus"></i>등록</button></div>` : ''}
       ${(state.clients || []).length ? state.clients.slice().sort((a, b) => (a.value || '').localeCompare(b.value || '')).map(c => `<div class="mem"><div class="info"><div class="nm">${esc(c.value)}</div></div>${isAdmin() ? `<button class="x" onclick="delClient('${c.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div style="font-size:12.5px;color:var(--t3);padding:4px 0">등록된 거래처가 없습니다. 등록하면 현장·출고·홀딩의 업체명 검색에 나옵니다.</div>`}
       ${!isAdmin() ? `<div class="banner info" style="margin-top:10px"><i class="ti ti-info-circle"></i>거래처 등록·삭제는 관리자만 가능합니다.</div>` : ''}
@@ -1224,9 +1234,9 @@ function openMemberForm(id) {
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-user-plus"></i>${m ? '직원 수정' : '직원 추가'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
-      <div class="fld full"><label>이름<span class="req">*</span></label><input id="m-name" value="${esc(v.name || '')}" placeholder="예) 김민준"></div>
+      <div class="fld full"><label>이름<span class="req">*</span></label><input id="m-name" value="${esc(v.name || '')}" placeholder="이름"></div>
       <div class="fld"><label>권한</label><select id="m-role"><option value="staff" ${v.role === 'staff' ? 'selected' : ''}>직원</option><option value="admin" ${v.role === 'admin' ? 'selected' : ''}>관리자</option></select></div>
-      <div class="fld"><label>PIN(4자리)<span class="req">*</span></label><input id="m-pin" value="${esc(v.pin || '')}" inputmode="numeric" maxlength="4" placeholder="예) 1234"></div>
+      <div class="fld"><label>PIN(4자리)<span class="req">*</span></label><input id="m-pin" value="${esc(v.pin || '')}" inputmode="numeric" maxlength="4" placeholder="숫자 4자리"></div>
     </div>
     <div class="frm-foot">
       ${m && state.members.length > 1 ? `<button class="btn btn-danger" onclick="delMember('${id}')"><i class="ti ti-trash"></i></button>` : ''}
@@ -1249,6 +1259,12 @@ async function addClient() {
   await Store.add('clients', { value: v }); el('client-new').value = ''; toast('거래처 등록됨');
 }
 async function delClient(id) { if (!isAdmin()) return; if (!confirm('이 거래처를 삭제할까요?')) return; await Store.remove('clients', id); toast('삭제됨'); }
+async function delAllClients() {
+  if (!isAdmin()) return;
+  if (!confirm('등록된 거래처를 전부 삭제할까요? 되돌릴 수 없습니다.')) return;
+  for (const c of (state.clients || []).slice()) { await Store.remove('clients', c.id); }
+  toast('거래처 전체 삭제됨');
+}
 
 function openHelp() {
   openModal(`
@@ -1268,9 +1284,9 @@ function openQuoteHelper() {
     <div class="sheet-h"><h3><i class="ti ti-calculator"></i>견적 비용 도우미</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="banner warn"><i class="ti ti-alert-triangle"></i><span>고객응대 매뉴얼 기준 <b>참고 견적</b>입니다. 실제 견적은 현장 조건에 따라 조정하세요.</span></div>
     <div class="frm">
-      <div class="fld"><label>헤베(㎡)</label><input id="q-hebe" inputmode="decimal" placeholder="예) 28" oninput="calcQuote()"></div>
-      <div class="fld"><label>가공 장수</label><input id="q-jang" inputmode="numeric" placeholder="예) 2" oninput="calcQuote()"></div>
-      <div class="fld"><label>지역</label><input id="q-region" placeholder="예) 서울 / 대전" oninput="calcQuote()"></div>
+      <div class="fld"><label>헤베(㎡)</label><input id="q-hebe" inputmode="decimal" placeholder="헤베" oninput="calcQuote()"></div>
+      <div class="fld"><label>가공 장수</label><input id="q-jang" inputmode="numeric" placeholder="장수" oninput="calcQuote()"></div>
+      <div class="fld"><label>지역</label><input id="q-region" placeholder="지역" oninput="calcQuote()"></div>
       <label class="chk" id="q-am-w"><input type="checkbox" id="q-allmarble" onchange="this.closest('.chk').classList.toggle('on',this.checked);calcQuote()"> 모든대리석 시공</label>
     </div>
     <div id="q-out"></div>`);
