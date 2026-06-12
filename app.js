@@ -488,13 +488,9 @@ function matNames() {
   return [...s].sort((a, b) => a.localeCompare(b));
 }
 function companyNames() {
+  // 업체/거래처 검색은 '거래처 관리'에 등록된 거래처만 표시
   const s = new Set();
   (state.clients || []).forEach(c => c.value && s.add(c.value));
-  state.sites.forEach(x => x.client && s.add(x.client));
-  state.holdings.forEach(h => h.vendor && s.add(h.vendor));
-  state.transactions.forEach(t => t.targetName && s.add(t.targetName));
-  (state.suppliers || []).forEach(c => c.value && s.add(c.value));
-  (state.factories || []).forEach(c => c.value && s.add(c.value));
   return [...s].sort((a, b) => a.localeCompare(b));
 }
 /* searchBox: 입력하면 부분일치 후보가 아래에 뜨고 클릭 선택. id는 그대로 유지(폼 제출 시 사용). */
