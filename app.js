@@ -995,7 +995,7 @@ function renderShip() {
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0 8px;gap:8px;flex-wrap:wrap">
         <div style="font-size:13px;color:var(--t2)" id="r-sum">전체 기간</div>
-        <button class="btn btn-sm" onclick="downloadShipCsv()"><i class="ti ti-download"></i>CSV(엑셀) 다운로드</button>
+        <button class="btn btn-sm btn-pri" onclick="downloadShipXls()"><i class="ti ti-file-spreadsheet"></i>엑셀 다운로드</button>
       </div>
       <div class="tbl-wrap" style="max-height:340px;overflow:auto">
         <table class="tbl"><thead><tr><th>날짜</th><th>자재</th><th>장수</th><th>헤베</th><th>출고지</th><th>거래처</th></tr></thead><tbody id="r-body"></tbody></table>
@@ -1029,18 +1029,33 @@ function shipReport() {
   if (el('r-body')) el('r-body').innerHTML = list.length ? list.map(t => `<tr><td>${esc(t.date || '')}</td><td><b>${esc(t.itemName || '')}</b></td><td>${+t.jang || 0}장</td><td>${(+t.hebe || 0).toFixed(1)}㎡</td><td>${esc(t.dest || t.factory || '')}</td><td>${esc(t.targetName || '')}</td></tr>`).join('') : `<tr><td colspan="6"><div class="empty" style="padding:18px"><i class="ti ti-search-off"></i>해당 출고 내역이 없습니다</div></td></tr>`;
   if (el('r-sum')) el('r-sum').innerHTML = `${list.length}건 · 합계 <b style="color:var(--t1)">${tj}장 · ${th.toFixed(1)}㎡</b>`;
 }
-function downloadShipCsv() {
+function downloadShipXls() {
   const list = shipReportList();
   if (!list.length) { toast('내보낼 내역이 없습니다'); return; }
-  const head = ['출고일', '자재명', '규격', '장수', '헤베(㎡)', '출고지', '거래처', '롯트', '담당', '메모'];
-  const rows = list.map(t => [t.date || '', t.itemName || '', t.spec || '', (+t.jang || 0), (+t.hebe || 0), (t.dest || t.factory || ''), t.targetName || '', t.lot || '', t.by || '', (t.note || '').replace(/[\r\n]+/g, ' ')]);
-  const q = s => `"${String(s).replace(/"/g, '""')}"`;
-  const csv = [head.map(q).join(','), ...rows.map(r => r.map(q).join(','))].join('\n');
-  const blob = new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8;' });
+  const from = el('r-from') && el('r-from').value, to = el('r-to') && el('r-to').value;
+  const cl = el('r-client') && el('r-client').value, mt = el('r-mat') && el('r-mat').value;
+  const period = (from || to) ? `${from || '처음'} ~ ${to || todayStr()}` : '전체 기간';
+  const tj = list.reduce((a, b) => a + (+b.jang || 0), 0), th = list.reduce((a, b) => a + (+b.hebe || 0), 0);
+  const TH = (t, w) => `<th style="background:#0F6E56;color:#ffffff;font-weight:bold;border:0.5pt solid #0a4f3e;padding:7px 10px;text-align:center" ${w ? 'width="' + w + '"' : ''}>${t}</th>`;
+  const TD = (t, st) => `<td style="border:0.5pt solid #cfd8d4;padding:5px 10px;${st || ''}">${t}</td>`;
+  const body = list.map((t, i) => {
+    const bg = i % 2 ? 'background:#f3f6f4;' : '';
+    return `<tr>${TD(esc(t.date || ''), bg)}${TD('<b>' + esc(t.itemName || '') + '</b>', bg)}${TD(esc(t.spec || ''), bg)}${TD((+t.jang || 0), bg + 'mso-number-format:\\#\\,\\#\\#0;text-align:right')}${TD((+t.hebe || 0).toFixed(2), bg + 'text-align:right')}${TD(esc(t.dest || t.factory || ''), bg)}${TD(esc(t.targetName || ''), bg)}${TD(esc(t.lot || ''), bg)}${TD(esc(t.by || ''), bg)}</tr>`;
+  }).join('');
+  const sumStyle = 'border:0.5pt solid #cfd8d4;background:#e1f5ee;color:#0a4f3e;font-weight:bold;padding:7px 10px';
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>출고내역</x:Name><x:WorksheetOptions><x:FreezePanes/><x:SplitHorizontal>3</x:SplitHorizontal><x:TopRowBottomPane>3</x:TopRowBottomPane></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body>
+<table style="border-collapse:collapse;font-family:'맑은 고딕','Malgun Gothic',sans-serif;font-size:10.5pt">
+<tr><td colspan="9" style="font-size:16pt;font-weight:bold;color:#0F6E56;padding:8px 4px 2px">다우세라믹앤석재 · 출고 내역</td></tr>
+<tr><td colspan="9" style="font-size:9pt;color:#777;padding:0 4px 10px">기간 ${period}  ·  거래처 ${cl || '전체'}  ·  자재 ${mt || '전체'}  ·  생성일 ${todayStr()}  ·  총 ${list.length}건</td></tr>
+<tr>${TH('출고일', 90)}${TH('자재명', 150)}${TH('규격', 110)}${TH('장수', 60)}${TH('헤베(㎡)', 80)}${TH('출고지', 120)}${TH('거래처', 120)}${TH('롯트', 110)}${TH('담당', 80)}</tr>
+${body}
+<tr><td colspan="3" style="${sumStyle};text-align:right">합계</td><td style="${sumStyle};text-align:right">${tj}</td><td style="${sumStyle};text-align:right">${th.toFixed(2)}</td><td colspan="4" style="${sumStyle}"></td></tr>
+</table></body></html>`;
+  const blob = new Blob(['﻿' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-  a.download = '출고내역_' + todayStr() + '.csv'; document.body.appendChild(a); a.click();
+  a.download = '출고내역_' + todayStr() + '.xls'; document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
-  toast('CSV 다운로드 (' + list.length + '건)');
+  toast('엑셀 다운로드 (' + list.length + '건)');
 }
 function openShipForm(pre) {
   openModal(`
