@@ -993,7 +993,7 @@ function renderShip() {
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-list-details"></i>최근 출고</h3></div>
-      ${outs.length ? outs.slice(0, 10).map(t => `<div class="alert-i b"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${esc(t.itemName)} ${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · ${esc(t.targetName || '')}${t.factory ? ' · 공장 ' + esc(t.factory) : ''} · ${esc(t.by || '')}</span></div>${isAdmin() ? `<button class="x" onclick="delShip('${t.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`}
+      ${outs.length ? outs.slice(0, 10).map(t => `<div class="alert-i b"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${esc(t.itemName)} ${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · ${esc(t.targetName || '')}${(t.dest || t.factory) ? ' · → ' + esc(t.dest || t.factory) : ''} · ${esc(t.by || '')}</span></div>${isAdmin() ? `<button class="x" onclick="delShip('${t.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`}
     </div>`;
 }
 function openShipForm(pre) {
@@ -1004,8 +1004,14 @@ function openShipForm(pre) {
       <div class="fld full"><label>출고 자재<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(검색·직접입력)</span></label>${searchBox('o-material', '자재명 검색', '', 'matNames', 'computeOutHebe')}</div>
       <div class="fld"><label>출고 장수<span class="req">*</span></label><input id="o-jang" inputmode="numeric" placeholder="장수" oninput="computeOutHebe()"></div>
       <div class="fld"><label>출고일<span class="req">*</span></label><input type="date" id="o-date" value="${todayStr()}"></div>
-      <div class="fld"><label>발주/출고 공장</label><select id="o-factory" onchange="onMasterChange('o-factory','factories')">${masterOptions('factories', '')}</select></div>
-      <div class="fld full hidden" id="o-factory-add"><label>새 공장 입력 후 추가</label><div style="display:flex;gap:8px"><input id="o-factory-new" placeholder="이름 입력" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('o-factory','factories')"><i class="ti ti-plus"></i>추가</button></div></div>
+      <div class="fld full"><label>출고지(공장/현장)<span class="req">*</span></label>
+        <select id="o-dest" onchange="onShipDest()">
+          <option value="">선택…</option>
+          ${state.factories.slice().sort((a, b) => (a.value || '').localeCompare(b.value || '')).map(f => `<option value="${esc(f.value)}">${esc(f.value)} (공장)</option>`).join('')}
+          <option value="__manual">직접 입력 (현장·기타)</option>
+        </select>
+      </div>
+      <div class="fld full hidden" id="o-dest-manual"><label>출고지 직접 입력</label><input id="o-dest-text" placeholder="현장명/출고지 입력" autocomplete="off"></div>
       <div class="fld full"><label>메모</label><input id="o-note" placeholder="선택"></div>
     </div>
     <div class="reco" id="o-summary" style="margin-top:6px"><div class="row" id="o-hebe-info" style="border:none"><span class="rl">재고 연동</span><span class="rv">자재·장수 입력 시 표시</span></div></div>
@@ -1021,6 +1027,17 @@ function pickOutItem() {
   const id = el('o-pick') && el('o-pick').value; if (!id) return;
   const it = state.inventory.find(i => i.id === id); if (!it) return;
   el('o-material').value = it.name; computeOutHebe();
+}
+function onShipDest() {
+  const sel = el('o-dest'), box = el('o-dest-manual');
+  if (!sel || !box) return;
+  if (sel.value === '__manual') { box.classList.remove('hidden'); setTimeout(() => el('o-dest-text') && el('o-dest-text').focus(), 50); }
+  else box.classList.add('hidden');
+}
+function shipDestValue() {
+  const sel = el('o-dest'); if (!sel) return '';
+  if (sel.value === '__manual') return (el('o-dest-text') && el('o-dest-text').value || '').trim();
+  return sel.value;
 }
 function shipMatchedItem() { const nm = (el('o-material') && el('o-material').value || '').trim(); return nm ? state.inventory.find(i => i.name === nm) : null; }
 function computeOutHebe() {
@@ -1038,13 +1055,14 @@ async function submitShip() {
   if (!material) { toast('출고 자재를 입력하세요'); return; }
   if (jang <= 0) { toast('출고 장수를 입력하세요'); return; }
   if (!date) { toast('출고일을 선택하세요'); return; }
+  const dest = shipDestValue();
+  if (!dest) { toast('출고지(공장/현장)를 입력하세요'); return; }
   if (_busy) return; _busy = true;
   try {
     const it = state.inventory.find(i => i.name === material);
     const hebe = it ? +(jang * (+it.hebePerJang || 0)).toFixed(2) : 0;
     if (it) await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) - jang) });
-    const factory = (el('o-factory') && el('o-factory').value !== '__add') ? el('o-factory').value : '';
-    await Store.add('transactions', { type: 'out', itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, factory, target: '', targetName, date, note: el('o-note').value.trim(), by: me.name });
+    await Store.add('transactions', { type: 'out', itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, dest, factory: dest, target: '', targetName, date, note: el('o-note').value.trim(), by: me.name });
     if (_holdConfirm) { await Store.update('holdings', _holdConfirm, { status: '확정', shippedDate: date, shippedJang: jang }); _holdConfirm = null; }
     toast(`출고 완료 · ${jang}장${it ? ` (${hebe}㎡)` : ''}`); closeModal();
   } finally { _busy = false; }
