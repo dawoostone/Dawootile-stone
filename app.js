@@ -975,6 +975,8 @@ function renderShip() {
   // 상위 제품
   const byItem = {}; outs.forEach(t => { byItem[t.itemName] = (byItem[t.itemName] || 0) + (+t.hebe || 0); });
   const top = Object.entries(byItem).sort((a, b) => b[1] - a[1]).slice(0, 6); const maxT = Math.max(1, ...top.map(t => t[1]));
+  const outClients = [...new Set(outs.map(t => t.targetName).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const outMats = [...new Set(outs.map(t => t.itemName).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 
   el('pg-ship').innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-truck-delivery"></i>출고 현황</h2><p>현장·공장·거래처 출고 + 월별 분석</p></div>
@@ -982,6 +984,22 @@ function renderShip() {
     <div class="stat-grid" style="grid-template-columns:repeat(2,1fr)">
       <div class="stat"><div class="ic b"><i class="ti ti-calendar-stats"></i></div><div class="v">${monthHebe.toFixed(0)}<span style="font-size:14px">㎡</span></div><div class="l">이번 달 출고</div><div class="s">${monthOut.length}건</div></div>
       <div class="stat"><div class="ic g"><i class="ti ti-sum"></i></div><div class="v">${outs.length}</div><div class="l">총 출고 건수</div><div class="s">전체 누적</div></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><h3><i class="ti ti-table"></i>출고 내역 조회·추출</h3></div>
+      <div class="frm">
+        <div class="fld"><label>시작일</label><input type="date" id="r-from" oninput="shipReport()"></div>
+        <div class="fld"><label>종료일</label><input type="date" id="r-to" oninput="shipReport()"></div>
+        <div class="fld"><label>거래처</label><select id="r-client" onchange="shipReport()"><option value="">전체</option>${outClients.map(c => `<option>${esc(c)}</option>`).join('')}</select></div>
+        <div class="fld"><label>자재</label><select id="r-mat" onchange="shipReport()"><option value="">전체</option>${outMats.map(c => `<option>${esc(c)}</option>`).join('')}</select></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0 8px;gap:8px;flex-wrap:wrap">
+        <div style="font-size:13px;color:var(--t2)" id="r-sum">전체 기간</div>
+        <button class="btn btn-sm" onclick="downloadShipCsv()"><i class="ti ti-download"></i>CSV(엑셀) 다운로드</button>
+      </div>
+      <div class="tbl-wrap" style="max-height:340px;overflow:auto">
+        <table class="tbl"><thead><tr><th>날짜</th><th>자재</th><th>장수</th><th>헤베</th><th>출고지</th><th>거래처</th></tr></thead><tbody id="r-body"></tbody></table>
+      </div>
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-chart-bar"></i>월별 출고 현황</h3><span class="more">${year}년</span></div>
@@ -995,6 +1013,34 @@ function renderShip() {
       <div class="card-h"><h3><i class="ti ti-list-details"></i>최근 출고</h3></div>
       ${outs.length ? outs.slice(0, 10).map(t => `<div class="alert-i b"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${esc(t.itemName)} ${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · ${esc(t.targetName || '')}${(t.dest || t.factory) ? ' · → ' + esc(t.dest || t.factory) : ''} · ${esc(t.by || '')}</span></div>${isAdmin() ? `<button class="x" onclick="delShip('${t.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`}
     </div>`;
+  shipReport();
+}
+/* 출고 내역 조회·추출 (거래처/자재/기간별) */
+function shipReportList() {
+  const from = el('r-from') && el('r-from').value, to = el('r-to') && el('r-to').value;
+  const cl = el('r-client') && el('r-client').value, mt = el('r-mat') && el('r-mat').value;
+  return state.transactions.filter(t => t.type === 'out')
+    .filter(t => (!from || (t.date || '') >= from) && (!to || (t.date || '') <= to) && (!cl || t.targetName === cl) && (!mt || t.itemName === mt))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+}
+function shipReport() {
+  const list = shipReportList();
+  const tj = list.reduce((a, b) => a + (+b.jang || 0), 0), th = list.reduce((a, b) => a + (+b.hebe || 0), 0);
+  if (el('r-body')) el('r-body').innerHTML = list.length ? list.map(t => `<tr><td>${esc(t.date || '')}</td><td><b>${esc(t.itemName || '')}</b></td><td>${+t.jang || 0}장</td><td>${(+t.hebe || 0).toFixed(1)}㎡</td><td>${esc(t.dest || t.factory || '')}</td><td>${esc(t.targetName || '')}</td></tr>`).join('') : `<tr><td colspan="6"><div class="empty" style="padding:18px"><i class="ti ti-search-off"></i>해당 출고 내역이 없습니다</div></td></tr>`;
+  if (el('r-sum')) el('r-sum').innerHTML = `${list.length}건 · 합계 <b style="color:var(--t1)">${tj}장 · ${th.toFixed(1)}㎡</b>`;
+}
+function downloadShipCsv() {
+  const list = shipReportList();
+  if (!list.length) { toast('내보낼 내역이 없습니다'); return; }
+  const head = ['출고일', '자재명', '규격', '장수', '헤베(㎡)', '출고지', '거래처', '롯트', '담당', '메모'];
+  const rows = list.map(t => [t.date || '', t.itemName || '', t.spec || '', (+t.jang || 0), (+t.hebe || 0), (t.dest || t.factory || ''), t.targetName || '', t.lot || '', t.by || '', (t.note || '').replace(/[\r\n]+/g, ' ')]);
+  const q = s => `"${String(s).replace(/"/g, '""')}"`;
+  const csv = [head.map(q).join(','), ...rows.map(r => r.map(q).join(','))].join('\n');
+  const blob = new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = '출고내역_' + todayStr() + '.csv'; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
+  toast('CSV 다운로드 (' + list.length + '건)');
 }
 function openShipForm(pre) {
   openModal(`
@@ -1217,17 +1263,16 @@ function holdToShip(id) {
    =================================================================== */
 function renderSettings() {
   el('pg-settings').innerHTML = `
-    <div class="ph"><div><h2><i class="ti ti-settings"></i>설정</h2><p>${esc(me.name)} 님 · ${isAdmin() ? '관리자' : '직원'}</p></div></div>
+    <div class="ph"><div><h2><i class="ti ti-settings"></i>설정</h2><p>${esc(me.name)} 님${isAdmin() ? ' · 관리자' : ''}</p></div></div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-users"></i>직원 관리</h3>${isAdmin() ? `<button class="more" onclick="openMemberForm()"><i class="ti ti-plus"></i>추가</button>` : ''}</div>
-      ${state.members.map(m => `<div class="mem"><div class="av">${esc(initial(m.name))}</div><div class="info"><div class="nm">${esc(m.name)}</div><div class="rl">${m.role === 'admin' ? '전체 조회·수정·삭제' : '현장·재고 입력'}</div></div><span class="pill ${m.role === 'admin' ? 'p-prog' : 'p-gray'}">${m.role === 'admin' ? '관리자' : '직원'}</span>${isAdmin() ? `<button class="x" onclick="openMemberForm('${m.id}')"><i class="ti ti-edit" style="font-size:17px"></i></button>` : ''}</div>`).join('')}
-      ${!isAdmin() ? `<div class="banner info" style="margin-top:12px"><i class="ti ti-info-circle"></i>직원 추가·삭제는 관리자만 가능합니다.</div>` : ''}
+      ${state.members.map(m => `<div class="mem"><div class="av">${esc(initial(m.name))}</div><div class="info"><div class="nm">${esc(m.name)}</div>${isAdmin() ? `<div class="rl">${m.role === 'admin' ? '전체 조회·수정·삭제' : '현장·재고 입력'}</div>` : ''}</div>${isAdmin() ? `<span class="pill ${m.role === 'admin' ? 'p-prog' : 'p-gray'}">${m.role === 'admin' ? '관리자' : '직원'}</span><button class="x" onclick="openMemberForm('${m.id}')"><i class="ti ti-edit" style="font-size:17px"></i></button>` : ''}</div>`).join('')}
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-briefcase"></i>거래처 관리</h3>${isAdmin() && (state.clients || []).length ? `<button class="more" style="color:var(--red-t)" onclick="delAllClients()"><i class="ti ti-trash" style="font-size:14px"></i>전체 삭제</button>` : ''}</div>
-      ${isAdmin() ? `<div style="display:flex;gap:8px;margin-bottom:10px"><input id="client-new" placeholder="거래처명 입력" autocomplete="off" style="flex:1;font-size:16px;padding:11px 12px;border:1.5px solid var(--bd2);border-radius:10px"><button class="btn btn-pri btn-sm" onclick="addClient()"><i class="ti ti-plus"></i>등록</button></div>` : ''}
+      <div style="display:flex;gap:8px;margin-bottom:10px"><input id="client-new" placeholder="거래처명 입력" autocomplete="off" style="flex:1;font-size:16px;padding:11px 12px;border:1.5px solid var(--bd2);border-radius:10px"><button class="btn btn-pri btn-sm" onclick="addClient()"><i class="ti ti-plus"></i>등록</button></div>
       ${(state.clients || []).length ? state.clients.slice().sort((a, b) => (a.value || '').localeCompare(b.value || '')).map(c => `<div class="mem"><div class="info"><div class="nm">${esc(c.value)}</div></div>${isAdmin() ? `<button class="x" onclick="delClient('${c.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div style="font-size:12.5px;color:var(--t3);padding:4px 0">등록된 거래처가 없습니다. 등록하면 현장·출고·홀딩의 업체명 검색에 나옵니다.</div>`}
-      ${!isAdmin() ? `<div class="banner info" style="margin-top:10px"><i class="ti ti-info-circle"></i>거래처 등록·삭제는 관리자만 가능합니다.</div>` : ''}
+      ${!isAdmin() ? `<div class="banner info" style="margin-top:10px"><i class="ti ti-info-circle"></i>거래처 삭제는 관리자만 가능합니다.</div>` : ''}
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-cloud"></i>연결 상태</h3></div>
@@ -1269,7 +1314,6 @@ async function submitMember(id) {
 }
 async function delMember(id) { if (!confirm('이 직원을 삭제할까요?')) return; await Store.remove('members', id); toast('삭제됨'); closeModal(); }
 async function addClient() {
-  if (!isAdmin()) { toast('관리자만 가능합니다'); return; }
   const v = (el('client-new') && el('client-new').value || '').trim();
   if (!v) { toast('거래처명을 입력하세요'); return; }
   if ((state.clients || []).some(c => c.value === v)) { toast('이미 등록된 거래처입니다'); el('client-new').value = ''; return; }
