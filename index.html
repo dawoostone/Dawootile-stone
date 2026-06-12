@@ -415,6 +415,6 @@ if ('serviceWorker' in navigator) {
 <!-- Firebase 설정: 같은 폴더의 firebase-config.js 가 window.FIREBASE_CONFIG 를 설정.
      파일이 없으면 이 기기에만 저장되는 미리보기 모드로 동작합니다. -->
 <script src="firebase-config.js"></script>
-<script src="app.js"></script>
+<script>document.write('<scr' + 'ipt src="app.js?t=' + Date.now() + '"></scr' + 'ipt>');</script>
 </body>
 </html>
