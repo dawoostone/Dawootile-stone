@@ -581,6 +581,7 @@ function siteCard(s) {
 function openSiteDetail(id) {
   const s = state.sites.find(x => x.id === id); if (!s) return;
   const skip = s.orderType === '도면';
+  const linkedHold = state.holdings.find(h => (h.status || '홀딩') === '홀딩' && (h.forSiteId === s.id || (s.name && h.forSiteName === s.name)));
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-building-community"></i>${esc(s.name)}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div style="margin-bottom:12px">${pill(s.stage || '접수')}${s.confirmed ? ' <span class="pill p-done">확정</span>' : ''}</div>
@@ -602,7 +603,7 @@ function openSiteDetail(id) {
     <div class="seg" style="flex-wrap:wrap">
       ${SITE_STAGES.filter(st => !(skip && st === '실측')).map(st => `<button class="${(s.stage || '접수') === st ? 'on' : ''}" onclick="advanceStage('${s.id}','${st}')">${st}</button>`).join('')}
     </div>
-    <button class="btn btn-ghost btn-block" style="margin-top:6px" onclick="holdFromSite('${s.id}')"><i class="ti ti-lock-plus"></i>이 현장 자재 홀딩 잡기</button>
+    ${linkedHold ? `<div class="banner info" style="margin-top:6px"><i class="ti ti-lock"></i>이미 홀딩이 연결된 현장입니다 — ${esc(linkedHold.vendor || '')} · ${+linkedHold.jang || 0}장${linkedHold.materialName ? ' · ' + esc(linkedHold.materialName) : ''}. 중복 홀딩을 막기 위해 비활성화됩니다.</div>` : `<button class="btn btn-ghost btn-block" style="margin-top:6px" onclick="holdFromSite('${s.id}')"><i class="ti ti-lock-plus"></i>이 현장 자재 홀딩 잡기</button>`}
     <div class="frm-foot">
       <button class="btn" style="flex:1" onclick="openSiteForm('${s.id}')"><i class="ti ti-edit"></i>수정</button>
       ${isAdmin() ? `<button class="btn btn-danger" onclick="delSite('${s.id}')"><i class="ti ti-trash"></i></button>` : ''}
@@ -611,6 +612,8 @@ function openSiteDetail(id) {
 /* 현장 → 홀딩 생성 (현장 정보로 홀딩 폼 프리필) */
 function holdFromSite(id) {
   const s = state.sites.find(x => x.id === id); if (!s) return;
+  const existing = state.holdings.find(h => (h.status || '홀딩') === '홀딩' && (h.forSiteId === id || (s.name && h.forSiteName === s.name)));
+  if (existing) { toast('이미 홀딩이 연결된 현장입니다 (중복 방지)'); return; }
   openHoldForm(null, { forSiteId: id, materialName: s.materialName, jang: s.qty, useDate: s.constructDate });
 }
 async function advanceStage(id, stage) {
