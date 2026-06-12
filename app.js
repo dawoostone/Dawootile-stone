@@ -19,7 +19,7 @@ if (CLOUD) {
 }
 function cref(name) { return db.collection('teams').doc(TEAM).collection(name); }
 
-const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams'];
+const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers'];
 
 // 로컬(미리보기) 모드용 - 같은 기기의 다른 탭끼리 실시간 반영
 const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('dws') : null;
@@ -73,7 +73,7 @@ const Store = {
 if (bc) bc.onmessage = (e) => { const c = e.data; if (Store._watchers[c]) Store._watchers[c](Store.read(c)); };
 
 /* ---------- 1. 전역 상태 ---------- */
-const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [] };
+const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [] };
 let me = null;          // 로그인한 사용자
 let tab = 'home';
 let filters = { sites: 'all', stock: 'all', stockSearch: '' };
@@ -180,6 +180,10 @@ async function seedIfEmpty() {
     // 시공팀 기본값
     if (state.teams.length === 0) {
       for (const val of ['JS테크', '모든대리석', '록스타일', '프로세라믹', '현대코리안', '아트라인']) await Store.add('teams', { value: val });
+    }
+    // 입고 발주처(매입처) 기본값 — 다우세라믹앤석재(중국 직발주)가 기본
+    if (state.suppliers.length === 0) {
+      for (const val of ['다우세라믹앤석재', '거봉석재', '토마스마블', '동호엠엔지', '영진석재']) await Store.add('suppliers', { value: val });
     }
     // 미리보기(로컬) 모드에서 비어있으면 샘플 데이터로 채워 '살아있는' 화면 제공
     if (!CLOUD && state.inventory.length === 0) await seedSample();
@@ -757,7 +761,7 @@ function renderStock() {
     </div>
     <div class="card" style="margin-top:14px">
       <div class="card-h"><h3><i class="ti ti-login"></i>최근 입고</h3></div>
-      ${ins.length ? ins.map(t => `<div class="alert-i b" style="background:var(--gl2);border-color:var(--gbd)"><div class="ai" style="color:var(--gd)"><i class="ti ti-login"></i></div><div class="at"><b>${esc(t.itemName)} +${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · 롯트 ${esc(t.lot || '-')} · ${esc(t.by || '')}</span></div>${isAdmin() ? `<button class="x" onclick="delIn('${t.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>입고 내역 없음</div>`}
+      ${ins.length ? ins.map(t => `<div class="alert-i b" style="background:var(--gl2);border-color:var(--gbd)"><div class="ai" style="color:var(--gd)"><i class="ti ti-login"></i></div><div class="at"><b>${esc(t.itemName)} +${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · 롯트 ${esc(t.lot || '-')} · ${esc(t.vendor || '')} · ${esc(t.by || '')}</span></div>${isAdmin() ? `<button class="x" onclick="delIn('${t.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>입고 내역 없음</div>`}
     </div>`;
 }
 function chipS(v, l, c) { return `<button class="chip ${c === v ? 'active' : ''}" onclick="filters.stock='${v}';renderStock()">${l}</button>`; }
@@ -793,7 +797,7 @@ function openItemForm(id) {
           <button class="btn btn-pri btn-sm" type="button" onclick="commitSpec('i')"><i class="ti ti-plus"></i>추가</button>
         </div>
       </div>
-      <div class="fld"><label>공급처</label><input id="i-vendor" value="${esc(v.vendor || '')}" placeholder="예) 토마스마블"></div>
+      <div class="fld"><label>공급처</label><input id="i-vendor" value="${esc(v.vendor || '')}" placeholder="공급처(선택)"></div>
       <div class="fld"><label>창고</label><input id="i-depot" value="${esc(v.depot || '본사')}"></div>
       <div class="fld"><label>현재 장수</label><input id="i-jang" value="${esc(v.jang || 0)}" inputmode="numeric" oninput="updateItemHebe()"></div>
       <div class="fld"><label>안전재고(장) — 미만이면 '부족'</label><input id="i-safe" value="${esc(v.safeJang || 0)}" inputmode="numeric" placeholder="예) 12"></div>
@@ -862,7 +866,8 @@ function openStockForm() {
     <button class="btn btn-ghost btn-sm" type="button" onclick="addPatternRow()" style="margin-top:4px"><i class="ti ti-plus"></i>패턴 추가</button>
     <div class="frm" style="margin-top:14px">
       <div class="fld"><label>입고일</label><input type="date" id="in-date" value="${todayStr()}"></div>
-      <div class="fld"><label>발주처(공장)</label><input id="in-vendor" placeholder="예) 토마스마블"></div>
+      <div class="fld"><label>발주처/매입처 <span style="color:var(--t3);font-weight:500">(기본: 직발주)</span></label><select id="in-vendor" onchange="onMasterChange('in-vendor','suppliers')">${masterOptions('suppliers', '다우세라믹앤석재')}</select></div>
+      <div class="fld full hidden" id="in-vendor-add"><label>기타 발주처 입력 후 추가</label><div style="display:flex;gap:8px"><input id="in-vendor-new" placeholder="예) ○○석재" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('in-vendor','suppliers')"><i class="ti ti-plus"></i>추가</button></div></div>
       <div class="fld full"><label>메모</label><input id="in-note" placeholder="선택"></div>
     </div>
     <div class="reco" id="in-summary" style="margin-top:14px"><div class="reco-h"><i class="ti ti-calculator"></i>자동 환산</div>
@@ -876,7 +881,6 @@ function openStockForm() {
 function onInItemChange() {
   const it = state.inventory.find(i => i.id === el('in-item').value);
   el('in-spec').value = it ? (it.spec || '-') : '';
-  if (it && !el('in-vendor').value) el('in-vendor').value = it.vendor || '';
   computeInTotal();
 }
 function addPatternRow() {
@@ -910,8 +914,9 @@ async function submitStock() {
   });
   if (jang <= 0) { toast('입고 장수를 입력하세요'); return; }
   const hebe = +(jang * (+it.hebePerJang || 0)).toFixed(2);
-  const vendor = el('in-vendor').value.trim(), date = el('in-date').value, note = el('in-note').value.trim();
-  await Store.update('inventory', it.id, { jang: (+it.jang || 0) + jang, lastInDate: date, vendor: vendor || it.vendor });
+  let vendor = el('in-vendor').value; if (vendor === '__add') vendor = ''; vendor = (vendor || '다우세라믹앤석재').trim();
+  const date = el('in-date').value, note = el('in-note').value.trim();
+  await Store.update('inventory', it.id, { jang: (+it.jang || 0) + jang, lastInDate: date });
   await Store.add('transactions', { type: 'in', itemId: it.id, itemName: it.name, spec: it.spec, lot, patterns, jang, hebe, vendor, date, note, by: me.name });
   toast(`입고 완료 · ${jang}장 (${hebe}㎡)`); closeModal();
 }
