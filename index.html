@@ -303,6 +303,21 @@ input,select,textarea{font-family:inherit}
 .drawer-i.active i{color:var(--g)}
 .drawer-i.lo{margin-top:auto;color:var(--red-t);border-top:1px solid var(--bd)}
 .drawer-i.lo i{color:var(--red-t)}
+/* ===== 모바일 최적화: 폼을 1열로, 입력 16px(아이폰 확대 방지) ===== */
+@media(max-width:600px){
+  .frm{grid-template-columns:1fr;gap:12px}
+  .dl{grid-template-columns:1fr;gap:9px}
+  .sheet{padding:0 14px 26px;border-radius:20px 20px 0 0}
+  .sheet-h{padding:16px 0 11px}
+  .fld input,.fld select,.fld textarea,.modal input,.modal select,.modal textarea{font-size:16px;padding:12px 12px}
+  .seg button{font-size:14px;padding:11px 6px}
+  .frm-foot{position:sticky;bottom:0;background:#fff;padding:10px 0 4px;margin-top:14px;box-shadow:0 -6px 12px -8px rgba(0,0,0,.15)}
+  .pat-row .in-pat-name{flex:1.4}
+}
+@media(max-width:380px){
+  .seg button{font-size:13px}
+  .stat .v{font-size:23px}
+}
 </style>
 </head>
 <body>
