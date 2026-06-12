@@ -757,7 +757,7 @@ function renderStock() {
     </div>
     <div class="card" style="margin-top:14px">
       <div class="card-h"><h3><i class="ti ti-login"></i>최근 입고</h3></div>
-      ${ins.length ? ins.map(t => `<div class="alert-i b" style="background:var(--gl2);border-color:var(--gbd)"><div class="ai" style="color:var(--gd)"><i class="ti ti-login"></i></div><div class="at"><b>${esc(t.itemName)} +${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · 롯트 ${esc(t.lot || '-')} · ${esc(t.by || '')}</span></div></div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>입고 내역 없음</div>`}
+      ${ins.length ? ins.map(t => `<div class="alert-i b" style="background:var(--gl2);border-color:var(--gbd)"><div class="ai" style="color:var(--gd)"><i class="ti ti-login"></i></div><div class="at"><b>${esc(t.itemName)} +${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · 롯트 ${esc(t.lot || '-')} · ${esc(t.by || '')}</span></div>${isAdmin() ? `<button class="x" onclick="delIn('${t.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>입고 내역 없음</div>`}
     </div>`;
 }
 function chipS(v, l, c) { return `<button class="chip ${c === v ? 'active' : ''}" onclick="filters.stock='${v}';renderStock()">${l}</button>`; }
@@ -1005,7 +1005,7 @@ async function submitShip() {
     toast(`출고 완료 · ${jang}장${it ? ` (${hebe}㎡)` : ''}`); closeModal();
   } finally { _busy = false; }
 }
-/* 출고 삭제 (관리자) — 재고 연동분 자동 복구 */
+/* 출고 삭제 (관리자) — 재고 연동분 자동 복구(+장수) */
 async function delShip(id) {
   if (!isAdmin()) { toast('관리자만 삭제할 수 있습니다'); return; }
   const t = state.transactions.find(x => x.id === id); if (!t) return;
@@ -1013,6 +1013,15 @@ async function delShip(id) {
   if (t.itemId) { const it = state.inventory.find(i => i.id === t.itemId); if (it) await Store.update('inventory', it.id, { jang: (+it.jang || 0) + (+t.jang || 0) }); }
   await Store.remove('transactions', id);
   toast('출고 삭제됨 (재고 복구)');
+}
+/* 입고 삭제 (관리자) — 오입고 정정: 재고에서 그만큼 차감(되돌림) */
+async function delIn(id) {
+  if (!isAdmin()) { toast('관리자만 삭제할 수 있습니다'); return; }
+  const t = state.transactions.find(x => x.id === id); if (!t) return;
+  if (!confirm(`이 입고를 삭제할까요?\n${t.itemName} ${t.jang}장 · 롯트 ${t.lot || '-'} · ${t.date}\n재고에서 그만큼 되돌립니다. (수정하려면 삭제 후 다시 입고)`)) return;
+  if (t.itemId) { const it = state.inventory.find(i => i.id === t.itemId); if (it) await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) - (+t.jang || 0)) }); }
+  await Store.remove('transactions', id);
+  toast('입고 삭제됨 (재고 되돌림)');
 }
 
 /* ===================================================================
@@ -1052,7 +1061,7 @@ function renderHold() {
         </div>
         ${conf ? `<div style="font-size:12px;color:var(--lime-t);margin-top:4px"><i class="ti ti-truck-delivery"></i> 출고 완료 ${esc(h.shippedDate || '')} · ${+h.shippedJang || 0}장</div>` : ''}
         ${h.note ? `<div style="font-size:12px;color:var(--t3);margin-top:6px">${esc(h.note)}</div>` : ''}
-        ${conf ? `<div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-sm" style="flex:1" onclick="openHoldForm('${h.id}')"><i class="ti ti-edit"></i>수정</button></div>` : `
+        ${conf ? `<div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-sm" style="flex:1" onclick="openHoldForm('${h.id}')"><i class="ti ti-edit"></i>수정</button>${isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="delHold('${h.id}')"><i class="ti ti-trash"></i>삭제</button>` : ''}</div>` : `
         <div style="display:flex;gap:8px;margin-top:10px">
           <button class="btn btn-pri btn-sm" style="flex:1" onclick="holdToSite('${h.id}')"><i class="ti ti-building-plus"></i>현장으로</button>
           <button class="btn btn-pri btn-sm" style="flex:1;background:var(--blue);border-color:var(--blue)" onclick="holdToShip('${h.id}')"><i class="ti ti-truck-delivery"></i>출고로</button>
@@ -1060,6 +1069,7 @@ function renderHold() {
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="btn btn-sm" style="flex:1" onclick="openHoldForm('${h.id}')"><i class="ti ti-edit"></i>수정</button>
           <button class="btn btn-sm" style="flex:1" onclick="releaseHold('${h.id}')"><i class="ti ti-lock-open"></i>해제</button>
+          ${isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="delHold('${h.id}')"><i class="ti ti-trash"></i>삭제</button>` : ''}
         </div>`}
       </div>`;
     }).join('') : `<div class="empty"><i class="ti ti-lock-off"></i>홀딩이 없습니다</div>`}`;
@@ -1098,7 +1108,13 @@ async function submitHold(id) {
   if (id) await Store.update('holdings', id, obj); else await Store.add('holdings', obj);
   toast(id ? '저장됨' : '홀딩 등록 완료'); closeModal();
 }
-async function releaseHold(id) { if (!confirm('홀딩을 해제할까요?')) return; await Store.update('holdings', id, { status: '해제' }); toast('홀딩 해제됨'); }
+async function releaseHold(id) { if (!confirm('홀딩을 해제할까요? (기록은 남고 목록에서만 빠집니다)')) return; await Store.update('holdings', id, { status: '해제' }); toast('홀딩 해제됨'); }
+async function delHold(id) {
+  if (!isAdmin()) { toast('관리자만 삭제할 수 있습니다'); return; }
+  const h = state.holdings.find(x => x.id === id); if (!h) return;
+  if (!confirm(`이 홀딩을 완전히 삭제할까요?\n${h.vendor || ''} · ${h.materialName || ''} ${h.jang || 0}장`)) return;
+  await Store.remove('holdings', id); toast('홀딩 삭제됨');
+}
 
 /* 홀딩 → 현장 연결 (홀딩은 그대로 살아있고, 현장에 연결만) */
 function holdToSite(id) {
