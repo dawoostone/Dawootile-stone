@@ -1087,7 +1087,7 @@ function openHoldForm(id, pre) {
       ${state.sites.length ? `<div class="fld full"><label><i class="ti ti-building-community" style="font-size:13px;color:var(--blue)"></i> 현장에서 선택 <span style="color:var(--t3);font-weight:500">— 고르면 자재·수량·시공일 자동 입력</span></label><select id="h-site" onchange="pickHoldSite()"><option value="">— 직접 입력 —</option>${siteOptions(v.forSiteId || '')}</select></div>` : ''}
       <div class="fld"><label>업체<span class="req">*</span></label><input id="h-vendor" value="${esc(v.vendor || '')}" placeholder="예) 모든대리석"></div>
       <div class="fld"><label>사용 예정일</label><input type="date" id="h-useDate" value="${esc(v.useDate || '')}"></div>
-      <div class="fld full"><label>자재명</label><input id="h-material" list="dl-h" value="${esc(v.materialName || '')}" placeholder="예) 카무스 화이트">${itemDatalist('dl-h')}</div>
+      <div class="fld full"><label>자재명 <span id="h-stock" style="color:var(--t3);font-weight:500"></span></label><input id="h-material" list="dl-h" value="${esc(v.materialName || '')}" placeholder="자재명 입력 (예: 카무스…)" oninput="onHoldMaterial()">${matDatalistCombined('dl-h')}</div>
       <div class="fld"><label>장수</label><input id="h-jang" value="${esc(v.jang || '')}" inputmode="numeric"></div>
       <div class="fld"><label>헤베(㎡)</label><input id="h-hebe" value="${esc(v.hebe || '')}" inputmode="decimal"></div>
       <div class="fld full"><label>메모</label><input id="h-note" value="${esc(v.note || '')}" placeholder="선택"></div>
@@ -1096,6 +1096,16 @@ function openHoldForm(id, pre) {
       <button class="btn" style="flex:1" onclick="closeModal()">취소</button>
       <button class="btn btn-pri" style="flex:2" onclick="submitHold('${id || ''}')"><i class="ti ti-check"></i>${h ? '저장' : '등록'}</button>
     </div>`);
+  onHoldMaterial();
+}
+/* 홀딩 자재명 옆에 잔여 재고 표시 */
+function onHoldMaterial() {
+  const nm = (el('h-material') && el('h-material').value || '').trim();
+  const box = el('h-stock'); if (!box) return;
+  const it = state.inventory.find(i => i.name === nm);
+  if (it) box.innerHTML = `· 잔여 재고 <b style="color:var(--gd)">${+it.jang || 0}장</b> (${itemHebe(it).toFixed(1)}㎡)`;
+  else if (nm) box.innerHTML = `· <span style="color:var(--amber-t)">재고에 없는 자재</span>`;
+  else box.textContent = '';
 }
 function pickHoldSite() {
   const id = el('h-site').value; if (!id) return;
@@ -1103,6 +1113,7 @@ function pickHoldSite() {
   if (s.materialName) el('h-material').value = s.materialName;
   if (s.qty) el('h-jang').value = s.qty;
   if (s.constructDate && !el('h-useDate').value) el('h-useDate').value = s.constructDate;
+  onHoldMaterial();
   toast('현장 정보를 불러왔습니다');
 }
 async function submitHold(id) {
