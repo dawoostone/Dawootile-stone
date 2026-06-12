@@ -977,15 +977,17 @@ function bulkInOpen() {
     <div id="bulk-preview"></div>`);
 }
 function bulkInTemplate() {
-  const head = ['자재명', '규격', '장수', '롯트', '입고일', '발주처', '메모'];
-  const sample = ['카무스 화이트', '1600*3200*20', 6, 'LOT-26-0601', todayStr(), '다우세라믹앤석재', ''];
-  const TH = t => `<th style="background:#0F6E56;color:#fff;font-weight:bold;border:0.5pt solid #0a4f3e;padding:7px 10px;text-align:center">${t}</th>`;
-  const TD = t => `<td style="border:0.5pt solid #cfd8d4;padding:6px 10px">${t}</td>`;
-  const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body><table style="border-collapse:collapse;font-family:'맑은 고딕',sans-serif;font-size:11pt"><tr>${head.map(TH).join('')}</tr><tr>${sample.map(TD).join('')}</tr></table></body></html>`;
-  const blob = new Blob(['﻿' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = '입고양식.xls'; document.body.appendChild(a); a.click();
-  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
-  toast('양식 다운로드');
+  if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후 다시'); return; }
+  const aoa = [
+    ['자재명', '규격', '장수', '롯트', '입고일', '발주처', '메모'],
+    ['카무스 화이트', '1600*3200*20', 6, 'LOT-26-0601', todayStr(), '다우세라믹앤석재', '']
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 18 }, { wch: 16 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 20 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '입고');
+  XLSX.writeFile(wb, '입고양식.xlsx');
+  toast('양식 다운로드 (.xlsx)');
 }
 function bulkInParse(input) {
   const f = input.files && input.files[0]; if (!f) return;
