@@ -236,7 +236,6 @@ function renderLoginMembers() {
     `<button class="member-btn" onclick="pickMember('${m.id}')">
        <span class="av">${esc(initial(m.name))}</span>
        <span>${esc(m.name)}</span>
-       <span class="role">${m.role === 'admin' ? '관리자' : '직원'}</span>
      </button>`).join('') + '</div>';
 }
 function pickMember(id) {
