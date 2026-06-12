@@ -19,7 +19,7 @@ if (CLOUD) {
 }
 function cref(name) { return db.collection('teams').doc(TEAM).collection(name); }
 
-const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers'];
+const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients'];
 
 // 로컬(미리보기) 모드용 - 같은 기기의 다른 탭끼리 실시간 반영
 const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('dws') : null;
@@ -73,7 +73,7 @@ const Store = {
 if (bc) bc.onmessage = (e) => { const c = e.data; if (Store._watchers[c]) Store._watchers[c](Store.read(c)); };
 
 /* ---------- 1. 전역 상태 ---------- */
-const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [] };
+const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [] };
 let me = null;          // 로그인한 사용자
 let tab = 'home';
 let filters = { sites: 'all', stock: 'all', stockSearch: '' };
@@ -479,6 +479,47 @@ function matDatalistCombined(id) {
   state.holdings.forEach(h => h.materialName && names.add(h.materialName));
   return `<datalist id="${id}">${[...names].map(n => `<option value="${esc(n)}">`).join('')}</datalist>`;
 }
+/* ===== 검색형 자동완성 (부분검색) ===== */
+function matNames() {
+  const s = new Set();
+  state.inventory.forEach(i => i.name && s.add(i.name));
+  state.holdings.forEach(h => h.materialName && s.add(h.materialName));
+  state.sites.forEach(x => x.materialName && s.add(x.materialName));
+  return [...s].sort((a, b) => a.localeCompare(b));
+}
+function companyNames() {
+  const s = new Set();
+  (state.clients || []).forEach(c => c.value && s.add(c.value));
+  state.sites.forEach(x => x.client && s.add(x.client));
+  state.holdings.forEach(h => h.vendor && s.add(h.vendor));
+  state.transactions.forEach(t => t.targetName && s.add(t.targetName));
+  (state.suppliers || []).forEach(c => c.value && s.add(c.value));
+  (state.factories || []).forEach(c => c.value && s.add(c.value));
+  return [...s].sort((a, b) => a.localeCompare(b));
+}
+/* searchBox: 입력하면 부분일치 후보가 아래에 뜨고 클릭 선택. id는 그대로 유지(폼 제출 시 사용). */
+function searchBox(id, placeholder, value, listFn, pickFn) {
+  return `<input id="${id}" class="sb-in" autocomplete="off" placeholder="${esc(placeholder)}" value="${esc(value || '')}" oninput="sbFilter('${id}','${listFn}','${pickFn || ''}')" onfocus="sbFilter('${id}','${listFn}','${pickFn || ''}')" onblur="setTimeout(sbHide,180)">`;
+}
+function sbEnsurePop() { let p = el('sb-pop'); if (!p) { p = document.createElement('div'); p.id = 'sb-pop'; p.className = 'sb-pop'; document.body.appendChild(p); } return p; }
+function sbFilter(id, listFn, pickFn) {
+  const inp = el(id); if (!inp) return;
+  const q = (inp.value || '').trim().toLowerCase();
+  const all = (typeof window[listFn] === 'function') ? window[listFn]() : [];
+  const uniq = [...new Set(all.filter(Boolean).map(String))];
+  let m = q ? uniq.filter(n => n.toLowerCase().includes(q)) : uniq;
+  m = m.slice(0, 14);
+  const p = sbEnsurePop();
+  if (!m.length) { p.style.display = 'none'; if (pickFn && window[pickFn]) window[pickFn](); return; }
+  const r = inp.getBoundingClientRect();
+  p.style.left = r.left + 'px'; p.style.top = (r.bottom + 3) + 'px'; p.style.width = r.width + 'px';
+  p.innerHTML = m.map(n => `<div class="sb-item" data-v="${esc(n)}">${esc(n)}</div>`).join('');
+  p.style.display = 'block';
+  [...p.children].forEach(c => { c.onmousedown = (e) => { e.preventDefault(); inp.value = c.dataset.v; p.style.display = 'none'; if (pickFn && window[pickFn]) window[pickFn](); }; });
+  if (pickFn && window[pickFn]) window[pickFn]();
+}
+function sbHide() { const p = el('sb-pop'); if (p) p.style.display = 'none'; }
+
 /* 업체명 추천: 과거 출고처 + 거래처(현장) + 공장/공급처 */
 function companyDatalist(id) {
   const names = new Set();
@@ -592,7 +633,7 @@ function openSiteForm(id, pre) {
     <div class="sheet-h"><h3><i class="ti ti-building-plus"></i>${s ? '현장 수정' : '현장 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
       <div class="fld"><label>현장명 <span style="color:var(--t3);font-weight:500">(미입력 시 업체명)</span></label><input id="s-name" value="${esc(v.name || '')}" placeholder="예) 반포 자이 49평"></div>
-      <div class="fld"><label>업체(거래처)<span class="req">*</span></label><input id="s-client" value="${esc(v.client || '')}" placeholder="예) ○○인테리어"></div>
+      <div class="fld"><label>업체(거래처)<span class="req">*</span></label>${searchBox('s-client', '업체명 검색·입력', v.client, 'companyNames', '')}</div>
       <div class="fld"><label>지역</label><input id="s-region" value="${esc(v.region || '')}" placeholder="예) 서울 서초구"></div>
       <div class="fld"><label>현장 담당자</label><input id="s-manager" value="${esc(v.manager || me.name)}"></div>
       <div class="fld full"><label>현장 주소</label><input id="s-address" value="${esc(v.address || '')}" placeholder="상세 주소"></div>
@@ -604,7 +645,7 @@ function openSiteForm(id, pre) {
       </div>
       <div class="fld"><label>진행 단계</label><select id="s-stage">${SITE_STAGES.map(st => `<option ${(v.stage || '접수') === st ? 'selected' : ''}>${st}</option>`).join('')}</select></div>
       ${activeHoldings().length ? `<div class="fld full"><label><i class="ti ti-lock" style="font-size:13px;color:var(--blue)"></i> 홀딩에서 불러오기 <span style="color:var(--t3);font-weight:500">(선택 — 없으면 아래에 직접 입력)</span></label><select id="s-hold" onchange="pickSiteHolding()"><option value="">— 직접 입력 —</option>${holdingOptions()}</select></div>` : ''}
-      <div class="fld"><label>자재명<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(홀딩에 없어도 직접 입력)</span></label><input id="s-material" list="dl-mat" value="${esc(v.materialName || '')}" placeholder="자재명 직접 입력 또는 목록 선택">${matDatalistCombined('dl-mat')}</div>
+      <div class="fld"><label>자재명<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(검색·직접입력)</span></label>${searchBox('s-material', '자재명 검색 (예: 카)', v.materialName, 'matNames', '')}</div>
       <div class="fld"><label>수량<span class="req">*</span></label><input id="s-qty" value="${esc(v.qty || '')}" placeholder="예) 28" inputmode="decimal"></div>
       <div class="fld"><label>실측일 <span id="s-measure-lbl" style="color:var(--t3)">${v.orderType === '도면' ? '(도면발주·생략)' : ''}</span></label><input type="date" id="s-measureDate" value="${esc(v.measureDate || '')}" ${v.orderType === '도면' ? 'disabled' : ''}></div>
       <div class="fld"><label>시공일<span class="req">*</span></label><input type="date" id="s-constructDate" value="${esc(v.constructDate || '')}"></div>
@@ -960,9 +1001,8 @@ function openShipForm(pre) {
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-logout"></i>출고 등록</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
-      <div class="fld full"><label>업체명<span class="req">*</span></label><input id="o-targetName" list="dl-company" placeholder="업체명 입력">${companyDatalist('dl-company')}</div>
-      ${state.inventory.length ? `<div class="fld full"><label>재고에서 선택 <span style="color:var(--t3);font-weight:500">(또는 아래에 직접 입력)</span></label><select id="o-pick" onchange="pickOutItem()"><option value="">— 직접 입력 —</option>${state.inventory.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(i => `<option value="${esc(i.id)}">${esc(i.name)} · 재고 ${+i.jang || 0}장</option>`).join('')}</select></div>` : ''}
-      <div class="fld full"><label>출고 자재<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(자동완성 · 재고에 없어도 직접 입력)</span></label><input id="o-material" list="dl-out" placeholder="자재명 직접 입력 또는 위 목록에서 선택" oninput="computeOutHebe()">${matDatalistCombined('dl-out')}</div>
+      <div class="fld full"><label>업체명<span class="req">*</span></label>${searchBox('o-targetName', '업체명 검색·입력', '', 'companyNames', '')}</div>
+      <div class="fld full"><label>출고 자재<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(검색·직접입력)</span></label>${searchBox('o-material', '자재명 검색 (예: 카)', '', 'matNames', 'computeOutHebe')}</div>
       <div class="fld"><label>출고 장수<span class="req">*</span></label><input id="o-jang" inputmode="numeric" placeholder="예) 4" oninput="computeOutHebe()"></div>
       <div class="fld"><label>출고일<span class="req">*</span></label><input type="date" id="o-date" value="${todayStr()}"></div>
       <div class="fld"><label>발주/출고 공장</label><select id="o-factory" onchange="onMasterChange('o-factory','factories')">${masterOptions('factories', '')}</select></div>
@@ -1085,9 +1125,9 @@ function openHoldForm(id, pre) {
     <div class="sheet-h"><h3><i class="ti ti-lock-plus"></i>${h ? '홀딩 수정' : '홀딩 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
       ${state.sites.length ? `<div class="fld full"><label><i class="ti ti-building-community" style="font-size:13px;color:var(--blue)"></i> 현장에서 선택 <span style="color:var(--t3);font-weight:500">— 고르면 자재·수량·시공일 자동 입력</span></label><select id="h-site" onchange="pickHoldSite()"><option value="">— 직접 입력 —</option>${siteOptions(v.forSiteId || '')}</select></div>` : ''}
-      <div class="fld"><label>업체<span class="req">*</span></label><input id="h-vendor" value="${esc(v.vendor || '')}" placeholder="예) 모든대리석"></div>
+      <div class="fld"><label>업체/거래처<span class="req">*</span></label>${searchBox('h-vendor', '업체명 검색·입력', v.vendor, 'companyNames', '')}</div>
       <div class="fld"><label>사용 예정일</label><input type="date" id="h-useDate" value="${esc(v.useDate || '')}"></div>
-      <div class="fld full"><label>자재명 <span id="h-stock" style="color:var(--t3);font-weight:500"></span></label><input id="h-material" list="dl-h" value="${esc(v.materialName || '')}" placeholder="자재명 입력 (예: 카무스…)" oninput="onHoldMaterial()">${matDatalistCombined('dl-h')}</div>
+      <div class="fld full"><label>자재명 <span id="h-stock" style="color:var(--t3);font-weight:500"></span></label>${searchBox('h-material', '자재명 검색 (예: 카)', v.materialName, 'matNames', 'onHoldMaterial')}</div>
       <div class="fld"><label>장수</label><input id="h-jang" value="${esc(v.jang || '')}" inputmode="numeric"></div>
       <div class="fld"><label>헤베(㎡)</label><input id="h-hebe" value="${esc(v.hebe || '')}" inputmode="decimal"></div>
       <div class="fld full"><label>메모</label><input id="h-note" value="${esc(v.note || '')}" placeholder="선택"></div>
@@ -1157,6 +1197,12 @@ function renderSettings() {
       ${!isAdmin() ? `<div class="banner info" style="margin-top:12px"><i class="ti ti-info-circle"></i>직원 추가·삭제는 관리자만 가능합니다.</div>` : ''}
     </div>
     <div class="card">
+      <div class="card-h"><h3><i class="ti ti-briefcase"></i>거래처 관리</h3></div>
+      ${isAdmin() ? `<div style="display:flex;gap:8px;margin-bottom:10px"><input id="client-new" placeholder="거래처명 입력" autocomplete="off" style="flex:1;font-size:16px;padding:11px 12px;border:1.5px solid var(--bd2);border-radius:10px"><button class="btn btn-pri btn-sm" onclick="addClient()"><i class="ti ti-plus"></i>등록</button></div>` : ''}
+      ${(state.clients || []).length ? state.clients.slice().sort((a, b) => (a.value || '').localeCompare(b.value || '')).map(c => `<div class="mem"><div class="info"><div class="nm">${esc(c.value)}</div></div>${isAdmin() ? `<button class="x" onclick="delClient('${c.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div style="font-size:12.5px;color:var(--t3);padding:4px 0">등록된 거래처가 없습니다. 등록하면 현장·출고·홀딩의 업체명 검색에 나옵니다.</div>`}
+      ${!isAdmin() ? `<div class="banner info" style="margin-top:10px"><i class="ti ti-info-circle"></i>거래처 등록·삭제는 관리자만 가능합니다.</div>` : ''}
+    </div>
+    <div class="card">
       <div class="card-h"><h3><i class="ti ti-cloud"></i>연결 상태</h3></div>
       <div class="alert-i ${CLOUD ? 'b' : 'a'}" style="${CLOUD ? 'background:var(--gl2);border-color:var(--gbd)' : ''}">
         <div class="ai" style="${CLOUD ? 'color:var(--gd)' : ''}"><i class="ti ti-${CLOUD ? 'cloud-check' : 'device-mobile'}"></i></div>
@@ -1195,6 +1241,14 @@ async function submitMember(id) {
   toast('저장됨'); closeModal();
 }
 async function delMember(id) { if (!confirm('이 직원을 삭제할까요?')) return; await Store.remove('members', id); toast('삭제됨'); closeModal(); }
+async function addClient() {
+  if (!isAdmin()) { toast('관리자만 가능합니다'); return; }
+  const v = (el('client-new') && el('client-new').value || '').trim();
+  if (!v) { toast('거래처명을 입력하세요'); return; }
+  if ((state.clients || []).some(c => c.value === v)) { toast('이미 등록된 거래처입니다'); el('client-new').value = ''; return; }
+  await Store.add('clients', { value: v }); el('client-new').value = ''; toast('거래처 등록됨');
+}
+async function delClient(id) { if (!isAdmin()) return; if (!confirm('이 거래처를 삭제할까요?')) return; await Store.remove('clients', id); toast('삭제됨'); }
 
 function openHelp() {
   openModal(`

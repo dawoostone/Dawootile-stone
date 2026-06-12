@@ -303,6 +303,12 @@ input,select,textarea{font-family:inherit}
 .drawer-i.active i{color:var(--g)}
 .drawer-i.lo{margin-top:auto;color:var(--red-t);border-top:1px solid var(--bd)}
 .drawer-i.lo i{color:var(--red-t)}
+/* 검색형 자동완성 드롭다운 */
+.sb-pop{position:fixed;background:#fff;border:1px solid var(--bd2);border-radius:11px;box-shadow:0 10px 26px rgba(16,40,33,.22);max-height:248px;overflow-y:auto;z-index:120;display:none;-webkit-overflow-scrolling:touch}
+.sb-item{padding:12px 13px;font-size:15px;border-bottom:1px solid var(--bd);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-item:last-child{border-bottom:none}
+.sb-item:active,.sb-item.hl{background:var(--gl2);color:var(--gd)}
+.sb-item .meta{color:var(--t3);font-size:12px;margin-left:6px}
 /* ===== 모바일 최적화: 폼을 1열로, 입력 16px(아이폰 확대 방지) ===== */
 @media(max-width:600px){
   .frm{grid-template-columns:1fr;gap:12px}
