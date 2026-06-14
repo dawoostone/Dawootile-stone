@@ -12,10 +12,11 @@ const FBCONF = (typeof window !== 'undefined' && window.FIREBASE_CONFIG) ? windo
   : (typeof FIREBASE_CONFIG !== 'undefined' ? FIREBASE_CONFIG : { apiKey: "" });
 const CLOUD = !!(FBCONF && FBCONF.apiKey);
 const TEAM = 'dawoo';
-let db = null;
+let db = null, auth = null;
 if (CLOUD) {
   firebase.initializeApp(FBCONF);
   db = firebase.firestore();
+  auth = firebase.auth();
 }
 function cref(name) { return db.collection('teams').doc(TEAM).collection(name); }
 
@@ -152,20 +153,68 @@ function estimateQuote(o) {
 
 /* ---------- 4. 초기 구동 ---------- */
 window.addEventListener('DOMContentLoaded', init);
-function init() {
-  // 동기화 표시
-  if (!CLOUD) { el('sync').classList.add('local'); el('sync-t').textContent = '미리보기'; }
-  // 컬렉션 구독
+let _subscribed = false;
+function startSubscriptions() {
+  if (_subscribed) return; _subscribed = true;
   COLLS.forEach(c => Store.watch(c, data => { state[c] = data; onData(c); }));
-  seedIfEmpty();
+}
+function init() {
+  if (!CLOUD) {
+    // 미리보기(로컬) 모드: 인증 없이 이 기기에서만 동작
+    el('sync').classList.add('local'); el('sync-t').textContent = '미리보기';
+    startSubscriptions();
+    seedIfEmpty();
+    return;
+  }
+  // 클라우드 모드: Firebase 인증으로 보호 — 로그인해야만 데이터에 접근 가능
+  auth.onAuthStateChanged(async (user) => {
+    if (user) {
+      startSubscriptions();
+      await afterAuth(user);
+    } else {
+      me = null;
+      el('app').style.display = 'none';
+      el('login').style.display = 'flex';
+      const e = el('login-err'); if (e) { e.style.color = ''; e.textContent = ''; }
+    }
+  });
+}
+/* 로그인 성공 후: 직원 디렉터리에서 본인(이메일) 찾기 → 앱 진입 */
+async function afterAuth(user) {
+  seedIfEmpty();                 // 규격/공장/팀 등 기본값(백그라운드)
+  await whenMembersReady();       // 직원 목록 첫 로딩 대기
+  let member = findMemberByEmail(user.email);
+  if (!member) {
+    // 이메일이 연결된 직원이 한 명도 없으면, 첫 로그인자를 관리자로 부트스트랩
+    const anyLinked = state.members.some(m => m.email);
+    const role = anyLinked ? 'staff' : 'admin';
+    const name = (user.email || '사용자').split('@')[0];
+    member = { name, email: (user.email || '').toLowerCase(), role };
+    await Store.add('members', member);
+  }
+  me = member;
+  el('login').style.display = 'none';
+  el('app').style.display = 'block';
+  el('me-av').textContent = initial(me.name);
+  el('me-nm').textContent = me.name;
+  render();
+}
+function findMemberByEmail(email) {
+  if (!email) return null;
+  const e = email.toLowerCase();
+  return state.members.find(m => (m.email || '').toLowerCase() === e) || null;
+}
+let _membersLoaded = false, _membersWaiters = [];
+function whenMembersReady() {
+  return new Promise(res => { if (_membersLoaded) res(); else _membersWaiters.push(res); });
 }
 let _seeded = false;
 async function seedIfEmpty() {
   setTimeout(async () => {
     if (_seeded) return; _seeded = true;
-    // 멤버가 없으면 기본 관리자 생성 (클라우드/로컬 공통, 최초 1회)
-    if (state.members.length === 0) {
-      await Store.add('members', { name: '관리자', role: 'admin', pin: '0000' });
+    // 미리보기(로컬) 모드에서만 기본 관리자 생성. 클라우드는 첫 로그인 시 자동 부트스트랩.
+    if (!CLOUD && state.members.length === 0) {
+      await Store.add('members', { name: '관리자', role: 'admin', email: 'admin@local' });
     }
     // 규격(언더바 선택용) 기본값 — 비어있으면 한 번만 추가
     if (state.specs.length === 0) {
@@ -222,70 +271,59 @@ async function seedSample() {
   for (const o of outs) { o.type = 'out'; o.hebe = +(o.jang * 5.12).toFixed(2); o.by = '김민준'; await Store.add('transactions', o); }
 }
 function onData(coll) {
-  if (coll === 'members') renderLoginMembers();
+  if (coll === 'members' && !_membersLoaded) {
+    _membersLoaded = true;
+    _membersWaiters.splice(0).forEach(fn => fn());
+  }
   if (me) render();
 }
 
-/* ---------- 5. 로그인 ---------- */
-let pinBuf = '', pinTarget = null;
-function renderLoginMembers() {
-  if (me) return;
-  const box = el('login-members');
-  if (!state.members.length) { box.innerHTML = '<div class="empty" style="padding:20px">사용자 준비 중...</div>'; return; }
-  box.innerHTML = '<div class="member-list">' + state.members.map(m =>
-    `<button class="member-btn" onclick="pickMember('${m.id}')">
-       <span class="av">${esc(initial(m.name))}</span>
-       <span>${esc(m.name)}</span>
-     </button>`).join('') + '</div>';
-}
-function pickMember(id) {
-  pinTarget = state.members.find(m => m.id === id); if (!pinTarget) return;
-  pinBuf = '';
-  el('login-members').classList.add('hidden');
-  el('login-pin').classList.remove('hidden');
-  el('pin-name').textContent = pinTarget.name + ' 님 · PIN 입력';
-  el('login-err').textContent = '';
-  buildKeypad(); drawPinDots();
-}
-function backToMembers() {
-  pinTarget = null; pinBuf = '';
-  el('login-pin').classList.add('hidden');
-  el('login-members').classList.remove('hidden');
-}
-function buildKeypad() {
-  const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'];
-  el('keypad').innerHTML = keys.map(k => {
-    if (k === 'del') return `<button class="key fn" onclick="pinKey('del')">←</button>`;
-    if (k === 'ok') return `<button class="key fn" onclick="pinKey('ok')">확인</button>`;
-    return `<button class="key" onclick="pinKey('${k}')">${k}</button>`;
-  }).join('');
-}
-function drawPinDots() {
-  el('pin-dots').innerHTML = [0, 1, 2, 3].map(i => `<span class="pin-dot ${i < pinBuf.length ? 'on' : ''}"></span>`).join('');
-}
-function pinKey(k) {
-  if (k === 'del') { pinBuf = pinBuf.slice(0, -1); }
-  else if (k === 'ok') { return tryLogin(); }
-  else if (pinBuf.length < 4) { pinBuf += k; }
-  drawPinDots();
-  if (pinBuf.length === 4) setTimeout(tryLogin, 150);
-}
-function tryLogin() {
-  if (!pinTarget) return;
-  if (pinBuf === (pinTarget.pin || '0000')) {
-    me = pinTarget;
-    sessionStorage.setItem('dws_me', me.id);
-    el('login').style.display = 'none';
-    el('app').style.display = 'block';
-    el('me-av').textContent = initial(me.name);
-    el('me-nm').textContent = me.name;
-    render();
-  } else {
-    el('login-err').textContent = 'PIN이 일치하지 않습니다.';
-    pinBuf = ''; drawPinDots();
+/* ---------- 5. 로그인 (이메일 + 비밀번호 / Firebase 인증) ---------- */
+async function doLogin() {
+  const email = (el('lg-email').value || '').trim();
+  const pw = el('lg-pw').value || '';
+  const err = el('login-err'); err.style.color = '';
+  if (!email || !pw) { err.textContent = '이메일과 비밀번호를 입력하세요.'; return; }
+  err.textContent = '';
+  if (!CLOUD) {
+    // 미리보기 모드: 인증 없이 로컬 관리자
+    me = state.members.find(m => m.role === 'admin') || state.members[0] || { name: '관리자', role: 'admin' };
+    el('login').style.display = 'none'; el('app').style.display = 'block';
+    el('me-av').textContent = initial(me.name); el('me-nm').textContent = me.name; render();
+    return;
+  }
+  try {
+    await auth.signInWithEmailAndPassword(email, pw);
+    // 성공 시 onAuthStateChanged → afterAuth 에서 화면 전환
+  } catch (e) {
+    err.textContent = authErrMsg(e);
   }
 }
-function logout() { me = null; sessionStorage.removeItem('dws_me'); location.reload(); }
+function authErrMsg(e) {
+  const c = (e && e.code) || '';
+  if (c === 'auth/invalid-email') return '이메일 형식이 올바르지 않습니다.';
+  if (c === 'auth/user-disabled') return '정지된 계정입니다. 관리자에게 문의하세요.';
+  if (c === 'auth/user-not-found' || c === 'auth/wrong-password' || c === 'auth/invalid-credential' || c === 'auth/invalid-login-credentials')
+    return '이메일 또는 비밀번호가 올바르지 않습니다.';
+  if (c === 'auth/too-many-requests') return '시도가 너무 많습니다. 잠시 후 다시 시도하세요.';
+  if (c === 'auth/network-request-failed') return '네트워크 연결을 확인하세요.';
+  return '로그인 실패: ' + ((e && e.message) || c);
+}
+async function resetPw() {
+  const email = (el('lg-email').value || '').trim();
+  const err = el('login-err'); err.style.color = '';
+  if (!email) { err.textContent = '재설정할 이메일을 위 칸에 입력한 뒤 눌러주세요.'; return; }
+  if (!CLOUD) { err.textContent = '미리보기 모드에서는 사용할 수 없습니다.'; return; }
+  try {
+    await auth.sendPasswordResetEmail(email);
+    err.style.color = 'var(--gd)';
+    err.textContent = '재설정 메일을 보냈습니다. 메일함을 확인하세요.';
+  } catch (e) { err.style.color = ''; err.textContent = authErrMsg(e); }
+}
+function logout() {
+  if (CLOUD && auth) { auth.signOut().then(() => location.reload()).catch(() => location.reload()); }
+  else { me = null; location.reload(); }
+}
 
 /* ---------- 6. 네비게이션 ---------- */
 /* ---------- 햄버거 드로어 ---------- */
@@ -1375,7 +1413,7 @@ function renderSettings() {
     <div class="ph"><div><h2><i class="ti ti-settings"></i>설정</h2><p>${esc(me.name)} 님${isAdmin() ? ' · 관리자' : ''}</p></div></div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-users"></i>직원 관리</h3>${isAdmin() ? `<button class="more" onclick="openMemberForm()"><i class="ti ti-plus"></i>추가</button>` : ''}</div>
-      ${state.members.map(m => `<div class="mem"><div class="av">${esc(initial(m.name))}</div><div class="info"><div class="nm">${esc(m.name)}</div>${isAdmin() ? `<div class="rl">${m.role === 'admin' ? '전체 조회·수정·삭제' : '현장·재고 입력'}</div>` : ''}</div>${isAdmin() ? `<span class="pill ${m.role === 'admin' ? 'p-prog' : 'p-gray'}">${m.role === 'admin' ? '관리자' : '직원'}</span><button class="x" onclick="openMemberForm('${m.id}')"><i class="ti ti-edit" style="font-size:17px"></i></button>` : ''}</div>`).join('')}
+      ${state.members.map(m => `<div class="mem"><div class="av">${esc(initial(m.name))}</div><div class="info"><div class="nm">${esc(m.name)}</div>${isAdmin() ? `<div class="rl">${esc(m.email || '이메일 미설정')}</div>` : ''}</div>${isAdmin() ? `<span class="pill ${m.role === 'admin' ? 'p-prog' : 'p-gray'}">${m.role === 'admin' ? '관리자' : '직원'}</span><button class="x" onclick="openMemberForm('${m.id}')"><i class="ti ti-edit" style="font-size:17px"></i></button>` : ''}</div>`).join('')}
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-briefcase"></i>거래처 관리</h3>${isAdmin() && (state.clients || []).length ? `<button class="more" style="color:var(--red-t)" onclick="delAllClients()"><i class="ti ti-trash" style="font-size:14px"></i>전체 삭제</button>` : ''}</div>
@@ -1401,23 +1439,27 @@ function renderSettings() {
 }
 function openMemberForm(id) {
   if (!isAdmin()) return;
-  const m = id ? state.members.find(x => x.id === id) : null; const v = m || { role: 'staff', pin: '' };
+  const m = id ? state.members.find(x => x.id === id) : null; const v = m || { role: 'staff', email: '' };
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-user-plus"></i>${m ? '직원 수정' : '직원 추가'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
       <div class="fld full"><label>이름<span class="req">*</span></label><input id="m-name" value="${esc(v.name || '')}" placeholder="이름"></div>
       <div class="fld"><label>권한</label><select id="m-role"><option value="staff" ${v.role === 'staff' ? 'selected' : ''}>직원</option><option value="admin" ${v.role === 'admin' ? 'selected' : ''}>관리자</option></select></div>
-      <div class="fld"><label>PIN(4자리)<span class="req">*</span></label><input id="m-pin" value="${esc(v.pin || '')}" inputmode="numeric" maxlength="4" placeholder="숫자 4자리"></div>
+      <div class="fld full"><label>로그인 이메일<span class="req">*</span></label><input id="m-email" type="email" value="${esc(v.email || '')}" autocapitalize="none" spellcheck="false" placeholder="예) hong@dawoo.com"></div>
     </div>
+    <div class="banner info" style="margin:0 0 12px"><i class="ti ti-info-circle"></i>이 이메일로 Firebase 콘솔에서 계정(비밀번호)을 만들어야 로그인됩니다. 비밀번호는 콘솔에서 관리합니다.</div>
     <div class="frm-foot">
       ${m && state.members.length > 1 ? `<button class="btn btn-danger" onclick="delMember('${id}')"><i class="ti ti-trash"></i></button>` : ''}
       <button class="btn btn-pri" style="flex:1" onclick="submitMember('${id || ''}')"><i class="ti ti-check"></i>저장</button>
     </div>`);
 }
 async function submitMember(id) {
-  const name = el('m-name').value.trim(); const pin = el('m-pin').value.trim();
-  if (!name || pin.length !== 4) { toast('이름과 4자리 PIN을 입력하세요'); return; }
-  const obj = { name, role: el('m-role').value, pin };
+  const name = el('m-name').value.trim();
+  const email = (el('m-email').value || '').trim().toLowerCase();
+  if (!name || !email) { toast('이름과 로그인 이메일을 입력하세요'); return; }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { toast('이메일 형식을 확인하세요'); return; }
+  if (state.members.some(m => m.id !== id && (m.email || '').toLowerCase() === email)) { toast('이미 등록된 이메일입니다'); return; }
+  const obj = { name, role: el('m-role').value, email };
   if (id) await Store.update('members', id, obj); else await Store.add('members', obj);
   toast('저장됨'); closeModal();
 }
