@@ -957,7 +957,8 @@ function openItemForm(id) {
           <button class="btn btn-pri btn-sm" type="button" onclick="commitSpec('i')"><i class="ti ti-plus"></i>추가</button>
         </div>
       </div>
-      <div class="fld"><label>공급처</label><input id="i-vendor" value="${esc(v.vendor || '')}" placeholder="공급처(선택)"></div>
+      <div class="fld"><label>공급처/발주처</label><select id="i-vendor" onchange="onMasterChange('i-vendor','suppliers')">${masterOptions('suppliers', v.vendor || '')}</select></div>
+      <div class="fld full hidden" id="i-vendor-add"><label>새 공급처 입력 후 추가</label><div style="display:flex;gap:8px"><input id="i-vendor-new" placeholder="이름 입력" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('i-vendor','suppliers')"><i class="ti ti-plus"></i>추가</button></div></div>
       <div class="fld"><label>창고</label><input id="i-depot" value="${esc(v.depot || '본사')}"></div>
       <div class="fld"><label>현재 장수</label><input id="i-jang" value="${esc(v.jang || 0)}" inputmode="numeric" oninput="updateItemHebe()"></div>
       <div class="fld"><label>안전재고(장) — 미만이면 '부족'</label><input id="i-safe" value="${esc(v.safeJang || 0)}" inputmode="numeric" placeholder="안전재고 장수"></div>
@@ -973,6 +974,7 @@ function openItemForm(id) {
       ${it && isAdmin() ? `<button class="btn btn-danger" onclick="delItem('${id}')"><i class="ti ti-trash"></i></button>` : ''}
       <button class="btn btn-pri" style="flex:1" onclick="submitItem('${id || ''}')"><i class="ti ti-check"></i>저장</button>
     </div>`);
+  setSelectValue('i-vendor', 'suppliers', v.vendor);
 }
 /* 규격 select에서 "새 규격 추가" 선택 시 입력란 표시 */
 function onSpecChange(prefix) {
@@ -1002,7 +1004,8 @@ async function submitItem(id) {
   let spec = el('i-spec').value; if (spec === '__add') spec = '';
   const ps = parseSpec(spec);
   const jang = parseFloat(el('i-jang').value) || 0;
-  const obj = { name, spec, vendor: el('i-vendor').value.trim(), depot: el('i-depot').value.trim() || '본사', jang, hebePerJang: ps.hebePerJang, safeJang: parseFloat(el('i-safe').value) || 0 };
+  let vendor = el('i-vendor').value; if (vendor === '__add') vendor = ''; vendor = vendor.trim();
+  const obj = { name, spec, vendor, depot: el('i-depot').value.trim() || '본사', jang, hebePerJang: ps.hebePerJang, safeJang: parseFloat(el('i-safe').value) || 0 };
   if (id) { await Store.update('inventory', id, obj); toast('저장됨'); }
   else { obj.lastInDate = todayStr(); await Store.add('inventory', obj); toast('품목 추가됨'); }
   closeModal();
@@ -1091,7 +1094,7 @@ function bulkInOpen() {
   _bulkRows = [];
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-file-spreadsheet"></i>엑셀 일괄 입고</h3><button class="x" onclick="closeModal()">×</button></div>
-    <div class="banner info"><i class="ti ti-info-circle"></i><span>엑셀(.xlsx)·CSV로 여러 자재를 한 번에 입고합니다. <b>① 양식 다운로드 → ② 채우기 → ③ 파일 선택 → ④ 미리보기 확인 후 등록.</b><br>열 순서: <b>자재명 · 규격 · 장수 · 롯트 · 입고일 · 발주처 · 메모</b> (규격은 가로*세로*두께)</span></div>
+    <div class="banner info"><i class="ti ti-info-circle"></i><span>엑셀(.xlsx)·CSV로 여러 자재를 한 번에 입고합니다. <b>① 양식 다운로드 → ② 채우기 → ③ 파일 선택 → ④ 미리보기 확인 후 등록.</b><br>열 순서: <b>자재명 · 규격 · 패턴 · 장수 · 롯트 · 입고일 · 발주처 · 메모</b> (규격은 가로*세로*두께 · 패턴이 여러 개면 행을 나눠 입력)</span></div>
     <div style="display:flex;gap:8px;margin:10px 0">
       <button class="btn" style="flex:1" onclick="bulkInTemplate()"><i class="ti ti-download"></i>양식 다운로드</button>
       <label class="btn btn-pri" style="flex:1;cursor:pointer"><i class="ti ti-upload"></i>파일 선택<input type="file" accept=".xlsx,.xls,.csv" onchange="bulkInParse(this)" style="display:none"></label>
@@ -1101,11 +1104,12 @@ function bulkInOpen() {
 function bulkInTemplate() {
   if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후 다시'); return; }
   const aoa = [
-    ['자재명', '규격', '장수', '롯트', '입고일', '발주처', '메모'],
-    ['카무스 화이트', '1600*3200*20', 6, 'LOT-26-0601', todayStr(), '다우세라믹앤석재', '']
+    ['자재명', '규격', '패턴', '장수', '롯트', '입고일', '발주처', '메모'],
+    ['카무스 화이트', '1600*3200*20', 'A패턴', 6, 'LOT-26-0601', todayStr(), '다우세라믹앤석재', ''],
+    ['카무스 화이트', '1600*3200*20', 'B패턴', 4, 'LOT-26-0601', todayStr(), '다우세라믹앤석재', '패턴별로 행을 나눠 적으세요']
   ];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = [{ wch: 18 }, { wch: 16 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 20 }];
+  ws['!cols'] = [{ wch: 18 }, { wch: 16 }, { wch: 10 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 22 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '입고');
   XLSX.writeFile(wb, '입고양식.xlsx');
@@ -1138,19 +1142,20 @@ function bulkInBuild(rows) {
   _bulkRows = rows.map(r => {
     const name = String(_bulkPick(r, ['자재명', '자재', '품명', 'name'])).trim();
     const spec = String(_bulkPick(r, ['규격', 'spec'])).trim();
+    const pattern = String(_bulkPick(r, ['패턴', '패턴명', '패턴 명', 'pattern'])).trim();
     const jang = parseFloat(_bulkPick(r, ['장수', '수량', '입고장수', '입고 장수', 'qty'])) || 0;
     const lot = String(_bulkPick(r, ['롯트', '롯트번호', '롯트 번호', 'lot'])).trim();
     const date = _bulkDate(_bulkPick(r, ['입고일', '날짜', 'date']));
     const vendor = String(_bulkPick(r, ['발주처', '매입처', 'vendor'])).trim() || '다우세라믹앤석재';
     const note = String(_bulkPick(r, ['메모', '비고', 'note'])).trim();
     const valid = !!name && jang > 0;
-    return { name, spec, jang, lot, date, vendor, note, valid };
+    return { name, spec, pattern, jang, lot, date, vendor, note, valid };
   }).filter(r => r.name || r.jang);
   const okCnt = _bulkRows.filter(r => r.valid).length;
   el('bulk-preview').innerHTML = `
     <div style="font-size:13px;color:var(--t2);margin:6px 0 8px">총 ${_bulkRows.length}행 · 정상 <b style="color:var(--gd)">${okCnt}</b>건${_bulkRows.length - okCnt ? ` · 오류 <b style="color:var(--red-t)">${_bulkRows.length - okCnt}</b>건` : ''}</div>
-    <div class="tbl-wrap" style="max-height:300px;overflow:auto"><table class="tbl"><thead><tr><th>상태</th><th>자재명</th><th>규격</th><th>장수</th><th>롯트</th><th>입고일</th><th>발주처</th></tr></thead><tbody>
-    ${_bulkRows.map(r => `<tr><td>${r.valid ? '<span class="pill p-prog">정상</span>' : '<span class="pill p-issue">오류</span>'}</td><td><b>${esc(r.name || '-')}</b></td><td>${esc(r.spec || '-')}</td><td>${r.jang || 0}장</td><td>${esc(r.lot || '-')}</td><td>${esc(r.date)}</td><td>${esc(r.vendor)}</td></tr>`).join('')}
+    <div class="tbl-wrap" style="max-height:300px;overflow:auto"><table class="tbl"><thead><tr><th>상태</th><th>자재명</th><th>규격</th><th>패턴</th><th>장수</th><th>롯트</th><th>입고일</th><th>발주처</th></tr></thead><tbody>
+    ${_bulkRows.map(r => `<tr><td>${r.valid ? '<span class="pill p-prog">정상</span>' : '<span class="pill p-issue">오류</span>'}</td><td><b>${esc(r.name || '-')}</b></td><td>${esc(r.spec || '-')}</td><td>${esc(r.pattern || '-')}</td><td>${r.jang || 0}장</td><td>${esc(r.lot || '-')}</td><td>${esc(r.date)}</td><td>${esc(r.vendor)}</td></tr>`).join('')}
     </tbody></table></div>
     <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="bulkInSubmit()"><i class="ti ti-check"></i>${okCnt}건 일괄 입고</button></div>`;
 }
@@ -1171,7 +1176,7 @@ async function bulkInSubmit() {
       const it = state.inventory.find(i => i.name === r.name);
       const per = it ? (+it.hebePerJang || 0) : (newByName[r.name] ? parseSpec(newByName[r.name].spec).hebePerJang : 0);
       const hebe = +(r.jang * per).toFixed(2);
-      await Store.add('transactions', { type: 'in', itemName: r.name, itemId: it ? it.id : '', spec: r.spec || (it && it.spec) || '', lot: r.lot, patterns: [], jang: r.jang, hebe, vendor: r.vendor, date: r.date, note: r.note, by: me.name });
+      await Store.add('transactions', { type: 'in', itemName: r.name, itemId: it ? it.id : '', spec: r.spec || (it && it.spec) || '', lot: r.lot, patterns: r.pattern ? [{ pattern: r.pattern, jang: r.jang }] : [], jang: r.jang, hebe, vendor: r.vendor, date: r.date, note: r.note, by: me.name });
     }
     // 입고된 자재별 예정홀딩 자동 전환 (실재고 = 기존 + 입고분)
     const affected = {};
