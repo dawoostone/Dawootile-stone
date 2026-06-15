@@ -534,7 +534,7 @@ function renderHome() {
       <div class="qa-grid">
         <button class="qa" onclick="go('stock');setTimeout(openStockForm,50)"><span class="qi ic g"><i class="ti ti-login"></i></span><span><b>입고 등록</b><small>자재 입고</small></span></button>
         <button class="qa" onclick="go('ship');setTimeout(openShipForm,50)"><span class="qi ic b"><i class="ti ti-logout"></i></span><span><b>출고 등록</b><small>현장·공장</small></span></button>
-        <button class="qa" onclick="go('sites');setTimeout(openSiteForm,50)"><span class="qi ic a"><i class="ti ti-building-plus"></i></span><span><b>현장 등록</b><small>신규 현장</small></span></button>
+        <button class="qa" onclick="go('sites');setTimeout(openSiteForm,50)"><span class="qi ic a"><i class="ti ti-building-community"></i></span><span><b>현장 등록</b><small>신규 현장</small></span></button>
         <button class="qa" onclick="go('hold');setTimeout(openHoldForm,50)"><span class="qi ic r"><i class="ti ti-lock-plus"></i></span><span><b>홀딩 등록</b><small>자재 홀딩</small></span></button>
       </div>
     </div>`;
@@ -636,7 +636,7 @@ function sitesFilteredList() {
   return list;
 }
 function siteGridHtml(list) {
-  return list.length ? list.map(siteCard).join('') : `<div class="empty" style="grid-column:1/-1"><i class="ti ti-building"></i>해당하는 현장이 없습니다<br><button class="btn btn-pri btn-sm" style="margin-top:12px" onclick="openSiteForm()"><i class="ti ti-building-plus"></i>현장 등록하기</button></div>`;
+  return list.length ? list.map(siteCard).join('') : `<div class="empty" style="grid-column:1/-1"><i class="ti ti-building"></i>해당하는 현장이 없습니다<br><button class="btn btn-pri btn-sm" style="margin-top:12px" onclick="openSiteForm()"><i class="ti ti-building-community"></i>현장 등록하기</button></div>`;
 }
 function chipSF(v, label) { return `<button class="chip ${(filters.siteSearchField || 'all') === v ? 'active' : ''}" onclick="setSiteSearchField('${v}')">${label}</button>`; }
 function setSiteSearchField(fld) { filters.siteSearchField = fld; renderSites(); setTimeout(() => { const i = el('site-search'); if (i) i.focus(); }, 30); }
@@ -746,7 +746,7 @@ function openSiteForm(id, pre) {
   const s = id ? state.sites.find(x => x.id === id) : null;
   const v = s || Object.assign({ manager: me.name, orderType: '실측', stage: '접수', measureNeeded: true }, pre || {});
   openModal(`
-    <div class="sheet-h"><h3><i class="ti ti-building-plus"></i>${s ? '현장 수정' : '현장 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="sheet-h"><h3><i class="ti ti-building-community"></i>${s ? '현장 수정' : '현장 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
       <div class="fld"><label>현장명 <span style="color:var(--t3);font-weight:500">(미입력 시 업체명)</span></label><input id="s-name" value="${esc(v.name || '')}" placeholder="현장명"></div>
       <div class="fld"><label>업체(거래처)<span class="req">*</span></label>${searchBox('s-client', '업체명 검색·입력', v.client, 'companyNames', '')}</div>
@@ -1416,7 +1416,7 @@ function renderHold() {
           ${isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="delHold('${h.id}')"><i class="ti ti-trash"></i>삭제</button>` : ''}
         </div>` : `
         <div style="display:flex;gap:8px;margin-top:10px">
-          <button class="btn btn-pri btn-sm" style="flex:1" onclick="holdToSite('${h.id}')"><i class="ti ti-building-plus"></i>현장으로</button>
+          <button class="btn btn-pri btn-sm" style="flex:1" onclick="holdToSite('${h.id}')"><i class="ti ti-building-community"></i>현장으로</button>
           <button class="btn btn-pri btn-sm" style="flex:1;background:var(--blue);border-color:var(--blue)" onclick="holdToShip('${h.id}')"><i class="ti ti-truck-delivery"></i>출고로</button>
         </div>
         <div style="display:flex;gap:8px;margin-top:8px">
