@@ -636,7 +636,7 @@ function sitesFilteredList() {
   return list;
 }
 function siteGridHtml(list) {
-  return list.length ? list.map(siteCard).join('') : `<div class="empty" style="grid-column:1/-1"><i class="ti ti-building"></i>해당하는 현장이 없습니다<br><button class="btn btn-pri btn-sm" style="margin-top:12px" onclick="openSiteForm()">현장 등록하기</button></div>`;
+  return list.length ? list.map(siteCard).join('') : `<div class="empty" style="grid-column:1/-1"><i class="ti ti-building"></i>해당하는 현장이 없습니다<br><button class="btn btn-pri btn-sm" style="margin-top:12px" onclick="openSiteForm()"><i class="ti ti-building-plus"></i>현장 등록하기</button></div>`;
 }
 function chipSF(v, label) { return `<button class="chip ${(filters.siteSearchField || 'all') === v ? 'active' : ''}" onclick="setSiteSearchField('${v}')">${label}</button>`; }
 function setSiteSearchField(fld) { filters.siteSearchField = fld; renderSites(); setTimeout(() => { const i = el('site-search'); if (i) i.focus(); }, 30); }
@@ -1205,7 +1205,7 @@ function renderShip() {
       <button class="btn btn-pri btn-sm" onclick="openShipForm()"><i class="ti ti-plus"></i>출고 등록</button></div>
     <div class="stat-grid" style="grid-template-columns:repeat(2,1fr)">
       <div class="stat"><div class="ic b"><i class="ti ti-calendar-stats"></i></div><div class="v">${monthHebe.toFixed(0)}<span style="font-size:14px">㎡</span></div><div class="l">이번 달 출고</div><div class="s">${monthOut.length}건</div></div>
-      <div class="stat"><div class="ic g"><i class="ti ti-sum"></i></div><div class="v">${outs.length}</div><div class="l">총 출고 건수</div><div class="s">전체 누적</div></div>
+      <div class="stat"><div class="ic g"><i class="ti ti-package-export"></i></div><div class="v">${outs.length}</div><div class="l">총 출고 건수</div><div class="s">전체 누적</div></div>
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-table"></i>출고 내역 조회·추출</h3></div>
