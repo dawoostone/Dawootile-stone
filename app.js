@@ -86,7 +86,7 @@ if (bc) bc.onmessage = (e) => { const c = e.data; if (Store._watchers[c]) Store.
 const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [] };
 let me = null;          // 로그인한 사용자
 let tab = 'home';
-let filters = { sites: 'all', stock: 'all', stockSearch: '' };
+let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all' };
 let _holdLinkSite = null;   // 현장 저장 시 이 홀딩을 현장에 '연결'(소진 아님)
 let _holdConfirm = null;    // 출고 저장 시 이 홀딩을 '확정' 처리
 let _busy = false;          // 등록 버튼 연속 클릭(중복 저장) 방지
@@ -609,7 +609,7 @@ function companyDatalist(id) {
 /* ===================================================================
    현장 관리
    =================================================================== */
-function renderSites() {
+function sitesFilteredList() {
   const f = filters.sites;
   let list = state.sites.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   if (f === 'prog') list = list.filter(s => !['완료', '보류'].includes(s.stage));
@@ -617,14 +617,52 @@ function renderSites() {
   else if (f === 'construct') list = list.filter(s => ['발주', '시공'].includes(s.stage));
   else if (f === 'done') list = list.filter(s => s.stage === '완료');
   else if (f === 'issue') list = list.filter(s => s.stage === '보류');
-
+  const q = (filters.siteSearch || '').trim().toLowerCase();
+  if (q) {
+    const fld = filters.siteSearchField || 'all';
+    list = list.filter(s => {
+      const team = (s.team || '').toLowerCase();
+      const client = (s.client || '').toLowerCase();
+      const mat = (s.materialName || '').toLowerCase();
+      const dates = [s.measureDate, s.constructDate].filter(Boolean).join(' ').toLowerCase();
+      const name = (s.name || '').toLowerCase();
+      if (fld === 'team') return team.includes(q);
+      if (fld === 'client') return client.includes(q);
+      if (fld === 'material') return mat.includes(q);
+      if (fld === 'date') return dates.includes(q);
+      return team.includes(q) || client.includes(q) || mat.includes(q) || dates.includes(q) || name.includes(q);
+    });
+  }
+  return list;
+}
+function siteGridHtml(list) {
+  return list.length ? list.map(siteCard).join('') : `<div class="empty" style="grid-column:1/-1"><i class="ti ti-building"></i>해당하는 현장이 없습니다<br><button class="btn btn-pri btn-sm" style="margin-top:12px" onclick="openSiteForm()">현장 등록하기</button></div>`;
+}
+function chipSF(v, label) { return `<button class="chip ${(filters.siteSearchField || 'all') === v ? 'active' : ''}" onclick="setSiteSearchField('${v}')">${label}</button>`; }
+function setSiteSearchField(fld) { filters.siteSearchField = fld; renderSites(); setTimeout(() => { const i = el('site-search'); if (i) i.focus(); }, 30); }
+function filterSites() {
+  filters.siteSearch = el('site-search') ? el('site-search').value : '';
+  const list = sitesFilteredList();
+  if (el('sites-grid')) el('sites-grid').innerHTML = siteGridHtml(list);
+  if (el('sites-count')) el('sites-count').textContent = list.length + '건';
+}
+function renderSites() {
+  const f = filters.sites;
+  const list = sitesFilteredList();
   el('pg-sites').innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-building-community"></i>시공 현장</h2><p>진행 단계를 한눈에 · 탭하면 상세</p></div>
       <button class="btn btn-pri btn-sm" onclick="openSiteForm()"><i class="ti ti-plus"></i>현장 등록</button></div>
     <div class="chips">
       ${chip('all', '전체', f)}${chip('prog', '진행중', f)}${chip('wait', '견적·결제', f)}${chip('construct', '발주·시공', f)}${chip('done', '완료', f)}${chip('issue', '보류', f)}
     </div>
-    <div class="site-grid">${list.length ? list.map(siteCard).join('') : `<div class="empty" style="grid-column:1/-1"><i class="ti ti-building"></i>등록된 현장이 없습니다<br><button class="btn btn-pri btn-sm" style="margin-top:12px" onclick="openSiteForm()">첫 현장 등록하기</button></div>`}</div>`;
+    <div class="search-box">
+      <i class="ti ti-search"></i>
+      <input id="site-search" placeholder="현장·시공팀·업체·자재·날짜 검색" value="${esc(filters.siteSearch || '')}" oninput="filterSites()" autocomplete="off">
+      ${filters.siteSearch ? `<button class="search-x" onclick="el('site-search').value='';filterSites()"><i class="ti ti-x"></i></button>` : ''}
+    </div>
+    <div class="chips">${chipSF('all', '통합')}${chipSF('team', '시공팀')}${chipSF('client', '업체')}${chipSF('material', '자재')}${chipSF('date', '날짜')}</div>
+    <div style="font-size:12px;color:var(--t3);margin:2px 0 8px">검색 결과 <b id="sites-count" style="color:var(--t1)">${list.length}건</b></div>
+    <div class="site-grid" id="sites-grid">${siteGridHtml(list)}</div>`;
 }
 function chip(v, label, cur) { return `<button class="chip ${cur === v ? 'active' : ''}" onclick="filters.sites='${v}';renderSites()">${label}</button>`; }
 
@@ -660,7 +698,7 @@ function siteCard(s) {
 function openSiteDetail(id) {
   const s = state.sites.find(x => x.id === id); if (!s) return;
   const skip = s.orderType === '도면';
-  const linkedHold = state.holdings.find(h => (h.status || '홀딩') === '홀딩' && (h.forSiteId === s.id || (s.name && h.forSiteName === s.name)));
+  const linkedHold = state.holdings.find(h => h.status !== '해제' && (h.forSiteId === s.id || (s.name && h.forSiteName === s.name)));
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-building-community"></i>${esc(s.name)}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div style="margin-bottom:12px">${pill(s.stage || '접수')}${s.confirmed ? ' <span class="pill p-done">확정</span>' : ''}</div>
@@ -682,7 +720,7 @@ function openSiteDetail(id) {
     <div class="seg" style="flex-wrap:wrap">
       ${SITE_STAGES.filter(st => !(skip && st === '실측')).map(st => `<button class="${(s.stage || '접수') === st ? 'on' : ''}" onclick="advanceStage('${s.id}','${st}')">${st}</button>`).join('')}
     </div>
-    ${linkedHold ? `<div class="banner info" style="margin-top:6px"><i class="ti ti-lock"></i>이미 홀딩이 연결된 현장입니다 — ${esc(linkedHold.vendor || '')} · ${+linkedHold.jang || 0}장${linkedHold.materialName ? ' · ' + esc(linkedHold.materialName) : ''}. 중복 홀딩을 막기 위해 비활성화됩니다.</div>` : `<button class="btn btn-ghost btn-block" style="margin-top:6px" onclick="holdFromSite('${s.id}')"><i class="ti ti-lock-plus"></i>이 현장 자재 홀딩 잡기</button>`}
+    ${linkedHold ? `<div class="banner info" style="margin-top:6px"><i class="ti ti-lock"></i>이미 홀딩이 연결된 현장입니다 (${esc(linkedHold.status || '홀딩')}) — ${esc(linkedHold.vendor || '')} · ${+linkedHold.jang || 0}장${linkedHold.materialName ? ' · ' + esc(linkedHold.materialName) : ''}. 진행 단계가 넘어가도 중복 홀딩은 막습니다.</div>` : `<button class="btn btn-ghost btn-block" style="margin-top:6px" onclick="holdFromSite('${s.id}')"><i class="ti ti-lock-plus"></i>이 현장 자재 홀딩 잡기</button>`}
     <div class="frm-foot">
       <button class="btn" style="flex:1" onclick="openSiteForm('${s.id}')"><i class="ti ti-edit"></i>수정</button>
       ${isAdmin() ? `<button class="btn btn-danger" onclick="delSite('${s.id}')"><i class="ti ti-trash"></i></button>` : ''}
@@ -691,8 +729,8 @@ function openSiteDetail(id) {
 /* 현장 → 홀딩 생성 (현장 정보로 홀딩 폼 프리필) */
 function holdFromSite(id) {
   const s = state.sites.find(x => x.id === id); if (!s) return;
-  const existing = state.holdings.find(h => (h.status || '홀딩') === '홀딩' && (h.forSiteId === id || (s.name && h.forSiteName === s.name)));
-  if (existing) { toast('이미 홀딩이 연결된 현장입니다 (중복 방지)'); return; }
+  const existing = state.holdings.find(h => h.status !== '해제' && (h.forSiteId === id || (s.name && h.forSiteName === s.name)));
+  if (existing) { toast(`이미 홀딩이 연결된 현장입니다 (${existing.status || '홀딩'}) — 중복 방지`); return; }
   openHoldForm(null, { forSiteId: id, materialName: s.materialName, jang: s.qty, useDate: s.constructDate });
 }
 async function advanceStage(id, stage) {
