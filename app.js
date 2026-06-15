@@ -17,6 +17,15 @@ if (CLOUD) {
   firebase.initializeApp(FBCONF);
   db = firebase.firestore();
   auth = firebase.auth();
+  // 같은 기기에서 자동 로그인 유지(LOCAL): 로그아웃 전까지 세션 보관
+  try { auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch (e) { }
+}
+/* 저장해 둔 이메일을 로그인칸에 미리 채우기 */
+function prefillEmail() {
+  const saved = (() => { try { return localStorage.getItem('dws_email') || ''; } catch (e) { return ''; } })();
+  const ei = el('lg-email'), ck = el('lg-remember');
+  if (ei && saved) ei.value = saved;
+  if (ck) ck.checked = !!saved;
 }
 function cref(name) { return db.collection('teams').doc(TEAM).collection(name); }
 
@@ -164,6 +173,7 @@ function init() {
     el('sync').classList.add('local'); el('sync-t').textContent = '미리보기';
     startSubscriptions();
     seedIfEmpty();
+    prefillEmail();
     return;
   }
   // 클라우드 모드: Firebase 인증으로 보호 — 로그인해야만 데이터에 접근 가능
@@ -176,6 +186,7 @@ function init() {
       el('app').style.display = 'none';
       el('login').style.display = 'flex';
       const e = el('login-err'); if (e) { e.style.color = ''; e.textContent = ''; }
+      prefillEmail();
     }
   });
 }
@@ -285,6 +296,11 @@ async function doLogin() {
   const err = el('login-err'); err.style.color = '';
   if (!email || !pw) { err.textContent = '이메일과 비밀번호를 입력하세요.'; return; }
   err.textContent = '';
+  // 이메일 저장 옵션 처리
+  try {
+    if (el('lg-remember') && el('lg-remember').checked) localStorage.setItem('dws_email', email);
+    else localStorage.removeItem('dws_email');
+  } catch (e) { }
   if (!CLOUD) {
     // 미리보기 모드: 인증 없이 로컬 관리자
     me = state.members.find(m => m.role === 'admin') || state.members[0] || { name: '관리자', role: 'admin' };
