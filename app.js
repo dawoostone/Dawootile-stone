@@ -1213,6 +1213,10 @@ function renderShip() {
       <div class="stat"><div class="ic g"><i class="ti ti-package-export"></i></div><div class="v">${outs.length}</div><div class="l">총 출고 건수</div><div class="s">전체 누적</div></div>
     </div>
     <div class="card">
+      <div class="card-h"><h3><i class="ti ti-list-details"></i>최근 출고</h3></div>
+      ${outs.length ? outs.slice(0, 10).map(t => `<div class="alert-i b"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${esc(t.itemName)} ${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · ${esc(t.targetName || '')}${(t.dest || t.factory) ? ' · → ' + esc(t.dest || t.factory) : ''} · ${esc(t.by || '')}</span></div>${isAdmin() ? `<button class="x" onclick="delShip('${t.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`}
+    </div>
+    <div class="card">
       <div class="card-h"><h3><i class="ti ti-table"></i>출고 내역 조회·추출</h3></div>
       <div class="frm">
         <div class="fld"><label>시작일</label><input type="date" id="r-from" oninput="shipReport()"></div>
@@ -1236,10 +1240,7 @@ function renderShip() {
       <div class="card-h"><h3><i class="ti ti-trophy"></i>출고 상위 제품</h3></div>
       ${top.length ? top.map(([nm, v], i) => `<div class="abar"><span class="rk">${i + 1}</span><span class="nm">${esc(nm)}</span><span class="tr"><i style="width:${v / maxT * 100}%"></i></span><span class="vv">${v.toFixed(0)}㎡</span></div>`).join('') : `<div class="empty"><i class="ti ti-chart-dots"></i>출고 데이터가 쌓이면 표시됩니다</div>`}
     </div>
-    <div class="card">
-      <div class="card-h"><h3><i class="ti ti-list-details"></i>최근 출고</h3></div>
-      ${outs.length ? outs.slice(0, 10).map(t => `<div class="alert-i b"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${esc(t.itemName)} ${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · ${esc(t.targetName || '')}${(t.dest || t.factory) ? ' · → ' + esc(t.dest || t.factory) : ''} · ${esc(t.by || '')}</span></div>${isAdmin() ? `<button class="x" onclick="delShip('${t.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`}
-    </div>`;
+    `;
   shipReport();
 }
 /* 출고 내역 조회·추출 (거래처/자재/기간별) */
