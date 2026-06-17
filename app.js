@@ -344,6 +344,19 @@ function logout() {
 
 /* ---------- 푸시 알림 (FCM) ---------- */
 const VAPID_KEY = 'BCr1tMNMANE8G8njYgfcoSzJqaRoSE-aG1pesn7mGb2SwBhxpZFWcI4cxwR06GjurPitv2JSNTXpeQfSFm8yEYM';
+const PUSH_FN = 'https://dawoopushfn-297532467454.europe-west1.run.app';
+/* 재고 0 → 전 직원 즉시 푸시 (Cloud Function 호출) */
+async function notifyStockOut(name) {
+  try {
+    if (!CLOUD || !auth || !auth.currentUser || !name) return;
+    const token = await auth.currentUser.getIdToken();
+    await fetch(PUSH_FN + '?action=stockout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ name: name })
+    });
+  } catch (e) { }
+}
 let _pushReg = null, _pushMsg = null, _onMsgBound = false;
 function pushSupported() {
   return CLOUD && ('serviceWorker' in navigator) && ('Notification' in window) && typeof firebase !== 'undefined' && !!firebase.messaging;
@@ -1476,11 +1489,14 @@ async function submitShip() {
   if (_busy) return; _busy = true;
   try {
     const it = state.inventory.find(i => i.name === material);
+    const oldJang = it ? (+it.jang || 0) : 0;
+    const newJang = Math.max(0, oldJang - jang);
     const hebe = it ? +(jang * (+it.hebePerJang || 0)).toFixed(2) : 0;
-    if (it) await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) - jang) });
+    if (it) await Store.update('inventory', it.id, { jang: newJang });
     const lot = (el('o-lot') && el('o-lot').value || '').trim();
     await Store.add('transactions', { type: 'out', itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot, dest, factory: dest, target: '', targetName, date, note: el('o-note').value.trim(), by: me.name });
     if (_holdConfirm) { await Store.update('holdings', _holdConfirm, { status: '확정', shippedDate: date, shippedJang: jang }); _holdConfirm = null; }
+    if (it && oldJang > 0 && newJang <= 0) notifyStockOut(material);   // 재고 소진 → 즉시 푸시
     toast(`출고 완료 · ${jang}장${it ? ` (${hebe}㎡)` : ''}`); closeModal();
   } finally { _busy = false; }
 }
