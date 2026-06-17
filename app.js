@@ -1094,11 +1094,12 @@ function bulkInOpen() {
   _bulkRows = [];
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-file-spreadsheet"></i>엑셀 일괄 입고</h3><button class="x" onclick="closeModal()">×</button></div>
-    <div class="banner info"><i class="ti ti-info-circle"></i><span>엑셀(.xlsx)·CSV로 여러 자재를 한 번에 입고합니다. <b>① 양식 다운로드 → ② 채우기 → ③ 파일 선택 → ④ 미리보기 확인 후 등록.</b><br>열 순서: <b>자재명 · 규격 · 패턴 · 장수 · 롯트 · 입고일 · 발주처 · 메모</b> (규격은 가로*세로*두께 · 패턴이 여러 개면 행을 나눠 입력)</span></div>
+    <div class="banner info"><i class="ti ti-info-circle"></i><span>엑셀(.xlsx)·CSV로 여러 자재를 한 번에 입고합니다. <b>① 양식 다운로드 → ② 채우기 → ③ 파일 선택 → ④ 미리보기 확인 후 등록.</b><br>열 순서: <b>자재명 · 규격 · 패턴 · 장수 · 롯트 · 입고일 · 발주처 · 메모</b><br><b style="color:var(--gd)">자재명이 같으면 새로 안 만들고 기존 재고에 합산</b>됩니다. 패턴이 여러 개면 행을 나눠 적으세요.</span></div>
     <div style="display:flex;gap:8px;margin:10px 0">
-      <button class="btn" style="flex:1" onclick="bulkInTemplate()"><i class="ti ti-download"></i>양식 다운로드</button>
-      <label class="btn btn-pri" style="flex:1;cursor:pointer"><i class="ti ti-upload"></i>파일 선택<input type="file" accept=".xlsx,.xls,.csv" onchange="bulkInParse(this)" style="display:none"></label>
+      <button class="btn" style="flex:1" onclick="bulkInTemplate()"><i class="ti ti-download"></i>빈 양식</button>
+      <button class="btn" style="flex:1" onclick="bulkInTemplateStock()"><i class="ti ti-clipboard-list"></i>현재 품목 양식</button>
     </div>
+    <label class="btn btn-pri btn-block" style="cursor:pointer;margin-bottom:4px"><i class="ti ti-upload"></i>채운 파일 선택<input type="file" accept=".xlsx,.xls,.csv" onchange="bulkInParse(this)" style="display:none"></label>
     <div id="bulk-preview"></div>`);
 }
 function bulkInTemplate() {
@@ -1115,6 +1116,20 @@ function bulkInTemplate() {
   XLSX.writeFile(wb, '입고양식.xlsx');
   toast('양식 다운로드 (.xlsx)');
 }
+/* 현재 등록된 품목을 미리 채운 양식 — 패턴·장수만 적어서 올리면 됨(중복 생성 방지) */
+function bulkInTemplateStock() {
+  if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후 다시'); return; }
+  const header = ['자재명', '규격', '패턴', '장수', '롯트', '입고일', '발주처', '메모'];
+  const items = state.inventory.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  if (!items.length) { toast('등록된 품목이 없습니다 — 빈 양식을 사용하세요'); return; }
+  const rows = items.map(i => [i.name || '', i.spec || '', '', '', '', todayStr(), i.vendor || '다우세라믹앤석재', '']);
+  const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+  ws['!cols'] = [{ wch: 18 }, { wch: 16 }, { wch: 10 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 22 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '입고');
+  XLSX.writeFile(wb, '입고양식_현재품목.xlsx');
+  toast(`현재 품목 ${items.length}종 양식 다운로드`);
+}
 function bulkInParse(input) {
   const f = input.files && input.files[0]; if (!f) return;
   if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후 다시'); return; }
@@ -1130,6 +1145,7 @@ function bulkInParse(input) {
   reader.readAsArrayBuffer(f);
 }
 function _bulkPick(r, keys) { for (const k of Object.keys(r)) { if (keys.includes(String(k).trim())) return r[k]; } return ''; }
+function _normName(s) { return String(s == null ? '' : s).trim().replace(/\s+/g, ' '); }
 function _bulkDate(v) {
   if (!v) return todayStr();
   if (v instanceof Date) return new Date(v.getTime() - v.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -1149,13 +1165,14 @@ function bulkInBuild(rows) {
     const vendor = String(_bulkPick(r, ['발주처', '매입처', 'vendor'])).trim() || '다우세라믹앤석재';
     const note = String(_bulkPick(r, ['메모', '비고', 'note'])).trim();
     const valid = !!name && jang > 0;
-    return { name, spec, pattern, jang, lot, date, vendor, note, valid };
+    const exists = !!name && state.inventory.some(i => _normName(i.name) === _normName(name));
+    return { name, spec, pattern, jang, lot, date, vendor, note, valid, exists };
   }).filter(r => r.name || r.jang);
   const okCnt = _bulkRows.filter(r => r.valid).length;
   el('bulk-preview').innerHTML = `
     <div style="font-size:13px;color:var(--t2);margin:6px 0 8px">총 ${_bulkRows.length}행 · 정상 <b style="color:var(--gd)">${okCnt}</b>건${_bulkRows.length - okCnt ? ` · 오류 <b style="color:var(--red-t)">${_bulkRows.length - okCnt}</b>건` : ''}</div>
-    <div class="tbl-wrap" style="max-height:300px;overflow:auto"><table class="tbl"><thead><tr><th>상태</th><th>자재명</th><th>규격</th><th>패턴</th><th>장수</th><th>롯트</th><th>입고일</th><th>발주처</th></tr></thead><tbody>
-    ${_bulkRows.map(r => `<tr><td>${r.valid ? '<span class="pill p-prog">정상</span>' : '<span class="pill p-issue">오류</span>'}</td><td><b>${esc(r.name || '-')}</b></td><td>${esc(r.spec || '-')}</td><td>${esc(r.pattern || '-')}</td><td>${r.jang || 0}장</td><td>${esc(r.lot || '-')}</td><td>${esc(r.date)}</td><td>${esc(r.vendor)}</td></tr>`).join('')}
+    <div class="tbl-wrap" style="max-height:300px;overflow:auto"><table class="tbl"><thead><tr><th>상태</th><th>처리</th><th>자재명</th><th>규격</th><th>패턴</th><th>장수</th><th>롯트</th><th>입고일</th><th>발주처</th></tr></thead><tbody>
+    ${_bulkRows.map(r => `<tr><td>${r.valid ? '<span class="pill p-prog">정상</span>' : '<span class="pill p-issue">오류</span>'}</td><td>${!r.valid ? '-' : (r.exists ? '<span class="pill p-prog">재고추가</span>' : '<span class="pill p-gray">신규등록</span>')}</td><td><b>${esc(r.name || '-')}</b></td><td>${esc(r.spec || '-')}</td><td>${esc(r.pattern || '-')}</td><td>${r.jang || 0}장</td><td>${esc(r.lot || '-')}</td><td>${esc(r.date)}</td><td>${esc(r.vendor)}</td></tr>`).join('')}
     </tbody></table></div>
     <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="bulkInSubmit()"><i class="ti ti-check"></i>${okCnt}건 일괄 입고</button></div>`;
 }
@@ -1166,15 +1183,15 @@ async function bulkInSubmit() {
   try {
     const existById = {}, newByName = {};
     ok.forEach(r => {
-      const it = state.inventory.find(i => i.name === r.name);
+      const it = state.inventory.find(i => _normName(i.name) === _normName(r.name));
       if (it) { (existById[it.id] = existById[it.id] || { it, add: 0, date: r.date }).add += r.jang; existById[it.id].date = r.date; }
-      else { const g = (newByName[r.name] = newByName[r.name] || { spec: '', add: 0, vendor: r.vendor, date: r.date }); if (r.spec && !g.spec) g.spec = r.spec; g.add += r.jang; g.date = r.date; }
+      else { const key = _normName(r.name); const g = (newByName[key] = newByName[key] || { name: r.name, spec: '', add: 0, vendor: r.vendor, date: r.date }); if (r.spec && !g.spec) g.spec = r.spec; g.add += r.jang; g.date = r.date; }
     });
     for (const id in existById) { const g = existById[id]; await Store.update('inventory', id, { jang: (+g.it.jang || 0) + g.add, lastInDate: g.date }); }
-    for (const nm in newByName) { const g = newByName[nm]; const ps = parseSpec(g.spec); await Store.add('inventory', { name: nm, spec: g.spec, vendor: g.vendor, depot: '본사', jang: g.add, hebePerJang: ps.hebePerJang, safeJang: 0, lastInDate: g.date }); }
+    for (const nm in newByName) { const g = newByName[nm]; const ps = parseSpec(g.spec); await Store.add('inventory', { name: g.name, spec: g.spec, vendor: g.vendor, depot: '본사', jang: g.add, hebePerJang: ps.hebePerJang, safeJang: 0, lastInDate: g.date }); }
     for (const r of ok) {
-      const it = state.inventory.find(i => i.name === r.name);
-      const per = it ? (+it.hebePerJang || 0) : (newByName[r.name] ? parseSpec(newByName[r.name].spec).hebePerJang : 0);
+      const it = state.inventory.find(i => _normName(i.name) === _normName(r.name));
+      const per = it ? (+it.hebePerJang || 0) : (newByName[_normName(r.name)] ? parseSpec(newByName[_normName(r.name)].spec).hebePerJang : 0);
       const hebe = +(r.jang * per).toFixed(2);
       await Store.add('transactions', { type: 'in', itemName: r.name, itemId: it ? it.id : '', spec: r.spec || (it && it.spec) || '', lot: r.lot, patterns: r.pattern ? [{ pattern: r.pattern, jang: r.jang }] : [], jang: r.jang, hebe, vendor: r.vendor, date: r.date, note: r.note, by: me.name });
     }
