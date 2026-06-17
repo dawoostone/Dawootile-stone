@@ -209,6 +209,7 @@ async function afterAuth(user) {
   el('me-av').textContent = initial(me.name);
   el('me-nm').textContent = me.name;
   render();
+  refreshPushToken();
 }
 function findMemberByEmail(email) {
   if (!email) return null;
@@ -339,6 +340,57 @@ async function resetPw() {
 function logout() {
   if (CLOUD && auth) { auth.signOut().then(() => location.reload()).catch(() => location.reload()); }
   else { me = null; location.reload(); }
+}
+
+/* ---------- 푸시 알림 (FCM) ---------- */
+const VAPID_KEY = 'BCr1tMNMANE8G8njYgfcoSzJqaRoSE-aG1pesn7mGb2SwBhxpZFWcI4cxwR06GjurPitv2JSNTXpeQfSFm8yEYM';
+let _pushReg = null, _pushMsg = null, _onMsgBound = false;
+function pushSupported() {
+  return CLOUD && ('serviceWorker' in navigator) && ('Notification' in window) && typeof firebase !== 'undefined' && !!firebase.messaging;
+}
+function pushStatus() {
+  if (!('Notification' in window) || !pushSupported()) return 'unsupported';
+  return Notification.permission; // default | granted | denied
+}
+async function _saveToken(token) {
+  const id = token.replace(/[\/#?]/g, '_').slice(0, 1400);
+  await cref('pushTokens').doc(id).set({ token, name: me ? me.name : '', email: me ? me.email : '', ua: navigator.userAgent, updatedAt: Date.now() });
+}
+function bindForegroundPush() {
+  if (_onMsgBound || !_pushMsg) return; _onMsgBound = true;
+  _pushMsg.onMessage(payload => {
+    const d = (payload && payload.data) || (payload && payload.notification) || {};
+    toast('🔔 ' + (d.title || '알림') + (d.body ? ' · ' + d.body : ''));
+    try { if (Notification.permission === 'granted' && _pushReg) _pushReg.showNotification(d.title || '다우세라믹앤석재', { body: d.body || '', icon: 'icon-192.png' }); } catch (e) { }
+  });
+}
+async function enablePush() {
+  if (!pushSupported()) { toast('이 기기/브라우저는 알림을 지원하지 않습니다 (아이폰은 홈 화면에 추가 후 사용)'); return; }
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { toast('알림 권한이 허용되지 않았습니다'); return; }
+    const reg = await navigator.serviceWorker.register('firebase-messaging-sw.js');
+    _pushReg = reg; await navigator.serviceWorker.ready;
+    _pushMsg = firebase.messaging();
+    const token = await _pushMsg.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+    if (!token) { toast('알림 토큰 발급 실패 — 다시 시도'); return; }
+    await _saveToken(token);
+    bindForegroundPush();
+    toast('이 기기에서 알림을 받습니다 ✓');
+    if (tab === 'settings') renderSettings();
+  } catch (e) { toast('알림 설정 실패: ' + (e && (e.message || e.code) || '')); }
+}
+/* 이미 허용된 기기는 로그인 후 토큰 자동 갱신·저장 */
+async function refreshPushToken() {
+  if (!pushSupported() || Notification.permission !== 'granted') return;
+  try {
+    const reg = await navigator.serviceWorker.register('firebase-messaging-sw.js');
+    _pushReg = reg; await navigator.serviceWorker.ready;
+    _pushMsg = firebase.messaging();
+    const token = await _pushMsg.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+    if (token) await _saveToken(token);
+    bindForegroundPush();
+  } catch (e) { }
 }
 
 /* ---------- 6. 네비게이션 ---------- */
@@ -1621,6 +1673,18 @@ function renderSettings() {
       <div style="display:flex;gap:8px;margin-bottom:10px"><input id="client-new" placeholder="거래처명 입력" autocomplete="off" style="flex:1;font-size:16px;padding:11px 12px;border:1.5px solid var(--bd2);border-radius:10px"><button class="btn btn-pri btn-sm" onclick="addClient()"><i class="ti ti-plus"></i>등록</button></div>
       ${(state.clients || []).length ? state.clients.slice().sort((a, b) => (a.value || '').localeCompare(b.value || '')).map(c => `<div class="mem"><div class="info"><div class="nm">${esc(c.value)}</div></div>${isAdmin() ? `<button class="x" onclick="delClient('${c.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div style="font-size:12.5px;color:var(--t3);padding:4px 0">등록된 거래처가 없습니다. 등록하면 현장·출고·홀딩의 업체명 검색에 나옵니다.</div>`}
       ${!isAdmin() ? `<div class="banner info" style="margin-top:10px"><i class="ti ti-info-circle"></i>거래처 삭제는 관리자만 가능합니다.</div>` : ''}
+    </div>
+    <div class="card">
+      <div class="card-h"><h3><i class="ti ti-bell"></i>푸시 알림</h3></div>
+      <div style="font-size:12.5px;color:var(--t2);margin-bottom:8px">재고 0·시공 전날(오후 2시) 알림을 이 기기로 받습니다.</div>
+      ${(() => {
+        const st = pushStatus();
+        if (st === 'granted') return `<div class="banner b" style="background:var(--gl2);border-color:var(--gbd)"><i class="ti ti-bell" style="color:var(--gd)"></i><span>이 기기는 <b>알림 받는 중</b>입니다.</span></div><button class="btn btn-block" style="margin-top:8px" onclick="enablePush()"><i class="ti ti-refresh"></i>알림 다시 등록</button>`;
+        if (st === 'denied') return `<div class="banner warn"><i class="ti ti-bell"></i><span>알림이 <b>차단</b>되어 있습니다. 브라우저 사이트 설정에서 알림을 '허용'으로 바꾼 뒤 다시 시도하세요.</span></div>`;
+        if (st === 'unsupported') return `<div class="banner warn"><i class="ti ti-bell"></i><span>이 브라우저는 알림 미지원입니다. <b>아이폰은 홈 화면에 추가</b> 후 그 아이콘으로 열어 사용하세요.</span></div>`;
+        return `<button class="btn btn-pri btn-block" onclick="enablePush()"><i class="ti ti-bell"></i>이 기기에서 알림 받기</button>`;
+      })()}
+      <div style="font-size:11.5px;color:var(--t3);margin-top:8px"><i class="ti ti-device-mobile"></i> 아이폰: 사파리로 열고 <b>공유 → 홈 화면에 추가</b> → 홈 화면 아이콘으로 열어 등록해야 알림이 옵니다.</div>
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-cloud"></i>연결 상태</h3></div>

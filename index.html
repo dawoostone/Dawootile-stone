@@ -413,10 +413,14 @@ input,select,textarea{font-family:inherit}
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
 /* 옛 서비스워커/캐시 정리 — 구버전이 캐시로 뜨는 것 방지 */
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
+  navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => {
+    const u = (r.active && r.active.scriptURL) || (r.installing && r.installing.scriptURL) || (r.waiting && r.waiting.scriptURL) || '';
+    if (!u.includes('firebase-messaging-sw')) r.unregister();   // 푸시 워커는 유지
+  }));
   if (window.caches && caches.keys) caches.keys().then(ks => ks.forEach(k => caches.delete(k)));
 }
 </script>
