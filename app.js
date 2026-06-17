@@ -451,6 +451,34 @@ function heldJangFor(name) {
 }
 /* 가용재고 = 실재고 − 활성홀딩 */
 function availJang(it) { return (+it.jang || 0) - heldJangFor(it.name); }
+/* 롯트별 재고: 입고(+) − 출고(−). 자재명 기준(띄어쓰기 무시). 롯트 미입력은 '(미지정)' */
+function lotStock(name) {
+  if (!name) return [];
+  const key = _normName(name); const m = {};
+  state.transactions.forEach(t => {
+    if (_normName(t.itemName) !== key) return;
+    const lot = (t.lot || '').trim() || '(미지정)';
+    if (!m[lot]) m[lot] = { lot, inQty: 0, outQty: 0 };
+    if (t.type === 'in') m[lot].inQty += (+t.jang || 0);
+    else if (t.type === 'out') m[lot].outQty += (+t.jang || 0);
+  });
+  return Object.values(m).map(x => ({ lot: x.lot, inQty: x.inQty, outQty: x.outQty, remain: x.inQty - x.outQty }))
+    .filter(x => x.inQty > 0 || x.remain !== 0)
+    .sort((a, b) => b.remain - a.remain);
+}
+/* 폼용 롯트 select 옵션(잔여 있는 실제 롯트만) */
+function lotSelectHtml(name, current) {
+  const lots = lotStock(name).filter(l => l.lot !== '(미지정)' && l.remain > 0);
+  let html = '<option value="">롯트 선택 (선택사항)</option>';
+  lots.forEach(l => { html += `<option value="${esc(l.lot)}" ${current === l.lot ? 'selected' : ''}>${esc(l.lot)} · 잔여 ${l.remain}장</option>`; });
+  if (current && !lots.some(l => l.lot === current)) html += `<option value="${esc(current)}" selected>${esc(current)}</option>`;
+  return html;
+}
+function lotBreakdownText(name) {
+  const lots = lotStock(name);
+  if (!lots.length) return '';
+  return '롯트별 잔여: ' + lots.map(l => `${esc(l.lot)} <b style="color:${l.remain <= 0 ? 'var(--t3)' : 'var(--gd)'}">${l.remain}장</b>`).join(' · ');
+}
 /* 재고 부족 판정 (가용재고 기준 안전재고) */
 function stockState(it) {
   const avail = availJang(it), safe = +it.safeJang || 0;
@@ -965,6 +993,8 @@ function openItemForm(id) {
       <div class="fld full"><div class="reco" id="i-hebe-info" style="margin-top:0"><div class="reco-h"><i class="ti ti-ruler-2"></i>자동 환산</div><div class="row"><span class="rl">장당 헤베</span><span class="rv"><b id="i-perjang">${(parseSpec(v.spec).hebePerJang || 0).toFixed(3)}</b> ㎡/장</span></div><div class="row"><span class="rl">현재 재고 헤베</span><span class="rv"><b id="i-tothebe">${itemHebe(v).toFixed(2)}</b> ㎡</span></div></div></div>
     </div>
     ${it ? `
+    <div class="sec-label"><i class="ti ti-list-details"></i>롯트별 재고</div>
+    ${(() => { const ls = lotStock(it.name); return ls.length ? `<div class="tbl-wrap" style="margin-bottom:6px"><table class="tbl"><thead><tr><th>롯트</th><th>입고</th><th>출고</th><th>잔여</th></tr></thead><tbody>${ls.map(l => `<tr><td><b>${esc(l.lot)}</b></td><td>${l.inQty}장</td><td>${l.outQty}장</td><td><b style="color:${l.remain <= 0 ? 'var(--t3)' : 'var(--gd)'}">${l.remain}장</b></td></tr>`).join('')}</tbody></table></div>` : `<div style="font-size:12.5px;color:var(--t3);padding:2px 0 8px">롯트 정보가 없습니다 (입고 시 롯트를 입력하면 표시됩니다)</div>`; })()}
     <div class="sec-label"><i class="ti ti-logout"></i>출고 내역 <span style="font-weight:500;color:var(--t3)">· 누적 ${totalOut}장</span></div>
     ${txnRowsWithMore(outs, 'out-more', t => `<div class="alert-i b" style="margin-bottom:6px"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${+t.jang || 0}장${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}</b><span>${esc(t.date || '')} · ${esc(t.targetName || '-')} · ${esc(t.by || '')}</span></div></div>`, '출고 내역 없음')}
     <div class="sec-label" style="margin-top:14px"><i class="ti ti-login"></i>입고 내역</div>
@@ -1231,7 +1261,7 @@ function renderShip() {
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-list-details"></i>최근 출고</h3></div>
-      ${outs.length ? outs.slice(0, 10).map(t => `<div class="alert-i b"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${esc(t.itemName)} ${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · ${esc(t.targetName || '')}${(t.dest || t.factory) ? ' · → ' + esc(t.dest || t.factory) : ''} · ${esc(t.by || '')}</span></div>${isAdmin() ? `<button class="x" onclick="delShip('${t.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`}
+      ${outs.length ? outs.slice(0, 10).map(t => `<div class="alert-i b"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${esc(t.itemName)} ${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · ${esc(t.targetName || '')}${(t.dest || t.factory) ? ' · → ' + esc(t.dest || t.factory) : ''}${t.lot ? ' · 롯트 ' + esc(t.lot) : ''} · ${esc(t.by || '')}</span></div>${isAdmin() ? `<button class="x" onclick="delShip('${t.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`}
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-table"></i>출고 내역 조회·추출</h3></div>
@@ -1308,6 +1338,7 @@ function openShipForm(pre) {
     <div class="frm">
       <div class="fld full"><label>업체명<span class="req">*</span></label>${searchBox('o-targetName', '업체명 검색·입력', '', 'companyNames', '')}</div>
       <div class="fld full"><label>출고 자재<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(검색·직접입력)</span></label>${searchBox('o-material', '자재명 검색', '', 'matNames', 'computeOutHebe')}</div>
+      <div class="fld full" id="o-lot-wrap" style="display:none"><label>롯트 <span style="color:var(--t3);font-weight:500">(선택 — 어느 롯트에서 나가는지)</span></label><select id="o-lot"></select><div id="o-lot-bd" style="font-size:11.5px;color:var(--t3);margin-top:5px;line-height:1.6"></div></div>
       <div class="fld"><label>출고 장수<span class="req">*</span></label><input id="o-jang" inputmode="numeric" placeholder="장수" oninput="computeOutHebe()"></div>
       <div class="fld"><label>출고일<span class="req">*</span></label><input type="date" id="o-date" value="${todayStr()}"></div>
       <div class="fld full"><label>출고지(공장/현장)<span class="req">*</span></label>
@@ -1328,6 +1359,7 @@ function openShipForm(pre) {
     if (pre.targetName && el('o-targetName')) el('o-targetName').value = pre.targetName;
   }
   computeOutHebe();
+  if (pre && pre.lot && el('o-lot')) el('o-lot').innerHTML = lotSelectHtml((el('o-material').value || '').trim(), pre.lot);
 }
 function pickOutItem() {
   const id = el('o-pick') && el('o-pick').value; if (!id) return;
@@ -1347,7 +1379,20 @@ function shipDestValue() {
 }
 function shipMatchedItem() { const nm = (el('o-material') && el('o-material').value || '').trim(); return nm ? state.inventory.find(i => i.name === nm) : null; }
 function computeOutHebe() {
-  const info = el('o-hebe-info'); if (!info) return;
+  const info = el('o-hebe-info');
+  const nm = (el('o-material') && el('o-material').value || '').trim();
+  // 롯트별 재고 표시 + 선택
+  const wrap = el('o-lot-wrap');
+  if (wrap) {
+    const lots = lotStock(nm).filter(l => l.lot !== '(미지정)');
+    if (lots.length) {
+      const sel = el('o-lot'); const cur = sel ? sel.value : '';
+      if (sel) sel.innerHTML = lotSelectHtml(nm, cur);
+      if (el('o-lot-bd')) el('o-lot-bd').innerHTML = lotBreakdownText(nm);
+      wrap.style.display = '';
+    } else { wrap.style.display = 'none'; }
+  }
+  if (!info) return;
   const it = shipMatchedItem(); const jang = parseFloat(el('o-jang').value) || 0;
   if (it) info.innerHTML = `<span class="rl">재고 연동</span><span class="rv"><b>${(jang * (+it.hebePerJang || 0)).toFixed(2)}㎡</b><small>${esc(it.name)} · 출고 시 ${jang}장 차감</small></span>`;
   else info.innerHTML = `<span class="rl">재고 미연동</span><span class="rv" style="color:var(--t3)">출고 기록만 남김 (재고 차감 없음)</span>`;
@@ -1368,7 +1413,8 @@ async function submitShip() {
     const it = state.inventory.find(i => i.name === material);
     const hebe = it ? +(jang * (+it.hebePerJang || 0)).toFixed(2) : 0;
     if (it) await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) - jang) });
-    await Store.add('transactions', { type: 'out', itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, dest, factory: dest, target: '', targetName, date, note: el('o-note').value.trim(), by: me.name });
+    const lot = (el('o-lot') && el('o-lot').value || '').trim();
+    await Store.add('transactions', { type: 'out', itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot, dest, factory: dest, target: '', targetName, date, note: el('o-note').value.trim(), by: me.name });
     if (_holdConfirm) { await Store.update('holdings', _holdConfirm, { status: '확정', shippedDate: date, shippedJang: jang }); _holdConfirm = null; }
     toast(`출고 완료 · ${jang}장${it ? ` (${hebe}㎡)` : ''}`); closeModal();
   } finally { _busy = false; }
@@ -1428,6 +1474,7 @@ function renderHold() {
         <div style="display:flex;gap:18px;font-size:13px;margin-bottom:4px">
           <span style="color:var(--t2)">장수 <b style="color:var(--t1)">${+h.jang || 0}장</b></span>
           <span style="color:var(--t2)">헤베 <b style="color:var(--t1)">${(+h.hebe || 0).toFixed(1)}㎡</b></span>
+          ${h.lot ? `<span style="color:var(--t2)">롯트 <b style="color:var(--t1)">${esc(h.lot)}</b></span>` : ''}
         </div>
         ${conf ? `<div style="font-size:12px;color:var(--lime-t);margin-top:4px"><i class="ti ti-truck-delivery"></i> 출고 완료 ${esc(h.shippedDate || '')} · ${+h.shippedJang || 0}장</div>` : ''}
         ${plan ? `<div style="font-size:12px;color:var(--amber-t);margin-top:4px"><i class="ti ti-clock-pause"></i> 입고되면 자동으로 홀딩으로 전환됩니다</div>` : ''}
@@ -1461,6 +1508,7 @@ function openHoldForm(id, pre) {
       <div class="fld full"><label>자재명 <span id="h-stock" style="color:var(--t3);font-weight:500"></span></label>${searchBox('h-material', '자재명 검색', v.materialName, 'matNames', 'onHoldMaterial')}</div>
       <div class="fld"><label>장수</label><input id="h-jang" value="${esc(v.jang || '')}" inputmode="numeric" oninput="onHoldQty()"></div>
       <div class="fld"><label>헤베(㎡) <span style="color:var(--t3);font-weight:500">자동</span></label><input id="h-hebe" value="${esc(v.hebe || '')}" inputmode="decimal" readonly style="background:var(--soft)"></div>
+      <div class="fld full" id="h-lot-wrap" style="display:none"><label>롯트 <span style="color:var(--t3);font-weight:500">(선택 — 어느 롯트를 잡는지)</span></label><select id="h-lot"></select><div id="h-lot-bd" style="font-size:11.5px;color:var(--t3);margin-top:5px;line-height:1.6"></div></div>
       <div class="fld full"><label>메모</label><input id="h-note" value="${esc(v.note || '')}" placeholder="선택"></div>
     </div>
     <div class="frm-foot">
@@ -1468,6 +1516,7 @@ function openHoldForm(id, pre) {
       <button class="btn btn-pri" style="flex:2" onclick="submitHold('${id || ''}')"><i class="ti ti-check"></i>${h ? '저장' : '등록'}</button>
     </div>`);
   onHoldMaterial();
+  if (v.lot && el('h-lot')) el('h-lot').innerHTML = lotSelectHtml((el('h-material').value || '').trim(), v.lot);
 }
 /* 홀딩 자재명 옆에 잔여 재고 표시 + 헤베 자동환산 */
 function onHoldMaterial() {
@@ -1478,6 +1527,16 @@ function onHoldMaterial() {
     if (it) { const av = availJang(it); box.innerHTML = `· 가용 <b style="color:${av <= 0 ? 'var(--red-t)' : 'var(--gd)'}">${av}장</b> / 실재고 ${+it.jang || 0}장`; }
     else if (nm) box.innerHTML = `· <span style="color:var(--amber-t)">재고에 없는 자재 (입고 시 자동 전환)</span>`;
     else box.textContent = '';
+  }
+  const wrap = el('h-lot-wrap');
+  if (wrap) {
+    const lots = lotStock(nm).filter(l => l.lot !== '(미지정)');
+    if (lots.length) {
+      const sel = el('h-lot'); const cur = sel ? sel.value : '';
+      if (sel) sel.innerHTML = lotSelectHtml(nm, cur);
+      if (el('h-lot-bd')) el('h-lot-bd').innerHTML = lotBreakdownText(nm);
+      wrap.style.display = '';
+    } else { wrap.style.display = 'none'; }
   }
   onHoldQty();
 }
@@ -1509,7 +1568,7 @@ async function submitHold(id) {
     .reduce((a, h) => a + (+h.jang || 0), 0);
   const availForThis = (it ? +it.jang || 0 : 0) - otherHeld;
   const status = (jang > 0 && availForThis >= jang) ? '홀딩' : '예정';
-  const obj = { vendor, materialName: matName, jang, hebe: parseFloat(el('h-hebe').value) || 0, useDate: el('h-useDate').value, note: el('h-note').value.trim(), status, forSiteId: siteId, forSiteName: siteName, by: me.name };
+  const obj = { vendor, materialName: matName, jang, hebe: parseFloat(el('h-hebe').value) || 0, lot: (el('h-lot') && el('h-lot').value || '').trim(), useDate: el('h-useDate').value, note: el('h-note').value.trim(), status, forSiteId: siteId, forSiteName: siteName, by: me.name };
   if (id) await Store.update('holdings', id, obj); else await Store.add('holdings', obj);
   toast(status === '예정' ? '예정홀딩으로 등록 — 입고되면 자동 전환' : (id ? '저장됨' : '홀딩 등록 완료')); closeModal();
 }
@@ -1531,7 +1590,7 @@ function holdToSite(id) {
 function holdToShip(id) {
   const h = state.holdings.find(x => x.id === id); if (!h) return;
   _holdConfirm = id;
-  openShipForm({ material: h.materialName || '', jang: h.jang || '', targetName: h.forSiteName || h.vendor || '' });
+  openShipForm({ material: h.materialName || '', jang: h.jang || '', targetName: h.forSiteName || h.vendor || '', lot: h.lot || '' });
 }
 
 /* ===================================================================
