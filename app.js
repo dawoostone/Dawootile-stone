@@ -287,6 +287,7 @@ function onData(coll) {
     _membersLoaded = true;
     _membersWaiters.splice(0).forEach(fn => fn());
   }
+  if (coll === 'sites' && me) autoAdvanceStages();
   if (me) render();
 }
 
@@ -508,11 +509,21 @@ function setSelectValue(selId, coll, val) {
   }
   sel.value = val;
 }
-/* 활성 홀딩(예약 중 '홀딩' 상태)으로 잡힌 장수 합계 — 자재명 기준 */
+/* 홀딩의 자재 목록 (다자재 지원, 구버전 단일자재 호환) */
+function holdItems(h) {
+  if (h && h.items && h.items.length) return h.items.map(x => ({ materialName: x.materialName || x.name || '', jang: +x.jang || +x.qty || 0, hebe: +x.hebe || 0, lot: x.lot || '' }));
+  return [{ materialName: (h && h.materialName) || '', jang: +(h && h.jang) || 0, hebe: +(h && h.hebe) || 0, lot: (h && h.lot) || '' }];
+}
+/* 현장의 자재 목록 (다자재 지원, 구버전 호환) */
+function siteItems(s) {
+  if (s && s.items && s.items.length) return s.items.map(x => ({ name: x.name || x.materialName || '', qty: x.qty != null ? x.qty : (x.jang || ''), lot: x.lot || '' }));
+  return (s && s.materialName) ? [{ name: s.materialName, qty: s.qty || '', lot: s.lot || '' }] : [];
+}
+/* 활성 홀딩(예약 중 '홀딩')으로 잡힌 장수 합계 — 자재명 기준(다자재 합산) */
 function heldJangFor(name) {
-  if (!name) return 0;
-  return state.holdings.filter(h => (h.status || '홀딩') === '홀딩' && h.materialName === name)
-    .reduce((a, h) => a + (+h.jang || 0), 0);
+  if (!name) return 0; const key = _normName(name); let s = 0;
+  state.holdings.forEach(h => { if ((h.status || '홀딩') !== '홀딩') return; holdItems(h).forEach(it => { if (_normName(it.materialName) === key) s += (+it.jang || 0); }); });
+  return s;
 }
 /* 가용재고 = 실재고 − 활성홀딩 */
 function availJang(it) { return (+it.jang || 0) - heldJangFor(it.name); }
@@ -552,21 +563,87 @@ function stockState(it) {
   if (safe > 0 && avail < safe * 1.5) return { k: '임박', cls: 'p-wait' };
   return { k: '정상', cls: 'p-prog' };
 }
-/* 입고 후: 해당 자재의 예정홀딩을 가용 범위 내에서 오래된 순서대로 자동 활성화 */
+/* 입고 후: 예정홀딩을 검사해 '자재가 전부 가용 범위에 들면' 오래된 순으로 자동 활성화(다자재) */
 async function activatePlannedHolds(name, physJang) {
-  if (!name) return 0;
-  const it = state.inventory.find(i => i.name === name);
-  const phys = (physJang != null) ? physJang : (it ? +it.jang || 0 : 0);
-  let avail = phys - heldJangFor(name);
-  if (avail <= 0) return 0;
-  const planned = state.holdings.filter(h => h.status === '예정' && h.materialName === name)
+  const planned = state.holdings.filter(h => h.status === '예정')
     .sort((a, b) => (a.useDate || '9999').localeCompare(b.useDate || '9999') || (a.createdAt || 0) - (b.createdAt || 0));
+  if (!planned.length) return 0;
+  const extra = {};
+  function physOf(mat) {
+    if (name && _normName(mat) === _normName(name) && physJang != null) return physJang;
+    const it = state.inventory.find(i => _normName(i.name) === _normName(mat)); return it ? +it.jang || 0 : 0;
+  }
+  function availOf(mat) { return physOf(mat) - heldJangFor(mat) - (extra[_normName(mat)] || 0); }
   let count = 0;
   for (const h of planned) {
-    const need = +h.jang || 0;
-    if (need > 0 && avail >= need) { await Store.update('holdings', h.id, { status: '홀딩' }); avail -= need; count++; }
+    const items = holdItems(h);
+    const fits = items.length && items.every(it => availOf(it.materialName) >= (+it.jang || 0));
+    if (fits) {
+      await Store.update('holdings', h.id, { status: '홀딩' });
+      items.forEach(it => { const k = _normName(it.materialName); extra[k] = (extra[k] || 0) + (+it.jang || 0); });
+      count++;
+    }
   }
   return count;
+}
+/* ===== 자재 여러 줄 입력 컴포넌트 (현장/홀딩 공용) ===== */
+let _mrowN = 0;
+function matRowHtml(d, qtyPh) {
+  d = d || {}; const i = _mrowN++; const nm = d.name || d.materialName || '';
+  return `<div class="mrow" style="margin-bottom:8px;border:1px solid var(--bd2);border-radius:10px;padding:8px 9px">
+    <div style="display:flex;gap:6px;align-items:center">
+      <div style="flex:2.2">${searchBox('mrow-' + i, '자재명 검색·입력', nm, 'matNames', 'mrowLotRefresh')}</div>
+      <input class="m-qty" style="flex:1;min-width:54px;font-size:16px;padding:9px 8px;border:1.5px solid var(--bd2);border-radius:9px" inputmode="decimal" placeholder="${qtyPh || '수량'}" value="${esc(d.qty || d.jang || '')}" oninput="mrowLotRefresh()">
+      <button type="button" class="btn btn-ghost btn-sm" onclick="this.closest('.mrow').remove()" aria-label="삭제"><i class="ti ti-x"></i></button>
+    </div>
+    <select class="m-lot" style="width:100%;margin-top:6px;font-size:14px;padding:8px;border:1.5px solid var(--bd2);border-radius:9px">${lotSelectHtml(nm, d.lot || '')}</select>
+    <div class="m-info" style="font-size:11px;color:var(--t3);margin-top:4px"></div>
+  </div>`;
+}
+function matRowsHtml(items, qtyPh) {
+  const arr = (items && items.length) ? items : [{}];
+  return `<div id="mat-rows">${arr.map(it => matRowHtml(it, qtyPh)).join('')}</div>
+    <button type="button" class="btn btn-ghost btn-sm" style="margin-bottom:4px" onclick="addMaterialRow({}, '${qtyPh || '수량'}')"><i class="ti ti-plus"></i>자재 추가</button>`;
+}
+function addMaterialRow(d, qtyPh) {
+  const box = el('mat-rows'); if (!box) return;
+  box.insertAdjacentHTML('beforeend', matRowHtml(d, qtyPh)); mrowLotRefresh();
+}
+function mrowLotRefresh() {
+  document.querySelectorAll('#mat-rows .mrow').forEach(row => {
+    const inp = row.querySelector('input.sb-in'); if (!inp) return;
+    const mat = (inp.value || '').trim();
+    const lotSel = row.querySelector('select.m-lot');
+    if (lotSel) { const cur = lotSel.value; lotSel.innerHTML = lotSelectHtml(mat, cur); }
+    const info = row.querySelector('.m-info');
+    if (info) {
+      const it = state.inventory.find(x => x.name === mat); const q = parseFloat(row.querySelector('.m-qty').value) || 0;
+      info.innerHTML = it ? ('가용 <b style="color:' + (availJang(it) <= 0 ? 'var(--red-t)' : 'var(--gd)') + '">' + availJang(it) + '장</b> / 실재고 ' + (+it.jang || 0) + '장' + (q > 0 ? ' · 헤베 ' + (q * (+it.hebePerJang || 0)).toFixed(2) + '㎡' : '')) : (mat ? '<span style="color:var(--amber-t)">재고에 없는 자재 (입고 시 자동 전환)</span>' : '');
+    }
+  });
+}
+function collectMaterialRows() {
+  const rows = [];
+  document.querySelectorAll('#mat-rows .mrow').forEach(row => {
+    const inp = row.querySelector('input.sb-in'); const name = inp ? (inp.value || '').trim() : '';
+    const qty = parseFloat(row.querySelector('.m-qty').value) || 0;
+    const lot = (row.querySelector('select.m-lot').value || '').trim();
+    if (name && qty > 0) rows.push({ name: name, qty: qty, lot: lot });
+  });
+  return rows;
+}
+/* 발주 + 시공일 도래 → 자동 '시공' 전환 */
+let _autoStageRun = false;
+async function autoAdvanceStages() {
+  if (_autoStageRun) return;
+  const due = state.sites.filter(s => s.stage === '발주' && s.constructDate && daysFromNow(s.constructDate) <= 0);
+  if (!due.length) return;
+  _autoStageRun = true;
+  for (const s of due) {
+    const hist = Object.assign({}, s.history || {}); if (!hist['시공']) hist['시공'] = todayStr();
+    try { await Store.update('sites', s.id, { stage: '시공', history: hist }); } catch (e) { }
+  }
+  setTimeout(() => { _autoStageRun = false; }, 5000);
 }
 /* 활성 홀딩 목록 (현장/출고에서 골라쓰기용) */
 function activeHoldings() { return state.holdings.filter(h => (h.status || '홀딩') === '홀딩'); }
@@ -800,7 +877,7 @@ function openSiteDetail(id) {
       <div class="df"><div class="k">업체(거래처)</div><div class="v">${esc(s.client || '-')}</div></div>
       <div class="df full"><div class="k">현장 주소</div><div class="v">${esc(s.region || '')} ${esc(s.address || '-')}</div></div>
       <div class="df"><div class="k">발주 유형</div><div class="v">${esc(s.orderType || '-')}${skip ? ' (실측없음)' : ''}</div></div>
-      <div class="df"><div class="k">자재 / 수량</div><div class="v">${esc(s.materialName || '-')}${s.qty ? ' · ' + esc(s.qty) + esc(s.unit || '') : ''}</div></div>
+      <div class="df full"><div class="k">자재 / 수량</div><div class="v">${siteItems(s).length ? siteItems(s).map(it => esc(it.name) + ' · ' + esc(it.qty) + '장' + (it.lot ? ' <span style="color:var(--t3)">(롯트 ' + esc(it.lot) + ')</span>' : '')).join('<br>') : '-'}</div></div>
       <div class="df"><div class="k">가공 공장</div><div class="v">${esc(s.factory || '-')}</div></div>
       <div class="df"><div class="k">시공팀</div><div class="v">${esc(s.team || '-')}</div></div>
       <div class="df"><div class="k">실측일</div><div class="v">${skip ? '도면발주' : (s.measureDate || '미정')}</div></div>
@@ -824,7 +901,7 @@ function holdFromSite(id) {
   const s = state.sites.find(x => x.id === id); if (!s) return;
   const existing = state.holdings.find(h => h.status !== '해제' && (h.forSiteId === id || (s.name && h.forSiteName === s.name)));
   if (existing) { toast(`이미 홀딩이 연결된 현장입니다 (${existing.status || '홀딩'}) — 중복 방지`); return; }
-  openHoldForm(null, { forSiteId: id, materialName: s.materialName, jang: s.qty, useDate: s.constructDate });
+  openHoldForm(null, { forSiteId: id, items: siteItems(s).map(it => ({ materialName: it.name, jang: it.qty, lot: it.lot })), useDate: s.constructDate });
 }
 async function advanceStage(id, stage) {
   const s = state.sites.find(x => x.id === id); if (!s) return;
@@ -854,8 +931,7 @@ function openSiteForm(id, pre) {
       </div>
       <div class="fld"><label>진행 단계</label><select id="s-stage">${SITE_STAGES.map(st => `<option ${(v.stage || '접수') === st ? 'selected' : ''}>${st}</option>`).join('')}</select></div>
       ${activeHoldings().length ? `<div class="fld full"><label><i class="ti ti-lock" style="font-size:13px;color:var(--blue)"></i> 홀딩에서 불러오기 <span style="color:var(--t3);font-weight:500">(선택 — 없으면 아래에 직접 입력)</span></label><select id="s-hold" onchange="pickSiteHolding()"><option value="">— 직접 입력 —</option>${holdingOptions()}</select></div>` : ''}
-      <div class="fld"><label>자재명<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(검색·직접입력)</span></label>${searchBox('s-material', '자재명 검색', v.materialName, 'matNames', '')}</div>
-      <div class="fld"><label>수량<span class="req">*</span></label><input id="s-qty" value="${esc(v.qty || '')}" placeholder="수량" inputmode="decimal"></div>
+      <div class="fld full"><label>자재 / 수량 / 롯트<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(여러 종류면 '자재 추가')</span></label>${matRowsHtml(siteItems(v), '수량')}</div>
       <div class="fld"><label>실측일 <span id="s-measure-lbl" style="color:var(--t3)">${v.orderType === '도면' ? '(도면발주·생략)' : ''}</span></label><input type="date" id="s-measureDate" value="${esc(v.measureDate || '')}" ${v.orderType === '도면' ? 'disabled' : ''}></div>
       <div class="fld"><label>시공일<span class="req">*</span></label><input type="date" id="s-constructDate" value="${esc(v.constructDate || '')}"></div>
       <div class="fld"><label>가공 공장<span class="req">*</span></label><select id="s-factory" onchange="onMasterChange('s-factory','factories')">${masterOptions('factories', v.factory || '')}</select></div>
@@ -872,6 +948,7 @@ function openSiteForm(id, pre) {
       <button class="btn" style="flex:1" onclick="closeModal()">취소</button>
       <button class="btn btn-pri" style="flex:2" onclick="submitSite('${id || ''}')"><i class="ti ti-check"></i>${s ? '저장' : '등록'}</button>
     </div>`);
+  mrowLotRefresh();
 }
 let _orderType = null;
 function pickOrderType(t) {
@@ -884,12 +961,13 @@ function pickOrderType(t) {
 function curOrderType() { return _orderType || (el('s-measureDate').disabled ? '도면' : '실측'); }
 
 function runRecommend() {
+  const first = collectMaterialRows()[0] || {}; const fq = +first.qty || 0;
   const o = {
     region: el('s-region').value, address: el('s-address').value,
     constructionDate: el('s-constructDate').value, dueDate: el('s-constructDate').value,
-    jang: parseFloat(el('s-qty').value) || 0,
-    volume: (parseFloat(el('s-qty').value) || 0) >= 25 ? '대형' : '소형',
-    materialName: el('s-material').value,
+    jang: fq,
+    volume: fq >= 25 ? '대형' : '소형',
+    materialName: first.name || '',
     workType: '', complex: false, simpleTop: false
   };
   const t = recommendTeam(o), f = recommendFactory(o);
@@ -907,8 +985,8 @@ function pickSiteHolding() {
   const id = el('s-hold').value;
   if (!id) { _holdLinkSite = null; return; }
   const h = state.holdings.find(x => x.id === id); if (!h) return;
-  el('s-material').value = h.materialName || '';
-  el('s-qty').value = h.jang || '';
+  const box = el('mat-rows');
+  if (box) { box.innerHTML = ''; holdItems(h).forEach(it => addMaterialRow({ name: it.materialName, qty: it.jang, lot: it.lot }, '수량')); }
   if (!el('s-client').value) el('s-client').value = h.vendor || '';
   _holdLinkSite = id;
   toast('홀딩 자재를 불러왔습니다 (등록 시 현장에 연결)');
@@ -917,14 +995,12 @@ function pickSiteHolding() {
 async function submitSite(id) {
   const name = el('s-name').value.trim();
   const client = el('s-client').value.trim();
-  const material = el('s-material').value.trim();
-  const qty = el('s-qty').value.trim();
+  const items = collectMaterialRows();
   const constructDate = el('s-constructDate').value;
   const factory = el('s-factory').value === '__add' ? '' : el('s-factory').value;
   const team = el('s-team').value === '__add' ? '' : el('s-team').value;
   if (!client) { toast('업체명을 입력하세요'); return; }
-  if (!material) { toast('자재명을 입력하세요'); return; }
-  if (!qty) { toast('수량을 입력하세요'); return; }
+  if (!items.length) { toast('자재명과 수량을 입력하세요'); return; }
   if (!constructDate) { toast('시공일을 선택하세요'); return; }
   if (!factory) { toast('가공 공장을 선택하세요'); return; }
   if (!team) { toast('시공팀을 선택하세요'); return; }
@@ -932,7 +1008,7 @@ async function submitSite(id) {
     name: name || (client + ' 현장'), client, region: el('s-region').value.trim(),
     address: el('s-address').value.trim(), manager: el('s-manager').value.trim() || me.name,
     orderType: curOrderType(), stage: el('s-stage').value || '접수',
-    materialName: material, qty, unit: '',
+    items, materialName: items[0].name, qty: String(items[0].qty), unit: '',
     measureDate: el('s-measureDate').value, constructDate,
     factory, team,
     paid: el('s-paid').checked, confirmed: el('s-confirmed').checked,
@@ -1549,13 +1625,11 @@ function renderHold() {
       const cls = conf ? 'p-done' : (d != null && d >= 0 && d <= 3 ? 'p-wait' : 'p-hold');
       return `<div class="card" style="margin-bottom:11px;${conf ? 'opacity:.92' : ''}">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-          <div><div style="font-size:15px;font-weight:700">${esc(h.vendor || '-')}</div><div style="font-size:12.5px;color:var(--t2);margin-top:2px">${esc(h.materialName || '')}</div>${h.forSiteName ? `<div style="margin-top:5px"><span class="pill p-hold"><i class="ti ti-building-community"></i>${esc(h.forSiteName)}</span></div>` : ''}</div>
+          <div><div style="font-size:15px;font-weight:700">${esc(h.vendor || '-')}</div><div style="font-size:12.5px;color:var(--t2);margin-top:2px">${holdItems(h).map(it => esc(it.materialName)).filter(Boolean).join(', ')}</div>${h.forSiteName ? `<div style="margin-top:5px"><span class="pill p-hold"><i class="ti ti-building-community"></i>${esc(h.forSiteName)}</span></div>` : ''}</div>
           ${conf ? `<span class="pill p-done"><i class="ti ti-circle-check"></i>확정</span>` : (plan ? `<span class="pill p-wait"><i class="ti ti-clock-pause"></i>예정 · 입고대기</span>` : `<span class="pill ${cls}"><i class="ti ti-calendar"></i>${h.useDate || '미정'}${d != null && d >= 0 && d <= 7 ? ' · D-' + d : ''}</span>`)}
         </div>
-        <div style="display:flex;gap:18px;font-size:13px;margin-bottom:4px">
-          <span style="color:var(--t2)">장수 <b style="color:var(--t1)">${+h.jang || 0}장</b></span>
-          <span style="color:var(--t2)">헤베 <b style="color:var(--t1)">${(+h.hebe || 0).toFixed(1)}㎡</b></span>
-          ${h.lot ? `<span style="color:var(--t2)">롯트 <b style="color:var(--t1)">${esc(h.lot)}</b></span>` : ''}
+        <div style="font-size:13px;margin-bottom:4px">
+          ${holdItems(h).map(it => `<div style="color:var(--t2)">${esc(it.materialName || '-')} · <b style="color:var(--t1)">${+it.jang || 0}장</b>${it.hebe ? ` (${(+it.hebe).toFixed(1)}㎡)` : ''}${it.lot ? ` · 롯트 ${esc(it.lot)}` : ''}</div>`).join('')}
         </div>
         ${conf ? `<div style="font-size:12px;color:var(--lime-t);margin-top:4px"><i class="ti ti-truck-delivery"></i> 출고 완료 ${esc(h.shippedDate || '')} · ${+h.shippedJang || 0}장</div>` : ''}
         ${plan ? `<div style="font-size:12px;color:var(--amber-t);margin-top:4px"><i class="ti ti-clock-pause"></i> 입고되면 자동으로 홀딩으로 전환됩니다</div>` : ''}
@@ -1586,18 +1660,14 @@ function openHoldForm(id, pre) {
       ${state.sites.length ? `<div class="fld full"><label><i class="ti ti-building-community" style="font-size:13px;color:var(--blue)"></i> 현장에서 선택 <span style="color:var(--t3);font-weight:500">— 고르면 자재·수량·시공일 자동 입력</span></label><select id="h-site" onchange="pickHoldSite()"><option value="">— 직접 입력 —</option>${siteOptions(v.forSiteId || '')}</select></div>` : ''}
       <div class="fld"><label>업체/거래처<span class="req">*</span></label>${searchBox('h-vendor', '업체명 검색·입력', v.vendor, 'companyNames', '')}</div>
       <div class="fld"><label>사용 예정일</label><input type="date" id="h-useDate" value="${esc(v.useDate || '')}"></div>
-      <div class="fld full"><label>자재명 <span id="h-stock" style="color:var(--t3);font-weight:500"></span></label>${searchBox('h-material', '자재명 검색', v.materialName, 'matNames', 'onHoldMaterial')}</div>
-      <div class="fld"><label>장수</label><input id="h-jang" value="${esc(v.jang || '')}" inputmode="numeric" oninput="onHoldQty()"></div>
-      <div class="fld"><label>헤베(㎡) <span style="color:var(--t3);font-weight:500">자동</span></label><input id="h-hebe" value="${esc(v.hebe || '')}" inputmode="decimal" readonly style="background:var(--soft)"></div>
-      <div class="fld full" id="h-lot-wrap" style="display:none"><label>롯트 <span style="color:var(--t3);font-weight:500">(선택 — 어느 롯트를 잡는지)</span></label><select id="h-lot"></select><div id="h-lot-bd" style="font-size:11.5px;color:var(--t3);margin-top:5px;line-height:1.6"></div></div>
+      <div class="fld full"><label>자재 / 장수 / 롯트 <span style="color:var(--t3);font-weight:500">(여러 종류면 '자재 추가')</span></label>${matRowsHtml(holdItems(v).map(it => ({ name: it.materialName, qty: it.jang || '', lot: it.lot })), '장수')}</div>
       <div class="fld full"><label>메모</label><input id="h-note" value="${esc(v.note || '')}" placeholder="선택"></div>
     </div>
     <div class="frm-foot">
       <button class="btn" style="flex:1" onclick="closeModal()">취소</button>
       <button class="btn btn-pri" style="flex:2" onclick="submitHold('${id || ''}')"><i class="ti ti-check"></i>${h ? '저장' : '등록'}</button>
     </div>`);
-  onHoldMaterial();
-  if (v.lot && el('h-lot')) el('h-lot').innerHTML = lotSelectHtml((el('h-material').value || '').trim(), v.lot);
+  mrowLotRefresh();
 }
 /* 홀딩 자재명 옆에 잔여 재고 표시 + 헤베 자동환산 */
 function onHoldMaterial() {
@@ -1631,25 +1701,27 @@ function onHoldQty() {
 function pickHoldSite() {
   const id = el('h-site').value; if (!id) return;
   const s = state.sites.find(x => x.id === id); if (!s) return;
-  if (s.materialName) el('h-material').value = s.materialName;
-  if (s.qty) el('h-jang').value = s.qty;
+  const box = el('mat-rows');
+  if (box) { box.innerHTML = ''; const its = siteItems(s); (its.length ? its : [{}]).forEach(it => addMaterialRow({ name: it.name, qty: it.qty, lot: it.lot }, '장수')); }
   if (s.constructDate && !el('h-useDate').value) el('h-useDate').value = s.constructDate;
-  onHoldMaterial();
   toast('현장 정보를 불러왔습니다');
 }
 async function submitHold(id) {
   const vendor = el('h-vendor').value.trim(); if (!vendor) { toast('업체를 입력하세요'); return; }
   const siteId = el('h-site') ? el('h-site').value : '';
   const siteName = siteId ? ((state.sites.find(s => s.id === siteId) || {}).name || '') : '';
-  const matName = el('h-material').value.trim();
-  const jang = parseFloat(el('h-jang').value) || 0;
-  // 가용재고 판정: 이 자재의 가용(편집 중인 자신은 제외)이 요청 장수 이상이면 활성 '홀딩', 아니면 '예정'
-  const it = state.inventory.find(i => i.name === matName);
-  const otherHeld = state.holdings.filter(h => h.id !== id && (h.status || '홀딩') === '홀딩' && h.materialName === matName)
-    .reduce((a, h) => a + (+h.jang || 0), 0);
-  const availForThis = (it ? +it.jang || 0 : 0) - otherHeld;
-  const status = (jang > 0 && availForThis >= jang) ? '홀딩' : '예정';
-  const obj = { vendor, materialName: matName, jang, hebe: parseFloat(el('h-hebe').value) || 0, lot: (el('h-lot') && el('h-lot').value || '').trim(), useDate: el('h-useDate').value, note: el('h-note').value.trim(), status, forSiteId: siteId, forSiteName: siteName, by: me.name };
+  const rows = collectMaterialRows();
+  if (!rows.length) { toast('자재명과 장수를 입력하세요'); return; }
+  const items = rows.map(r => { const it = state.inventory.find(i => i.name === r.name); return { materialName: r.name, jang: r.qty, hebe: it ? +(r.qty * (+it.hebePerJang || 0)).toFixed(2) : 0, lot: r.lot }; });
+  // 모든 자재가 가용 범위(편집 중인 자신 제외)에 들면 '홀딩', 하나라도 부족하면 '예정'
+  function availExcl(mat) {
+    const it = state.inventory.find(i => _normName(i.name) === _normName(mat)); const phys = it ? +it.jang || 0 : 0;
+    let held = 0; state.holdings.forEach(h => { if (h.id === id) return; if ((h.status || '홀딩') !== '홀딩') return; holdItems(h).forEach(x => { if (_normName(x.materialName) === _normName(mat)) held += (+x.jang || 0); }); });
+    return phys - held;
+  }
+  const fits = items.every(it => availExcl(it.materialName) >= it.jang);
+  const status = fits ? '홀딩' : '예정';
+  const obj = { vendor, items, materialName: items[0].materialName, jang: items[0].jang, hebe: items[0].hebe, lot: items[0].lot, useDate: el('h-useDate').value, note: el('h-note').value.trim(), status, forSiteId: siteId, forSiteName: siteName, by: me.name };
   if (id) await Store.update('holdings', id, obj); else await Store.add('holdings', obj);
   toast(status === '예정' ? '예정홀딩으로 등록 — 입고되면 자동 전환' : (id ? '저장됨' : '홀딩 등록 완료')); closeModal();
 }
@@ -1665,13 +1737,14 @@ async function delHold(id) {
 function holdToSite(id) {
   const h = state.holdings.find(x => x.id === id); if (!h) return;
   _holdLinkSite = id;
-  openSiteForm(null, { materialName: h.materialName, client: h.vendor, qty: String(h.jang || ''), note: '홀딩 연결' });
+  openSiteForm(null, { items: holdItems(h).map(it => ({ name: it.materialName, qty: it.jang, lot: it.lot })), client: h.vendor, note: '홀딩 연결' });
 }
-/* 홀딩 → 출고 (출고가 찍히면 그 홀딩이 '확정'으로) */
+/* 홀딩 → 출고 (출고가 찍히면 그 홀딩이 '확정'으로). 다자재면 첫 자재부터 — 나머지는 따로 출고 */
 function holdToShip(id) {
   const h = state.holdings.find(x => x.id === id); if (!h) return;
   _holdConfirm = id;
-  openShipForm({ material: h.materialName || '', jang: h.jang || '', targetName: h.forSiteName || h.vendor || '', lot: h.lot || '' });
+  const it = holdItems(h)[0] || {};
+  openShipForm({ material: it.materialName || '', jang: it.jang || '', targetName: h.forSiteName || h.vendor || '', lot: it.lot || '' });
 }
 
 /* ===================================================================
