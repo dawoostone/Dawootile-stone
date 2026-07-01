@@ -1438,7 +1438,7 @@ function renderShip() {
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-list-details"></i>최근 출고</h3></div>
-      ${outs.length ? outs.slice(0, 10).map(t => `<div class="alert-i b"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${esc(t.itemName)} ${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · ${esc(t.targetName || '')}${(t.dest || t.factory) ? ' · → ' + esc(t.dest || t.factory) : ''}${t.lot ? ' · 롯트 ' + esc(t.lot) : ''} · ${esc(t.by || '')}</span></div>${isAdmin() ? `<button class="x" onclick="delShip('${t.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`}
+      ${outs.length ? outs.slice(0, 10).map(t => `<div class="alert-i b"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${esc(t.itemName)} ${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · ${esc(t.targetName || '')}${(t.dest || t.factory) ? ' · → ' + esc(t.dest || t.factory) : ''}${t.lot ? ' · 롯트 ' + esc(t.lot) : ''}${t.pattern ? ' · 패턴 ' + esc(t.pattern) : ''} · ${esc(t.by || '')}</span></div>${isAdmin() ? `<button class="x" onclick="delShip('${t.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`}
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-table"></i>출고 내역 조회·추출</h3></div>
@@ -1516,6 +1516,7 @@ function openShipForm(pre) {
       <div class="fld full"><label>업체명<span class="req">*</span></label>${searchBox('o-targetName', '업체명 검색·입력', '', 'companyNames', '')}</div>
       <div class="fld full"><label>출고 자재<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(검색·직접입력)</span></label>${searchBox('o-material', '자재명 검색', '', 'matNames', 'computeOutHebe')}</div>
       <div class="fld full" id="o-lot-wrap" style="display:none"><label>롯트 <span style="color:var(--t3);font-weight:500">(선택 — 어느 롯트에서 나가는지)</span></label><select id="o-lot"></select><div id="o-lot-bd" style="font-size:11.5px;color:var(--t3);margin-top:5px;line-height:1.6"></div></div>
+      <div class="fld full" id="o-pattern-wrap" style="display:none"><label>패턴 <span style="color:var(--t3);font-weight:500">(선택 — 어느 패턴)</span></label><select id="o-pattern"></select></div>
       <div class="fld"><label>출고 장수<span class="req">*</span></label><input id="o-jang" inputmode="numeric" placeholder="장수" oninput="computeOutHebe()"></div>
       <div class="fld"><label>출고일<span class="req">*</span></label><input type="date" id="o-date" value="${todayStr()}"></div>
       <div class="fld full"><label>출고지(공장/현장)<span class="req">*</span></label>
@@ -1537,6 +1538,7 @@ function openShipForm(pre) {
   }
   computeOutHebe();
   if (pre && pre.lot && el('o-lot')) el('o-lot').innerHTML = lotSelectHtml((el('o-material').value || '').trim(), pre.lot);
+  if (pre && pre.pattern && el('o-pattern')) el('o-pattern').innerHTML = patternSelectHtml((el('o-material').value || '').trim(), pre.pattern);
 }
 function pickOutItem() {
   const id = el('o-pick') && el('o-pick').value; if (!id) return;
@@ -1569,6 +1571,12 @@ function computeOutHebe() {
       wrap.style.display = '';
     } else { wrap.style.display = 'none'; }
   }
+  const pwrap = el('o-pattern-wrap');
+  if (pwrap) {
+    const pats = patternList(nm);
+    if (pats.length) { const psel = el('o-pattern'); const pcur = psel ? psel.value : ''; if (psel) psel.innerHTML = patternSelectHtml(nm, pcur); pwrap.style.display = ''; }
+    else { pwrap.style.display = 'none'; }
+  }
   if (!info) return;
   const it = shipMatchedItem(); const jang = parseFloat(el('o-jang').value) || 0;
   if (it) info.innerHTML = `<span class="rl">재고 연동</span><span class="rv"><b>${(jang * (+it.hebePerJang || 0)).toFixed(2)}㎡</b><small>${esc(it.name)} · 출고 시 ${jang}장 차감</small></span>`;
@@ -1593,7 +1601,8 @@ async function submitShip() {
     const hebe = it ? +(jang * (+it.hebePerJang || 0)).toFixed(2) : 0;
     if (it) await Store.update('inventory', it.id, { jang: newJang });
     const lot = (el('o-lot') && el('o-lot').value || '').trim();
-    await Store.add('transactions', { type: 'out', itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot, dest, factory: dest, target: '', targetName, date, note: el('o-note').value.trim(), by: me.name });
+    const pattern = (el('o-pattern') && el('o-pattern').value || '').trim();
+    await Store.add('transactions', { type: 'out', itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot, pattern, dest, factory: dest, target: '', targetName, date, note: el('o-note').value.trim(), by: me.name });
     if (_holdConfirm) { await Store.update('holdings', _holdConfirm, { status: '확정', shippedDate: date, shippedJang: jang }); _holdConfirm = null; }
     if (it && oldJang > 0 && newJang <= 0) notifyStockOut(material);   // 재고 소진 → 즉시 푸시
     toast(`출고 완료 · ${jang}장${it ? ` (${hebe}㎡)` : ''}`); closeModal();
@@ -1768,7 +1777,7 @@ function holdToShip(id) {
   const h = state.holdings.find(x => x.id === id); if (!h) return;
   _holdConfirm = id;
   const it = holdItems(h)[0] || {};
-  openShipForm({ material: it.materialName || '', jang: it.jang || '', targetName: h.forSiteName || h.vendor || '', lot: it.lot || '' });
+  openShipForm({ material: it.materialName || '', jang: it.jang || '', targetName: h.forSiteName || h.vendor || '', lot: it.lot || '', pattern: it.pattern || '' });
 }
 
 /* ===================================================================
