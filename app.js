@@ -511,8 +511,8 @@ function setSelectValue(selId, coll, val) {
 }
 /* 홀딩의 자재 목록 (다자재 지원, 구버전 단일자재 호환) */
 function holdItems(h) {
-  if (h && h.items && h.items.length) return h.items.map(x => ({ materialName: x.materialName || x.name || '', jang: +x.jang || +x.qty || 0, hebe: +x.hebe || 0, lot: x.lot || '' }));
-  return [{ materialName: (h && h.materialName) || '', jang: +(h && h.jang) || 0, hebe: +(h && h.hebe) || 0, lot: (h && h.lot) || '' }];
+  if (h && h.items && h.items.length) return h.items.map(x => ({ materialName: x.materialName || x.name || '', jang: +x.jang || +x.qty || 0, hebe: +x.hebe || 0, lot: x.lot || '', pattern: x.pattern || '' }));
+  return [{ materialName: (h && h.materialName) || '', jang: +(h && h.jang) || 0, hebe: +(h && h.hebe) || 0, lot: (h && h.lot) || '', pattern: (h && h.pattern) || '' }];
 }
 /* 현장의 자재 목록 (다자재 지원, 구버전 호환) */
 function siteItems(s) {
@@ -555,6 +555,22 @@ function lotBreakdownText(name) {
   if (!lots.length) return '';
   return '롯트별 잔여: ' + lots.map(l => `${esc(l.lot)} <b style="color:${l.remain <= 0 ? 'var(--t3)' : 'var(--gd)'}">${l.remain}장</b>`).join(' · ');
 }
+/* 자재별 패턴 목록: 입고 기록의 patterns 에서 수집 */
+function patternList(name) {
+  if (!name) return []; const key = _normName(name); const m = {};
+  state.transactions.forEach(t => {
+    if (t.type !== 'in' || _normName(t.itemName) !== key) return;
+    (t.patterns || []).forEach(p => { const nm = (p.pattern || '').trim(); if (!nm || nm === '-') return; m[nm] = (m[nm] || 0) + (+p.jang || 0); });
+  });
+  return Object.keys(m).map(k => ({ pattern: k, qty: m[k] })).sort((a, b) => b.qty - a.qty);
+}
+function patternSelectHtml(name, current) {
+  const ps = patternList(name);
+  let html = '<option value="">패턴 선택 (선택)</option>';
+  ps.forEach(p => { html += `<option value="${esc(p.pattern)}" ${current === p.pattern ? 'selected' : ''}>${esc(p.pattern)} · ${p.qty}장</option>`; });
+  if (current && !ps.some(p => p.pattern === current)) html += `<option value="${esc(current)}" selected>${esc(current)}</option>`;
+  return html;
+}
 /* 재고 부족 판정 (가용재고 기준 안전재고) */
 function stockState(it) {
   const avail = availJang(it), safe = +it.safeJang || 0;
@@ -587,16 +603,18 @@ async function activatePlannedHolds(name, physJang) {
   return count;
 }
 /* ===== 자재 여러 줄 입력 컴포넌트 (현장/홀딩 공용) ===== */
-let _mrowN = 0;
+let _mrowN = 0, _mrowPattern = false;   // _mrowPattern: 홀딩 폼에서 true → 패턴 선택칸 표시
 function matRowHtml(d, qtyPh) {
   d = d || {}; const i = _mrowN++; const nm = d.name || d.materialName || '';
+  const selStyle = 'width:100%;margin-top:6px;font-size:14px;padding:8px;border:1.5px solid var(--bd2);border-radius:9px';
   return `<div class="mrow" style="margin-bottom:8px;border:1px solid var(--bd2);border-radius:10px;padding:8px 9px">
     <div style="display:flex;gap:6px;align-items:center">
       <div style="flex:2.2">${searchBox('mrow-' + i, '자재명 검색·입력', nm, 'matNames', 'mrowLotRefresh')}</div>
       <input class="m-qty" style="flex:1;min-width:54px;font-size:16px;padding:9px 8px;border:1.5px solid var(--bd2);border-radius:9px" inputmode="decimal" placeholder="${qtyPh || '수량'}" value="${esc(d.qty || d.jang || '')}" oninput="mrowLotRefresh()">
       <button type="button" class="btn btn-ghost btn-sm" onclick="this.closest('.mrow').remove()" aria-label="삭제"><i class="ti ti-x"></i></button>
     </div>
-    <select class="m-lot" style="width:100%;margin-top:6px;font-size:14px;padding:8px;border:1.5px solid var(--bd2);border-radius:9px">${lotSelectHtml(nm, d.lot || '')}</select>
+    <select class="m-lot" style="${selStyle}">${lotSelectHtml(nm, d.lot || '')}</select>
+    ${_mrowPattern ? `<select class="m-pattern" style="${selStyle}">${patternSelectHtml(nm, d.pattern || '')}</select>` : ''}
     <div class="m-info" style="font-size:11px;color:var(--t3);margin-top:4px"></div>
   </div>`;
 }
@@ -615,6 +633,8 @@ function mrowLotRefresh() {
     const mat = (inp.value || '').trim();
     const lotSel = row.querySelector('select.m-lot');
     if (lotSel) { const cur = lotSel.value; lotSel.innerHTML = lotSelectHtml(mat, cur); }
+    const patSel = row.querySelector('select.m-pattern');
+    if (patSel) { const cur = patSel.value; patSel.innerHTML = patternSelectHtml(mat, cur); }
     const info = row.querySelector('.m-info');
     if (info) {
       const it = state.inventory.find(x => x.name === mat); const q = parseFloat(row.querySelector('.m-qty').value) || 0;
@@ -628,7 +648,9 @@ function collectMaterialRows() {
     const inp = row.querySelector('input.sb-in'); const name = inp ? (inp.value || '').trim() : '';
     const qty = parseFloat(row.querySelector('.m-qty').value) || 0;
     const lot = (row.querySelector('select.m-lot').value || '').trim();
-    if (name && qty > 0) rows.push({ name: name, qty: qty, lot: lot });
+    const patSel = row.querySelector('select.m-pattern');
+    const pattern = patSel ? (patSel.value || '').trim() : '';
+    if (name && qty > 0) rows.push({ name: name, qty: qty, lot: lot, pattern: pattern });
   });
   return rows;
 }
@@ -915,6 +937,7 @@ async function delSite(id) { if (!confirm('이 현장을 삭제할까요?')) ret
 function openSiteForm(id, pre) {
   const s = id ? state.sites.find(x => x.id === id) : null;
   const v = s || Object.assign({ manager: me.name, orderType: '실측', stage: '접수', measureNeeded: true }, pre || {});
+  _mrowPattern = false;
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-building-community"></i>${s ? '현장 수정' : '현장 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
@@ -1629,7 +1652,7 @@ function renderHold() {
           ${conf ? `<span class="pill p-done"><i class="ti ti-circle-check"></i>확정</span>` : (plan ? `<span class="pill p-wait"><i class="ti ti-clock-pause"></i>예정 · 입고대기</span>` : `<span class="pill ${cls}"><i class="ti ti-calendar"></i>${h.useDate || '미정'}${d != null && d >= 0 && d <= 7 ? ' · D-' + d : ''}</span>`)}
         </div>
         <div style="font-size:13px;margin-bottom:4px">
-          ${holdItems(h).map(it => `<div style="color:var(--t2)">${esc(it.materialName || '-')} · <b style="color:var(--t1)">${+it.jang || 0}장</b>${it.hebe ? ` (${(+it.hebe).toFixed(1)}㎡)` : ''}${it.lot ? ` · 롯트 ${esc(it.lot)}` : ''}</div>`).join('')}
+          ${holdItems(h).map(it => `<div style="color:var(--t2)">${esc(it.materialName || '-')} · <b style="color:var(--t1)">${+it.jang || 0}장</b>${it.hebe ? ` (${(+it.hebe).toFixed(1)}㎡)` : ''}${it.lot ? ` · 롯트 ${esc(it.lot)}` : ''}${it.pattern ? ` · 패턴 ${esc(it.pattern)}` : ''}</div>`).join('')}
         </div>
         ${conf ? `<div style="font-size:12px;color:var(--lime-t);margin-top:4px"><i class="ti ti-truck-delivery"></i> 출고 완료 ${esc(h.shippedDate || '')} · ${+h.shippedJang || 0}장</div>` : ''}
         ${plan ? `<div style="font-size:12px;color:var(--amber-t);margin-top:4px"><i class="ti ti-clock-pause"></i> 입고되면 자동으로 홀딩으로 전환됩니다</div>` : ''}
@@ -1654,6 +1677,7 @@ function renderHold() {
 }
 function openHoldForm(id, pre) {
   const h = id ? state.holdings.find(x => x.id === id) : null; const v = h || Object.assign({}, pre || {});
+  _mrowPattern = true;
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-lock-plus"></i>${h ? '홀딩 수정' : '홀딩 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
@@ -1712,7 +1736,7 @@ async function submitHold(id) {
   const siteName = siteId ? ((state.sites.find(s => s.id === siteId) || {}).name || '') : '';
   const rows = collectMaterialRows();
   if (!rows.length) { toast('자재명과 장수를 입력하세요'); return; }
-  const items = rows.map(r => { const it = state.inventory.find(i => i.name === r.name); return { materialName: r.name, jang: r.qty, hebe: it ? +(r.qty * (+it.hebePerJang || 0)).toFixed(2) : 0, lot: r.lot }; });
+  const items = rows.map(r => { const it = state.inventory.find(i => i.name === r.name); return { materialName: r.name, jang: r.qty, hebe: it ? +(r.qty * (+it.hebePerJang || 0)).toFixed(2) : 0, lot: r.lot, pattern: r.pattern || '' }; });
   // 모든 자재가 가용 범위(편집 중인 자신 제외)에 들면 '홀딩', 하나라도 부족하면 '예정'
   function availExcl(mat) {
     const it = state.inventory.find(i => _normName(i.name) === _normName(mat)); const phys = it ? +it.jang || 0 : 0;
