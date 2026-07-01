@@ -1438,7 +1438,23 @@ function renderShip() {
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-list-details"></i>최근 출고</h3></div>
-      ${outs.length ? outs.slice(0, 10).map(t => `<div class="alert-i b"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${esc(t.itemName)} ${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · ${esc(t.targetName || '')}${(t.dest || t.factory) ? ' · → ' + esc(t.dest || t.factory) : ''}${t.lot ? ' · 롯트 ' + esc(t.lot) : ''}${t.pattern ? ' · 패턴 ' + esc(t.pattern) : ''} · ${esc(t.by || '')}</span></div>${isAdmin() ? `<button class="x" onclick="delShip('${t.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`}
+      ${(() => {
+        const gmap = {}, groups = [];
+        outs.forEach(t => { const k = t.shipId || t.id; if (!gmap[k]) { gmap[k] = { key: k, date: t.date, dest: t.dest || t.factory, targetName: t.targetName, by: t.by, items: [] }; groups.push(gmap[k]); } gmap[k].items.push(t); });
+        const top = groups.slice(0, 10);
+        return top.length ? top.map(g => {
+          const totJang = g.items.reduce((a, b) => a + (+b.jang || 0), 0), totHebe = g.items.reduce((a, b) => a + (+b.hebe || 0), 0);
+          return `<div class="card" style="margin-bottom:10px;padding:11px 13px">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start">
+              <div><div style="font-weight:700;font-size:14px"><i class="ti ti-building-community" style="color:var(--blue);font-size:14px"></i> ${esc(g.dest || '-')}</div>
+                <div style="font-size:12px;color:var(--t3);margin-top:2px">${esc(g.date)} · ${esc(g.targetName || '')} · ${esc(g.by || '')}</div></div>
+              ${isAdmin() ? `<button class="x" onclick="delShipGroup('${g.key}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}
+            </div>
+            <div style="margin-top:7px;font-size:13px">${g.items.map(t => `<div style="color:var(--t2)">· ${esc(t.itemName)} <b style="color:var(--t1)">${+t.jang || 0}장</b>${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}${t.lot ? ` · 롯트 ${esc(t.lot)}` : ''}${t.pattern ? ` · 패턴 ${esc(t.pattern)}` : ''}</div>`).join('')}</div>
+            ${g.items.length > 1 ? `<div style="font-size:11.5px;color:var(--t3);margin-top:6px;text-align:right">합계 ${totJang}장 · ${totHebe.toFixed(1)}㎡</div>` : ''}
+          </div>`;
+        }).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`;
+      })()}
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-table"></i>출고 내역 조회·추출</h3></div>
@@ -1510,14 +1526,12 @@ ${body}
   toast('엑셀 다운로드 (' + list.length + '건)');
 }
 function openShipForm(pre) {
+  _mrowPattern = true;
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-logout"></i>출고 등록</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
       <div class="fld full"><label>업체명<span class="req">*</span></label>${searchBox('o-targetName', '업체명 검색·입력', '', 'companyNames', '')}</div>
-      <div class="fld full"><label>출고 자재<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(검색·직접입력)</span></label>${searchBox('o-material', '자재명 검색', '', 'matNames', 'computeOutHebe')}</div>
-      <div class="fld full" id="o-lot-wrap" style="display:none"><label>롯트 <span style="color:var(--t3);font-weight:500">(선택 — 어느 롯트에서 나가는지)</span></label><select id="o-lot"></select><div id="o-lot-bd" style="font-size:11.5px;color:var(--t3);margin-top:5px;line-height:1.6"></div></div>
-      <div class="fld full" id="o-pattern-wrap" style="display:none"><label>패턴 <span style="color:var(--t3);font-weight:500">(선택 — 어느 패턴)</span></label><select id="o-pattern"></select></div>
-      <div class="fld"><label>출고 장수<span class="req">*</span></label><input id="o-jang" inputmode="numeric" placeholder="장수" oninput="computeOutHebe()"></div>
+      <div class="fld full"><label>출고 자재 / 장수 / 롯트 / 패턴<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(여러 자재는 '자재 추가')</span></label>${matRowsHtml(pre && pre.items && pre.items.length ? pre.items : (pre && pre.material ? [{ name: pre.material, qty: pre.jang, lot: pre.lot, pattern: pre.pattern }] : [{}]), '장수')}</div>
       <div class="fld"><label>출고일<span class="req">*</span></label><input type="date" id="o-date" value="${todayStr()}"></div>
       <div class="fld full"><label>출고지(공장/현장)<span class="req">*</span></label>
         <select id="o-dest" onchange="onShipDest()">
@@ -1529,16 +1543,9 @@ function openShipForm(pre) {
       <div class="fld full hidden" id="o-dest-manual"><label>출고지 직접 입력</label><input id="o-dest-text" placeholder="현장명/출고지 입력" autocomplete="off"></div>
       <div class="fld full"><label>메모</label><input id="o-note" placeholder="선택"></div>
     </div>
-    <div class="reco" id="o-summary" style="margin-top:6px"><div class="row" id="o-hebe-info" style="border:none"><span class="rl">재고 연동</span><span class="rv">자재·장수 입력 시 표시</span></div></div>
     <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitShip()"><i class="ti ti-check"></i>출고 등록</button></div>`);
-  if (pre) {
-    if (pre.material && el('o-material')) el('o-material').value = pre.material;
-    if (pre.jang && el('o-jang')) el('o-jang').value = pre.jang;
-    if (pre.targetName && el('o-targetName')) el('o-targetName').value = pre.targetName;
-  }
-  computeOutHebe();
-  if (pre && pre.lot && el('o-lot')) el('o-lot').innerHTML = lotSelectHtml((el('o-material').value || '').trim(), pre.lot);
-  if (pre && pre.pattern && el('o-pattern')) el('o-pattern').innerHTML = patternSelectHtml((el('o-material').value || '').trim(), pre.pattern);
+  if (pre && pre.targetName && el('o-targetName')) el('o-targetName').value = pre.targetName;
+  mrowLotRefresh();
 }
 function pickOutItem() {
   const id = el('o-pick') && el('o-pick').value; if (!id) return;
@@ -1584,28 +1591,32 @@ function computeOutHebe() {
 }
 async function submitShip() {
   const targetName = el('o-targetName').value.trim();
-  const material = el('o-material').value.trim();
-  const jang = parseFloat(el('o-jang').value) || 0;
+  const rows = collectMaterialRows();
   const date = el('o-date').value;
   if (!targetName) { toast('업체명을 입력하세요'); return; }
-  if (!material) { toast('출고 자재를 입력하세요'); return; }
-  if (jang <= 0) { toast('출고 장수를 입력하세요'); return; }
+  if (!rows.length) { toast('출고 자재와 장수를 입력하세요'); return; }
   if (!date) { toast('출고일을 선택하세요'); return; }
   const dest = shipDestValue();
   if (!dest) { toast('출고지(공장/현장)를 입력하세요'); return; }
   if (_busy) return; _busy = true;
   try {
-    const it = state.inventory.find(i => i.name === material);
-    const oldJang = it ? (+it.jang || 0) : 0;
-    const newJang = Math.max(0, oldJang - jang);
-    const hebe = it ? +(jang * (+it.hebePerJang || 0)).toFixed(2) : 0;
-    if (it) await Store.update('inventory', it.id, { jang: newJang });
-    const lot = (el('o-lot') && el('o-lot').value || '').trim();
-    const pattern = (el('o-pattern') && el('o-pattern').value || '').trim();
-    await Store.add('transactions', { type: 'out', itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot, pattern, dest, factory: dest, target: '', targetName, date, note: el('o-note').value.trim(), by: me.name });
-    if (_holdConfirm) { await Store.update('holdings', _holdConfirm, { status: '확정', shippedDate: date, shippedJang: jang }); _holdConfirm = null; }
-    if (it && oldJang > 0 && newJang <= 0) notifyStockOut(material);   // 재고 소진 → 즉시 푸시
-    toast(`출고 완료 · ${jang}장${it ? ` (${hebe}㎡)` : ''}`); closeModal();
+    const shipId = 'S' + Date.now();
+    const note = el('o-note').value.trim();
+    let totalJang = 0; const zeroed = [];
+    for (const r of rows) {
+      const material = r.name, jang = r.qty;
+      const it = state.inventory.find(i => i.name === material);
+      const oldJang = it ? (+it.jang || 0) : 0;
+      const newJang = Math.max(0, oldJang - jang);
+      const hebe = it ? +(jang * (+it.hebePerJang || 0)).toFixed(2) : 0;
+      if (it) await Store.update('inventory', it.id, { jang: newJang });
+      await Store.add('transactions', { type: 'out', shipId, itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot: r.lot, pattern: r.pattern, dest, factory: dest, target: '', targetName, date, note, by: me.name });
+      totalJang += jang;
+      if (it && oldJang > 0 && newJang <= 0) zeroed.push(material);
+    }
+    if (_holdConfirm) { await Store.update('holdings', _holdConfirm, { status: '확정', shippedDate: date, shippedJang: totalJang }); _holdConfirm = null; }
+    for (const nm of zeroed) notifyStockOut(nm);   // 재고 소진 → 즉시 푸시
+    toast(`출고 완료 · ${rows.length}개 자재 · ${totalJang}장`); closeModal();
   } finally { _busy = false; }
 }
 /* 출고 삭제 (관리자) — 재고 연동분 자동 복구(+장수) */
@@ -1616,6 +1627,18 @@ async function delShip(id) {
   if (t.itemId) { const it = state.inventory.find(i => i.id === t.itemId); if (it) await Store.update('inventory', it.id, { jang: (+it.jang || 0) + (+t.jang || 0) }); }
   await Store.remove('transactions', id);
   toast('출고 삭제됨 (재고 복구)');
+}
+/* 출고 묶음 삭제 (관리자) — 같은 shipId 전체 복구 */
+async function delShipGroup(key) {
+  if (!isAdmin()) { toast('관리자만 삭제할 수 있습니다'); return; }
+  const list = state.transactions.filter(t => t.type === 'out' && (t.shipId || t.id) === key);
+  if (!list.length) return;
+  if (!confirm(`이 출고(${list.length}건)를 삭제할까요?\n${list.map(t => `${t.itemName} ${t.jang}장`).join(', ')}\n재고 연동분은 자동 복구됩니다.`)) return;
+  for (const t of list) {
+    if (t.itemId) { const it = state.inventory.find(i => i.id === t.itemId); if (it) await Store.update('inventory', it.id, { jang: (+it.jang || 0) + (+t.jang || 0) }); }
+    await Store.remove('transactions', t.id);
+  }
+  toast(`출고 ${list.length}건 삭제됨 (재고 복구)`);
 }
 /* 입고 삭제 (관리자) — 오입고 정정: 재고에서 그만큼 차감(되돌림) */
 async function delIn(id) {
@@ -1776,8 +1799,7 @@ function holdToSite(id) {
 function holdToShip(id) {
   const h = state.holdings.find(x => x.id === id); if (!h) return;
   _holdConfirm = id;
-  const it = holdItems(h)[0] || {};
-  openShipForm({ material: it.materialName || '', jang: it.jang || '', targetName: h.forSiteName || h.vendor || '', lot: it.lot || '', pattern: it.pattern || '' });
+  openShipForm({ items: holdItems(h).map(it => ({ name: it.materialName, qty: it.jang, lot: it.lot, pattern: it.pattern })), targetName: h.forSiteName || h.vendor || '' });
 }
 
 /* ===================================================================
