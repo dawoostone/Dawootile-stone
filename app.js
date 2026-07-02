@@ -86,7 +86,7 @@ if (bc) bc.onmessage = (e) => { const c = e.data; if (Store._watchers[c]) Store.
 const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [] };
 let me = null;          // 로그인한 사용자
 let tab = 'home';
-let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all' };
+let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all', holdArchive: false };
 let _holdLinkSite = null;   // 현장 저장 시 이 홀딩을 현장에 '연결'(소진 아님)
 let _holdConfirm = null;    // 출고 저장 시 이 홀딩을 '확정' 처리
 let _busy = false;          // 등록 버튼 연속 클릭(중복 저장) 방지
@@ -1446,8 +1446,8 @@ function renderShip() {
           const totJang = g.items.reduce((a, b) => a + (+b.jang || 0), 0), totHebe = g.items.reduce((a, b) => a + (+b.hebe || 0), 0);
           return `<div class="card" style="margin-bottom:10px;padding:11px 13px">
             <div style="display:flex;justify-content:space-between;align-items:flex-start">
-              <div><div style="font-weight:700;font-size:14px"><i class="ti ti-building-community" style="color:var(--blue);font-size:14px"></i> ${esc(g.dest || '-')}</div>
-                <div style="font-size:12px;color:var(--t3);margin-top:2px">${esc(g.date)} · ${esc(g.targetName || '')} · ${esc(g.by || '')}</div></div>
+              <div><div style="font-weight:700;font-size:14px"><i class="ti ti-briefcase" style="color:var(--blue);font-size:14px"></i> ${esc(g.targetName || '-')}</div>
+                <div style="font-size:12px;color:var(--t3);margin-top:2px">${esc(g.date)}${g.dest ? ' · → ' + esc(g.dest) : ''} · ${esc(g.by || '')}</div></div>
               ${isAdmin() ? `<button class="x" onclick="delShipGroup('${g.key}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}
             </div>
             <div style="margin-top:7px;font-size:13px">${g.items.map(t => `<div style="color:var(--t2)">· ${esc(t.itemName)} <b style="color:var(--t1)">${+t.jang || 0}장</b>${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}${t.lot ? ` · 롯트 ${esc(t.lot)}` : ''}${t.pattern ? ` · 패턴 ${esc(t.pattern)}` : ''}</div>`).join('')}</div>
@@ -1469,7 +1469,7 @@ function renderShip() {
         <button class="btn btn-sm btn-pri" onclick="downloadShipXls()"><i class="ti ti-file-spreadsheet"></i>엑셀 다운로드</button>
       </div>
       <div class="tbl-wrap" style="max-height:340px;overflow:auto">
-        <table class="tbl"><thead><tr><th>날짜</th><th>자재</th><th>장수</th><th>헤베</th><th>출고지</th><th>거래처</th></tr></thead><tbody id="r-body"></tbody></table>
+        <table class="tbl"><thead><tr><th>날짜</th><th>거래처</th><th>자재</th><th>장수</th><th>헤베</th><th>출고지</th></tr></thead><tbody id="r-body"></tbody></table>
       </div>
     </div>
     <div class="card">
@@ -1494,7 +1494,7 @@ function shipReportList() {
 function shipReport() {
   const list = shipReportList();
   const tj = list.reduce((a, b) => a + (+b.jang || 0), 0), th = list.reduce((a, b) => a + (+b.hebe || 0), 0);
-  if (el('r-body')) el('r-body').innerHTML = list.length ? list.map(t => `<tr><td>${esc(t.date || '')}</td><td><b>${esc(t.itemName || '')}</b></td><td>${+t.jang || 0}장</td><td>${(+t.hebe || 0).toFixed(1)}㎡</td><td>${esc(t.dest || t.factory || '')}</td><td>${esc(t.targetName || '')}</td></tr>`).join('') : `<tr><td colspan="6"><div class="empty" style="padding:18px"><i class="ti ti-search-off"></i>해당 출고 내역이 없습니다</div></td></tr>`;
+  if (el('r-body')) el('r-body').innerHTML = list.length ? list.map(t => `<tr><td>${esc(t.date || '')}</td><td><b>${esc(t.targetName || '')}</b></td><td>${esc(t.itemName || '')}</td><td>${+t.jang || 0}장</td><td>${(+t.hebe || 0).toFixed(1)}㎡</td><td>${esc(t.dest || t.factory || '')}</td></tr>`).join('') : `<tr><td colspan="6"><div class="empty" style="padding:18px"><i class="ti ti-search-off"></i>해당 출고 내역이 없습니다</div></td></tr>`;
   if (el('r-sum')) el('r-sum').innerHTML = `${list.length}건 · 합계 <b style="color:var(--t1)">${tj}장 · ${th.toFixed(1)}㎡</b>`;
 }
 function downloadShipXls() {
@@ -1655,7 +1655,8 @@ async function delIn(id) {
    =================================================================== */
 function renderHold() {
   const isResv = h => (h.status || '홀딩') === '홀딩';
-  const list = state.holdings.filter(h => h.status !== '해제').sort((a, b) => {
+  const released = state.holdings.filter(h => h.status === '해제');
+  const list = state.holdings.filter(h => filters.holdArchive ? true : h.status !== '해제').sort((a, b) => {
     const ra = isResv(a) ? 0 : 1, rb = isResv(b) ? 0 : 1;
     if (ra !== rb) return ra - rb;
     return (a.useDate || '').localeCompare(b.useDate || '');
@@ -1672,16 +1673,18 @@ function renderHold() {
       <div class="stat"><div class="ic a"><i class="ti ti-clock-pause"></i></div><div class="v" style="color:${planned.length ? 'var(--amber-t)' : 'inherit'}">${planned.length}</div><div class="l">예정홀딩</div><div class="s">입고 대기</div></div>
       <div class="stat"><div class="ic g"><i class="ti ti-circle-check"></i></div><div class="v">${confirmed.length}</div><div class="l">확정</div><div class="s">출고완료</div></div>
     </div>
-    <div class="banner info"><i class="ti ti-info-circle"></i><span>재고가 부족하면 <b>예정홀딩</b>으로 등록되고, 그 자재가 <b>입고되면 자동으로 홀딩</b>으로 전환됩니다. 활성 홀딩은 가용재고에서 차감됩니다.</span></div>
+    <div class="banner info"><i class="ti ti-info-circle"></i><span>재고가 부족하면 <b>예정홀딩</b>으로 등록되고, 그 자재가 <b>입고되면 자동으로 홀딩</b>으로 전환됩니다. 홀딩은 <b>자동 삭제되지 않습니다</b> — '해제'하면 목록에서만 숨겨지고 아래에서 다시 볼 수 있습니다.</span></div>
+    <button class="btn btn-block" style="margin-bottom:10px" onclick="filters.holdArchive=!filters.holdArchive;renderHold()"><i class="ti ti-history"></i>${filters.holdArchive ? '지난·해제 내역 숨기기' : '지난·해제 내역 보기'}${released.length ? ' (' + released.length + '건)' : ''}</button>
     ${list.length ? list.map(h => {
       const d = daysFromNow(h.useDate);
       const conf = h.status === '확정';
       const plan = h.status === '예정';
+      const rel = h.status === '해제';
       const cls = conf ? 'p-done' : (d != null && d >= 0 && d <= 3 ? 'p-wait' : 'p-hold');
       return `<div class="card" style="margin-bottom:11px;${conf ? 'opacity:.92' : ''}">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
           <div><div style="font-size:15px;font-weight:700">${esc(h.vendor || '-')}</div><div style="font-size:12.5px;color:var(--t2);margin-top:2px">${holdItems(h).map(it => esc(it.materialName)).filter(Boolean).join(', ')}</div>${h.forSiteName ? `<div style="margin-top:5px"><span class="pill p-hold"><i class="ti ti-building-community"></i>${esc(h.forSiteName)}</span></div>` : ''}</div>
-          ${conf ? `<span class="pill p-done"><i class="ti ti-circle-check"></i>확정</span>` : (plan ? `<span class="pill p-wait"><i class="ti ti-clock-pause"></i>예정 · 입고대기</span>` : `<span class="pill ${cls}"><i class="ti ti-calendar"></i>${h.useDate || '미정'}${d != null && d >= 0 && d <= 7 ? ' · D-' + d : ''}</span>`)}
+          ${rel ? `<span class="pill p-gray"><i class="ti ti-lock-open"></i>해제됨</span>` : (conf ? `<span class="pill p-done"><i class="ti ti-circle-check"></i>확정</span>` : (plan ? `<span class="pill p-wait"><i class="ti ti-clock-pause"></i>예정 · 입고대기</span>` : `<span class="pill ${cls}"><i class="ti ti-calendar"></i>${h.useDate || '미정'}${d != null && d >= 0 && d <= 7 ? ' · D-' + d : ''}</span>`))}
         </div>
         <div style="font-size:13px;margin-bottom:4px">
           ${holdItems(h).map(it => `<div style="color:var(--t2)">${esc(it.materialName || '-')} · <b style="color:var(--t1)">${+it.jang || 0}장</b>${it.hebe ? ` (${(+it.hebe).toFixed(1)}㎡)` : ''}${it.lot ? ` · 롯트 ${esc(it.lot)}` : ''}${it.pattern ? ` · 패턴 ${esc(it.pattern)}` : ''}</div>`).join('')}
@@ -1689,7 +1692,7 @@ function renderHold() {
         ${conf ? `<div style="font-size:12px;color:var(--lime-t);margin-top:4px"><i class="ti ti-truck-delivery"></i> 출고 완료 ${esc(h.shippedDate || '')} · ${+h.shippedJang || 0}장</div>` : ''}
         ${plan ? `<div style="font-size:12px;color:var(--amber-t);margin-top:4px"><i class="ti ti-clock-pause"></i> 입고되면 자동으로 홀딩으로 전환됩니다</div>` : ''}
         ${h.note ? `<div style="font-size:12px;color:var(--t3);margin-top:6px">${esc(h.note)}</div>` : ''}
-        ${conf ? `<div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-sm" style="flex:1" onclick="openHoldForm('${h.id}')"><i class="ti ti-edit"></i>수정</button>${isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="delHold('${h.id}')"><i class="ti ti-trash"></i>삭제</button>` : ''}</div>` : (plan ? `
+        ${rel ? `<div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-sm" style="flex:1" onclick="restoreHold('${h.id}')"><i class="ti ti-refresh"></i>복원</button>${isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="delHold('${h.id}')"><i class="ti ti-trash"></i>영구삭제</button>` : ''}</div>` : (conf ? `<div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-sm" style="flex:1" onclick="openHoldForm('${h.id}')"><i class="ti ti-edit"></i>수정</button>${isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="delHold('${h.id}')"><i class="ti ti-trash"></i>삭제</button>` : ''}</div>` : (plan ? `
         <div style="display:flex;gap:8px;margin-top:10px">
           <button class="btn btn-sm" style="flex:1" onclick="openHoldForm('${h.id}')"><i class="ti ti-edit"></i>수정</button>
           <button class="btn btn-sm" style="flex:1" onclick="releaseHold('${h.id}')"><i class="ti ti-lock-open"></i>해제</button>
@@ -1703,7 +1706,7 @@ function renderHold() {
           <button class="btn btn-sm" style="flex:1" onclick="openHoldForm('${h.id}')"><i class="ti ti-edit"></i>수정</button>
           <button class="btn btn-sm" style="flex:1" onclick="releaseHold('${h.id}')"><i class="ti ti-lock-open"></i>해제</button>
           ${isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="delHold('${h.id}')"><i class="ti ti-trash"></i>삭제</button>` : ''}
-        </div>`)}
+        </div>`))}
       </div>`;
     }).join('') : `<div class="empty"><i class="ti ti-lock-off"></i>홀딩이 없습니다</div>`}`;
 }
@@ -1781,7 +1784,8 @@ async function submitHold(id) {
   if (id) await Store.update('holdings', id, obj); else await Store.add('holdings', obj);
   toast(status === '예정' ? '예정홀딩으로 등록 — 입고되면 자동 전환' : (id ? '저장됨' : '홀딩 등록 완료')); closeModal();
 }
-async function releaseHold(id) { if (!confirm('홀딩을 해제할까요? (기록은 남고 목록에서만 빠집니다)')) return; await Store.update('holdings', id, { status: '해제' }); toast('홀딩 해제됨'); }
+async function releaseHold(id) { if (!confirm('홀딩을 해제할까요? (기록은 남고 목록에서만 빠집니다 — 지난·해제 내역 보기에서 다시 볼 수 있음)')) return; await Store.update('holdings', id, { status: '해제' }); toast('홀딩 해제됨'); }
+async function restoreHold(id) { await Store.update('holdings', id, { status: '홀딩' }); toast('홀딩으로 복원됨'); }
 async function delHold(id) {
   if (!isAdmin()) { toast('관리자만 삭제할 수 있습니다'); return; }
   const h = state.holdings.find(x => x.id === id); if (!h) return;
