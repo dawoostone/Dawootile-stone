@@ -267,7 +267,7 @@ async function seedSample() {
   // 현장
   await Store.add('sites', { name: '반포 자이 49평', client: '한샘인테리어', region: '서울 서초구', address: '반포동 18-1', manager: '김민준', orderType: '실측', stage: '발주', materialName: '카무스 화이트', qty: '14', unit: '장', measureDate: '2026-05-20', constructDate: '2026-06-02', factory: '거봉석재', team: 'JS테크', quoteAmount: '8200000', paid: true, confirmed: true, note: '주방+현관 상판', history: { '접수': '2026-05-12', '가견적': '2026-05-13', '실측': '2026-05-20', '견적': '2026-05-22', '결제': '2026-05-24', '발주': '2026-05-28' } });
   await Store.add('sites', { name: '대전 둔산 상가', client: '대전리모델링', region: '대전 서구', address: '둔산동 992', manager: '이수진', orderType: '도면', stage: '견적', materialName: '포세린 그레이', qty: '10', unit: '장', constructDate: '2026-06-09', factory: '영진석재', team: '록스타일', preQuote: '약 320만', note: '도면 발주(실측 없음)', history: { '접수': '2026-05-25', '가견적': '2026-05-26', '견적': '2026-05-29' } });
-  await Store.add('sites', { name: '판교 카페', client: '미드센추리', region: '경기 성남 분당구', address: '판교로 234', manager: '김민준', orderType: '실측', stage: '보류', materialName: '비앙코 카라라', qty: '6', unit: '장', measureDate: '2026-05-27', constructDate: '2026-06-15', factory: '동호엠엔지', team: '모든대리석', note: '치수 재확인 필요', history: { '접수': '2026-05-23', '가견적': '2026-05-24', '실측': '2026-05-27' } });
+  await Store.add('sites', { name: '판교 카페', client: '미드센추리', region: '경기 성남 분당구', address: '판교로 234', manager: '김민준', orderType: '실측', stage: '실측', materialName: '비앙코 카라라', qty: '6', unit: '장', measureDate: '2026-05-27', constructDate: '2026-06-15', factory: '동호엠엔지', team: '모든대리석', note: '치수 재확인 필요', issue: '현장 벽면이 수직이 맞지 않아 재실측 필요. 업체와 시공 범위 재협의 후 발주 예정.', history: { '접수': '2026-05-23', '가견적': '2026-05-24', '실측': '2026-05-27' } });
   // 홀딩
   await Store.add('holdings', { vendor: '모든대리석', materialName: '카무스 화이트', jang: 12, hebe: 61.44, useDate: '2026-06-02', status: '홀딩', note: '반포 현장 예정' });
   await Store.add('holdings', { vendor: '거봉석재', materialName: '로마 팬텀 아이보리', jang: 8, hebe: 40.96, useDate: '2026-06-10', status: '홀딩' });
@@ -720,7 +720,7 @@ function renderHome() {
     <div class="stat-grid">
       <button class="stat tap" onclick="openStockTab('all')"><div class="ic g"><i class="ti ti-packages"></i></div><div class="v">${state.inventory.length}</div><div class="l">재고 품종 <i class="ti ti-chevron-right tap-arrow"></i></div><div class="s">실재고 ${state.inventory.reduce((a, b) => a + (+b.jang || 0), 0)}장 · 가용 ${state.inventory.reduce((a, b) => a + availJang(b), 0)}장</div></button>
       <button class="stat tap" onclick="openStockTab('low')"><div class="ic r"><i class="ti ti-alert-triangle"></i></div><div class="v" style="color:${lowItems.length ? 'var(--red-t)' : 'inherit'}">${lowItems.length}</div><div class="l">재고 부족 <i class="ti ti-chevron-right tap-arrow"></i></div><div class="s">${lowItems.length ? '입고 필요' : '정상 운영'}</div></button>
-      <button class="stat tap" onclick="filters.sites='prog';go('sites')"><div class="ic b"><i class="ti ti-building-community"></i></div><div class="v">${activeSites.length}</div><div class="l">진행 현장 <i class="ti ti-chevron-right tap-arrow"></i></div><div class="s">시공임박 ${soonConstruct.length}</div></button>
+      <button class="stat tap" onclick="filters.sites='all';go('sites')"><div class="ic b"><i class="ti ti-building-community"></i></div><div class="v">${activeSites.length}</div><div class="l">진행 현장 <i class="ti ti-chevron-right tap-arrow"></i></div><div class="s">시공임박 ${soonConstruct.length}</div></button>
       <button class="stat tap" onclick="go('hold')"><div class="ic a"><i class="ti ti-lock"></i></div><div class="v">${state.holdings.filter(h => (h.status || '홀딩') === '홀딩').length}</div><div class="l">홀딩 건수 <i class="ti ti-chevron-right tap-arrow"></i></div><div class="s">임박 ${soonHold.length} · 예정 ${plannedHolds.length}</div></button>
     </div>
 
@@ -816,12 +816,14 @@ function companyDatalist(id) {
    =================================================================== */
 function sitesFilteredList() {
   const f = filters.sites;
-  let list = state.sites.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  if (f === 'prog') list = list.filter(s => !['완료', '보류'].includes(s.stage));
-  else if (f === 'wait') list = list.filter(s => ['접수', '가견적', '견적', '결제'].includes(s.stage));
+  let list = state.sites.slice();
+  if (f === 'wait') list = list.filter(s => ['접수', '가견적', '견적', '결제'].includes(s.stage));
   else if (f === 'construct') list = list.filter(s => ['발주', '시공'].includes(s.stage));
   else if (f === 'done') list = list.filter(s => s.stage === '완료');
-  else if (f === 'issue') list = list.filter(s => s.stage === '보류');
+  else if (f === 'issue') list = list.filter(s => (s.issue || '').trim());
+  else list = list.filter(s => s.stage !== '완료'); // 전체(기본): 완료 현장 숨김
+  // 시공일 임박순 정렬 (시공일 없는 건 맨 뒤). 이슈 보기는 그대로 임박순.
+  list.sort((a, b) => (a.constructDate || '9999-99-99').localeCompare(b.constructDate || '9999-99-99'));
   const q = (filters.siteSearch || '').trim().toLowerCase();
   if (q) {
     const fld = filters.siteSearchField || 'all';
@@ -858,7 +860,7 @@ function renderSites() {
     <div class="ph"><div><h2><i class="ti ti-building-community"></i>시공 현장</h2><p>진행 단계를 한눈에 · 탭하면 상세</p></div>
       <button class="btn btn-pri btn-sm" onclick="openSiteForm()"><i class="ti ti-plus"></i>현장 등록</button></div>
     <div class="chips">
-      ${chip('all', '전체', f)}${chip('prog', '진행중', f)}${chip('wait', '견적·결제', f)}${chip('construct', '발주·시공', f)}${chip('done', '완료', f)}${chip('issue', '보류', f)}
+      ${chip('all', '전체', f)}${chip('wait', '견적·결제', f)}${chip('construct', '발주·시공', f)}${chip('done', '완료', f)}${chip('issue', '이슈', f)}
     </div>
     <div class="search-box">
       <i class="ti ti-search"></i>
@@ -884,7 +886,7 @@ function siteCard(s) {
   return `<div class="site" onclick="openSiteDetail('${s.id}')">
     <div class="site-top">
       <div><div class="nm">${esc(s.name)}</div><div class="ad"><i class="ti ti-map-pin" style="font-size:13px"></i>${esc(s.region || '')} ${esc(s.address || '')}</div></div>
-      ${pill(s.stage || '접수')}
+      <div style="text-align:right;flex:none">${pill(s.stage || '접수')}${(s.issue || '').trim() ? `<div style="margin-top:5px"><span class="pill p-issue"><i class="ti ti-alert-triangle"></i> 이슈</span></div>` : ''}</div>
     </div>
     <div class="site-meta">
       <div class="mi"><i class="ti ti-user-circle"></i><span class="k">담당</span><b>${esc(s.manager || '-')}</b></div>
@@ -897,6 +899,7 @@ function siteCard(s) {
       <div class="db ${dC != null && dC >= 0 && dC <= 3 ? 'soon' : ''}"><div class="k">시공일</div><div class="v">${s.constructDate || '미정'}${dC != null && dC >= 0 && dC <= 7 && s.stage !== '완료' ? ` <small style="font-weight:600;color:var(--amber-t)">D-${dC}</small>` : ''}</div></div>
     </div>
     <div class="tline">${tnodes}</div>
+    ${(s.issue || '').trim() ? `<div style="margin-top:9px;font-size:12.5px;color:#b42318;background:#fef3f2;border:1px solid #fecdca;border-radius:9px;padding:8px 10px;line-height:1.5"><b><i class="ti ti-alert-triangle"></i> 이슈</b> · ${esc(s.issue)}</div>` : ''}
   </div>`;
 }
 
@@ -920,6 +923,7 @@ function openSiteDetail(id) {
       ${s.preQuote ? `<div class="df"><div class="k">가견적</div><div class="v">${esc(s.preQuote)}</div></div>` : ''}
       ${s.quoteAmount ? `<div class="df"><div class="k">견적 금액</div><div class="v">${won(+s.quoteAmount)}원</div></div>` : ''}
       ${s.note ? `<div class="df full"><div class="k">특이사항</div><div class="v" style="font-weight:500">${esc(s.note)}</div></div>` : ''}
+      ${(s.issue || '').trim() ? `<div class="df full"><div class="k" style="color:#b42318"><i class="ti ti-alert-triangle"></i> 현장 이슈</div><div class="v" style="font-weight:600;color:#b42318;white-space:pre-wrap">${esc(s.issue)}</div></div>` : ''}
     </div>
     <div class="sec-label"><i class="ti ti-arrow-bar-to-right"></i>진행 단계 변경</div>
     <div class="seg" style="flex-wrap:wrap">
@@ -977,6 +981,7 @@ function openSiteForm(id, pre) {
       <label class="chk full ${v.paid ? 'on' : ''}" id="s-paid-w"><input type="checkbox" id="s-paid" ${v.paid ? 'checked' : ''} onchange="this.closest('.chk').classList.toggle('on',this.checked)"> 결제 완료</label>
       <label class="chk full ${v.confirmed ? 'on' : ''}" id="s-confirmed-w"><input type="checkbox" id="s-confirmed" ${v.confirmed ? 'checked' : ''} onchange="this.closest('.chk').classList.toggle('on',this.checked)"> 시공 확정</label>
       <div class="fld full"><label>특이사항</label><textarea id="s-note" placeholder="현장 메모">${esc(v.note || '')}</textarea></div>
+      <div class="fld full"><label style="color:var(--red-t)"><i class="ti ti-alert-triangle"></i> 현장 이슈 <span style="color:var(--t3);font-weight:500">(문제 발생 시 소상히 기록 · '이슈' 탭에 모아 보관 · 완료 후에도 남음)</span></label><textarea id="s-issue" placeholder="이슈 내용을 자세히 적어주세요">${esc(v.issue || '')}</textarea></div>
     </div>
     <button class="btn btn-ghost btn-block" style="margin-top:12px" onclick="runRecommend()"><i class="ti ti-wand"></i>매뉴얼 기반 시공팀·공장 자동추천</button>
     <div id="reco-out"></div>
@@ -1048,7 +1053,7 @@ async function submitSite(id) {
     measureDate: el('s-measureDate').value, constructDate,
     factory, team,
     paid: el('s-paid').checked, confirmed: el('s-confirmed').checked,
-    note: el('s-note').value.trim(), updatedBy: me.name
+    note: el('s-note').value.trim(), issue: el('s-issue') ? el('s-issue').value.trim() : '', updatedBy: me.name
   };
   if (id) {
     const s = state.sites.find(x => x.id === id);
