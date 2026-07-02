@@ -29,7 +29,7 @@ function prefillEmail() {
 }
 function cref(name) { return db.collection('teams').doc(TEAM).collection(name); }
 
-const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients'];
+const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients', 'issues'];
 
 // 로컬(미리보기) 모드용 - 같은 기기의 다른 탭끼리 실시간 반영
 const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('dws') : null;
@@ -83,10 +83,10 @@ const Store = {
 if (bc) bc.onmessage = (e) => { const c = e.data; if (Store._watchers[c]) Store._watchers[c](Store.read(c)); };
 
 /* ---------- 1. 전역 상태 ---------- */
-const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [] };
+const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [], issues: [] };
 let me = null;          // 로그인한 사용자
 let tab = 'home';
-let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all', holdArchive: false };
+let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all', holdArchive: false, holdSearch: '', holdGroup: 'none' };
 let _holdLinkSite = null;   // 현장 저장 시 이 홀딩을 현장에 '연결'(소진 아님)
 let _holdConfirm = null;    // 출고 저장 시 이 홀딩을 '확정' 처리
 let _busy = false;          // 등록 버튼 연속 클릭(중복 저장) 방지
@@ -267,7 +267,7 @@ async function seedSample() {
   // 현장
   await Store.add('sites', { name: '반포 자이 49평', client: '한샘인테리어', region: '서울 서초구', address: '반포동 18-1', manager: '김민준', orderType: '실측', stage: '발주', materialName: '카무스 화이트', qty: '14', unit: '장', measureDate: '2026-05-20', constructDate: '2026-06-02', factory: '거봉석재', team: 'JS테크', quoteAmount: '8200000', paid: true, confirmed: true, note: '주방+현관 상판', history: { '접수': '2026-05-12', '가견적': '2026-05-13', '실측': '2026-05-20', '견적': '2026-05-22', '결제': '2026-05-24', '발주': '2026-05-28' } });
   await Store.add('sites', { name: '대전 둔산 상가', client: '대전리모델링', region: '대전 서구', address: '둔산동 992', manager: '이수진', orderType: '도면', stage: '견적', materialName: '포세린 그레이', qty: '10', unit: '장', constructDate: '2026-06-09', factory: '영진석재', team: '록스타일', preQuote: '약 320만', note: '도면 발주(실측 없음)', history: { '접수': '2026-05-25', '가견적': '2026-05-26', '견적': '2026-05-29' } });
-  await Store.add('sites', { name: '판교 카페', client: '미드센추리', region: '경기 성남 분당구', address: '판교로 234', manager: '김민준', orderType: '실측', stage: '실측', materialName: '비앙코 카라라', qty: '6', unit: '장', measureDate: '2026-05-27', constructDate: '2026-06-15', factory: '동호엠엔지', team: '모든대리석', note: '치수 재확인 필요', issue: '현장 벽면이 수직이 맞지 않아 재실측 필요. 업체와 시공 범위 재협의 후 발주 예정.', history: { '접수': '2026-05-23', '가견적': '2026-05-24', '실측': '2026-05-27' } });
+  await Store.add('sites', { name: '판교 카페', client: '미드센추리', region: '경기 성남 분당구', address: '판교로 234', manager: '김민준', orderType: '실측', stage: '실측', materialName: '비앙코 카라라', qty: '6', unit: '장', measureDate: '2026-05-27', constructDate: '2026-06-15', factory: '동호엠엔지', team: '모든대리석', note: '치수 재확인 필요', history: { '접수': '2026-05-23', '가견적': '2026-05-24', '실측': '2026-05-27' } });
   // 홀딩
   await Store.add('holdings', { vendor: '모든대리석', materialName: '카무스 화이트', jang: 12, hebe: 61.44, useDate: '2026-06-02', status: '홀딩', note: '반포 현장 예정' });
   await Store.add('holdings', { vendor: '거봉석재', materialName: '로마 팬텀 아이보리', jang: 8, hebe: 40.96, useDate: '2026-06-10', status: '홀딩' });
@@ -708,8 +708,10 @@ function renderHome() {
   const plannedHolds = state.holdings.filter(h => h.status === '예정');
   const waitQuote = state.sites.filter(s => ['접수', '가견적', '견적'].includes(s.stage));
 
+  const openIssues = state.issues.filter(i => i.status !== '처리완료');
   const alerts = [];
   lowItems.forEach(i => alerts.push({ c: 'r', ic: 'ti-alert-triangle', t: `${i.name} 입고 필요`, s: `가용 ${availJang(i)}장 · 안전재고 ${(+i.safeJang || 0)}장 미만`, tag: '재고부족' }));
+  openIssues.forEach(i => alerts.push({ c: 'r', ic: 'ti-alert-triangle', t: `${i.siteName || '현장'} 이슈 미해결`, s: (i.reason || '').slice(0, 40), tag: '이슈' }));
   plannedHolds.forEach(h => alerts.push({ c: 'a', ic: 'ti-clock-pause', t: `${h.materialName || '-'} 입고 대기`, s: `${h.vendor || ''} · ${(+h.jang || 0)}장 예약(예정홀딩) · 입고 시 자동 전환`, tag: '예정홀딩' }));
   soonConstruct.forEach(s => alerts.push({ c: 'a', ic: 'ti-tools', t: `${s.name} 시공 임박`, s: `${s.constructDate} 시공 예정 · ${s.team || '시공팀 미정'}`, tag: 'D-' + daysFromNow(s.constructDate) }));
   soonHold.forEach(h => alerts.push({ c: 'b', ic: 'ti-lock', t: `${h.vendor} 홀딩 사용 임박`, s: `${h.materialName} ${(+h.hebe || 0).toFixed(1)}㎡ · ${h.useDate} 사용`, tag: '홀딩' }));
@@ -814,13 +816,93 @@ function companyDatalist(id) {
 /* ===================================================================
    현장 관리
    =================================================================== */
+/* ---------- 이슈(현장별 문제) ---------- */
+function siteIssues(id) { return state.issues.filter(i => i.siteId === id); }
+function siteOpenIssues(id) { return state.issues.filter(i => i.siteId === id && i.status !== '처리완료'); }
+function issuesSorted() {
+  return state.issues.slice().sort((a, b) => {
+    const ua = a.status !== '처리완료' ? 0 : 1, ub = b.status !== '처리완료' ? 0 : 1;
+    if (ua !== ub) return ua - ub;                 // 미해결 먼저
+    return (b.createdAt || 0) - (a.createdAt || 0); // 그다음 최신순
+  });
+}
+function renderIssues() {
+  const f = 'issue';
+  const list = issuesSorted();
+  const open = list.filter(i => i.status !== '처리완료').length;
+  el('pg-sites').innerHTML = `
+    <div class="ph"><div><h2><i class="ti ti-alert-triangle"></i>현장 이슈</h2><p>미해결 <b style="color:#f04438">${open}건</b> · 이슈를 처리 완료해야 현장을 완료할 수 있어요</p></div>
+      <button class="btn btn-pri btn-sm" onclick="openIssueForm()"><i class="ti ti-plus"></i>이슈 등록</button></div>
+    <div class="chips">
+      ${chip('all', '전체', f)}${chip('wait', '견적·결제', f)}${chip('construct', '발주·시공', f)}${chip('done', '완료', f)}${chip('issue', '이슈', f)}
+    </div>
+    <div class="site-grid">${list.length ? list.map(issueCard).join('') : `<div class="empty" style="grid-column:1/-1"><i class="ti ti-shield-check"></i>등록된 이슈가 없습니다<br><button class="btn btn-pri btn-sm" style="margin-top:12px" onclick="openIssueForm()"><i class="ti ti-plus"></i>이슈 등록하기</button></div>`}</div>`;
+}
+function issueCard(i) {
+  const done = i.status === '처리완료';
+  const site = state.sites.find(x => x.id === i.siteId);
+  const stageTxt = site ? (site.stage || '') : '삭제된 현장';
+  return `<div class="site" style="border-left:4px solid ${done ? '#12b76a' : '#f04438'}">
+    <div class="site-top">
+      <div><div class="nm">${esc(i.siteName || '현장')}</div><div class="ad"><i class="ti ti-calendar-event" style="font-size:13px"></i>${i.createdAt ? new Date(i.createdAt).toLocaleDateString('ko-KR') : ''} · ${esc(i.by || '')} 등록${stageTxt ? ' · 현재 ' + esc(stageTxt) : ''}</div></div>
+      <span class="pill ${done ? 'p-done' : 'p-issue'}">${done ? '처리완료' : '미해결'}</span>
+    </div>
+    <div style="margin-top:9px;font-size:13.5px;color:var(--t1);white-space:pre-wrap;line-height:1.6">${esc(i.reason || '')}</div>
+    ${done
+      ? `<div style="margin-top:9px;font-size:12px;color:var(--t3)"><i class="ti ti-check"></i> ${esc(i.resolvedDate || '')} ${esc(i.resolvedBy || '')} 처리 완료</div>`
+      : `<button class="btn btn-pri btn-block" style="margin-top:10px" onclick="resolveIssue('${i.id}')"><i class="ti ti-circle-check"></i>처리 완료</button>`}
+    <div class="frm-foot" style="margin-top:8px">
+      ${site ? `<button class="btn btn-sm" style="flex:1" onclick="openSiteDetail('${i.siteId}')"><i class="ti ti-building-community"></i>현장 보기</button>` : ''}
+      ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="delIssue('${i.id}')"><i class="ti ti-trash"></i></button>` : ''}
+    </div>
+  </div>`;
+}
+function openIssueForm(preSiteId) {
+  const sites = state.sites.filter(s => s.stage !== '완료')
+    .sort((a, b) => (a.constructDate || '9999-99-99').localeCompare(b.constructDate || '9999-99-99'));
+  if (!sites.length) { toast('진행중인 현장이 없습니다'); return; }
+  openModal(`
+    <div class="sheet-h"><h3><i class="ti ti-alert-triangle"></i>이슈 등록</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="frm">
+      <div class="fld full"><label>현장 선택 <span class="req">*</span> <span style="color:var(--t3);font-weight:500">(진행중 현장)</span></label>
+        <select id="i-site"><option value="">— 현장을 선택하세요 —</option>${sites.map(s => `<option value="${s.id}" ${preSiteId === s.id ? 'selected' : ''}>${esc(s.name)} · ${esc(s.client || '')}${s.constructDate ? ' · 시공 ' + s.constructDate : ''}</option>`).join('')}</select></div>
+      <div class="fld full"><label>이슈가 생긴 이유 <span class="req">*</span></label>
+        <textarea id="i-reason" placeholder="현장에 생긴 문제를 자세히 적어주세요" style="min-height:130px"></textarea></div>
+    </div>
+    <div class="frm-foot">
+      <button class="btn" style="flex:1" onclick="closeModal()">취소</button>
+      <button class="btn btn-pri" style="flex:2" onclick="submitIssue()"><i class="ti ti-check"></i>이슈 등록</button>
+    </div>`);
+}
+async function submitIssue() {
+  if (_busy) return;
+  const siteId = el('i-site').value;
+  const reason = el('i-reason').value.trim();
+  if (!siteId) { toast('현장을 선택하세요'); return; }
+  if (!reason) { toast('이슈 이유를 입력하세요'); return; }
+  const s = state.sites.find(x => x.id === siteId);
+  _busy = true;
+  try {
+    await Store.add('issues', { siteId, siteName: s ? s.name : '', reason, status: '미해결', by: me.name });
+    toast('이슈 등록됨'); closeModal();
+  } finally { setTimeout(() => { _busy = false; }, 800); }
+}
+async function resolveIssue(id) {
+  if (!confirm('이 이슈를 처리 완료로 표시할까요?')) return;
+  await Store.update('issues', id, { status: '처리완료', resolvedBy: me.name, resolvedDate: todayStr() });
+  toast('처리 완료');
+}
+async function delIssue(id) {
+  if (!confirm('이 이슈 기록을 삭제할까요?')) return;
+  await Store.remove('issues', id); toast('삭제됨');
+}
 function sitesFilteredList() {
   const f = filters.sites;
   let list = state.sites.slice();
   if (f === 'wait') list = list.filter(s => ['접수', '가견적', '견적', '결제'].includes(s.stage));
   else if (f === 'construct') list = list.filter(s => ['발주', '시공'].includes(s.stage));
   else if (f === 'done') list = list.filter(s => s.stage === '완료');
-  else if (f === 'issue') list = list.filter(s => (s.issue || '').trim());
+  else if (f === 'issue') list = []; // 이슈는 renderIssues() 전용 화면에서 처리
   else list = list.filter(s => s.stage !== '완료'); // 전체(기본): 완료 현장 숨김
   // 시공일 임박순 정렬 (시공일 없는 건 맨 뒤). 이슈 보기는 그대로 임박순.
   list.sort((a, b) => (a.constructDate || '9999-99-99').localeCompare(b.constructDate || '9999-99-99'));
@@ -855,6 +937,7 @@ function filterSites() {
 }
 function renderSites() {
   const f = filters.sites;
+  if (f === 'issue') { renderIssues(); return; } // 이슈는 전용 화면
   const list = sitesFilteredList();
   el('pg-sites').innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-building-community"></i>시공 현장</h2><p>진행 단계를 한눈에 · 탭하면 상세</p></div>
@@ -867,7 +950,6 @@ function renderSites() {
       <input id="site-search" placeholder="현장·시공팀·업체·자재·날짜 검색" value="${esc(filters.siteSearch || '')}" oninput="filterSites()" autocomplete="off">
       ${filters.siteSearch ? `<button class="search-x" onclick="el('site-search').value='';filterSites()"><i class="ti ti-x"></i></button>` : ''}
     </div>
-    <div class="chips">${chipSF('all', '통합')}${chipSF('team', '시공팀')}${chipSF('client', '업체')}${chipSF('material', '자재')}${chipSF('date', '날짜')}</div>
     <div style="font-size:12px;color:var(--t3);margin:2px 0 8px">검색 결과 <b id="sites-count" style="color:var(--t1)">${list.length}건</b></div>
     <div class="site-grid" id="sites-grid">${siteGridHtml(list)}</div>`;
 }
@@ -883,10 +965,11 @@ function siteCard(s) {
     return `<div class="tnode ${cls}"><span class="c">${i < idx ? '<i class=\'ti ti-check\'></i>' : ''}</span><span class="lb">${st}</span><span class="dt">${date}</span></div>`;
   }).join('');
   const dM = daysFromNow(s.measureDate), dC = daysFromNow(s.constructDate);
+  const openIss = siteOpenIssues(s.id);
   return `<div class="site" onclick="openSiteDetail('${s.id}')">
     <div class="site-top">
       <div><div class="nm">${esc(s.name)}</div><div class="ad"><i class="ti ti-map-pin" style="font-size:13px"></i>${esc(s.region || '')} ${esc(s.address || '')}</div></div>
-      <div style="text-align:right;flex:none">${pill(s.stage || '접수')}${(s.issue || '').trim() ? `<div style="margin-top:5px"><span class="pill p-issue"><i class="ti ti-alert-triangle"></i> 이슈</span></div>` : ''}</div>
+      <div style="text-align:right;flex:none">${pill(s.stage || '접수')}${openIss.length ? `<div style="margin-top:5px"><span class="pill p-issue"><i class="ti ti-alert-triangle"></i> 이슈 ${openIss.length}</span></div>` : ''}</div>
     </div>
     <div class="site-meta">
       <div class="mi"><i class="ti ti-user-circle"></i><span class="k">담당</span><b>${esc(s.manager || '-')}</b></div>
@@ -899,7 +982,7 @@ function siteCard(s) {
       <div class="db ${dC != null && dC >= 0 && dC <= 3 ? 'soon' : ''}"><div class="k">시공일</div><div class="v">${s.constructDate || '미정'}${dC != null && dC >= 0 && dC <= 7 && s.stage !== '완료' ? ` <small style="font-weight:600;color:var(--amber-t)">D-${dC}</small>` : ''}</div></div>
     </div>
     <div class="tline">${tnodes}</div>
-    ${(s.issue || '').trim() ? `<div style="margin-top:9px;font-size:12.5px;color:#b42318;background:#fef3f2;border:1px solid #fecdca;border-radius:9px;padding:8px 10px;line-height:1.5"><b><i class="ti ti-alert-triangle"></i> 이슈</b> · ${esc(s.issue)}</div>` : ''}
+    ${openIss.length ? `<div style="margin-top:9px;font-size:12.5px;color:#b42318;background:#fef3f2;border:1px solid #fecdca;border-radius:9px;padding:8px 10px;line-height:1.5"><b><i class="ti ti-alert-triangle"></i> 미해결 이슈</b> · ${esc(openIss[0].reason)}${openIss.length > 1 ? ` <span style="color:var(--t3)">외 ${openIss.length - 1}건</span>` : ''}</div>` : ''}
   </div>`;
 }
 
@@ -923,8 +1006,16 @@ function openSiteDetail(id) {
       ${s.preQuote ? `<div class="df"><div class="k">가견적</div><div class="v">${esc(s.preQuote)}</div></div>` : ''}
       ${s.quoteAmount ? `<div class="df"><div class="k">견적 금액</div><div class="v">${won(+s.quoteAmount)}원</div></div>` : ''}
       ${s.note ? `<div class="df full"><div class="k">특이사항</div><div class="v" style="font-weight:500">${esc(s.note)}</div></div>` : ''}
-      ${(s.issue || '').trim() ? `<div class="df full"><div class="k" style="color:#b42318"><i class="ti ti-alert-triangle"></i> 현장 이슈</div><div class="v" style="font-weight:600;color:#b42318;white-space:pre-wrap">${esc(s.issue)}</div></div>` : ''}
     </div>
+    ${(() => { const iss = siteIssues(s.id); return `
+    <div class="sec-label" style="display:flex;justify-content:space-between;align-items:center"><span><i class="ti ti-alert-triangle" style="color:#f04438"></i> 현장 이슈 ${iss.length ? `(${siteOpenIssues(s.id).length}건 미해결)` : ''}</span><button class="btn btn-ghost btn-sm" onclick="openIssueForm('${s.id}')"><i class="ti ti-plus"></i>이슈</button></div>
+    ${iss.length ? iss.slice().sort((a, b) => { const ua = a.status !== '처리완료' ? 0 : 1, ub = b.status !== '처리완료' ? 0 : 1; return ua !== ub ? ua - ub : (b.createdAt || 0) - (a.createdAt || 0); }).map(i => {
+      const done = i.status === '처리완료';
+      return `<div style="border:1px solid ${done ? '#d0e8dc' : '#fecdca'};background:${done ? '#f3faf6' : '#fef3f2'};border-radius:10px;padding:9px 11px;margin-bottom:7px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span class="pill ${done ? 'p-done' : 'p-issue'}" style="flex:none">${done ? '처리완료' : '미해결'}</span><span style="font-size:11px;color:var(--t3)">${i.createdAt ? new Date(i.createdAt).toLocaleDateString('ko-KR') : ''} · ${esc(i.by || '')}</span></div>
+        <div style="margin-top:6px;font-size:13px;white-space:pre-wrap;line-height:1.55">${esc(i.reason || '')}</div>
+        ${done ? `<div style="margin-top:5px;font-size:11.5px;color:var(--t3)"><i class="ti ti-check"></i> ${esc(i.resolvedDate || '')} ${esc(i.resolvedBy || '')} 처리</div>` : `<button class="btn btn-pri btn-sm btn-block" style="margin-top:7px" onclick="resolveIssue('${i.id}')"><i class="ti ti-circle-check"></i>처리 완료</button>`}
+      </div>`; }).join('') : `<div style="font-size:12.5px;color:var(--t3);padding:4px 2px 10px">등록된 이슈가 없습니다.</div>`}`; })()}
     <div class="sec-label"><i class="ti ti-arrow-bar-to-right"></i>진행 단계 변경</div>
     <div class="seg" style="flex-wrap:wrap">
       ${SITE_STAGES.filter(st => !(skip && st === '실측')).map(st => `<button class="${(s.stage || '접수') === st ? 'on' : ''}" onclick="advanceStage('${s.id}','${st}')">${st}</button>`).join('')}
@@ -944,6 +1035,10 @@ function holdFromSite(id) {
 }
 async function advanceStage(id, stage) {
   const s = state.sites.find(x => x.id === id); if (!s) return;
+  if (stage === '완료') {
+    const openIss = siteOpenIssues(id);
+    if (openIss.length) { toast(`미해결 이슈 ${openIss.length}건 — 이슈를 처리 완료해야 현장을 완료할 수 있어요`); return; }
+  }
   const hist = Object.assign({}, s.history || {}); if (!hist[stage]) hist[stage] = todayStr();
   await Store.update('sites', id, { stage, history: hist, updatedBy: me.name });
   toast(`단계 → ${stage}`); closeModal();
@@ -981,7 +1076,6 @@ function openSiteForm(id, pre) {
       <label class="chk full ${v.paid ? 'on' : ''}" id="s-paid-w"><input type="checkbox" id="s-paid" ${v.paid ? 'checked' : ''} onchange="this.closest('.chk').classList.toggle('on',this.checked)"> 결제 완료</label>
       <label class="chk full ${v.confirmed ? 'on' : ''}" id="s-confirmed-w"><input type="checkbox" id="s-confirmed" ${v.confirmed ? 'checked' : ''} onchange="this.closest('.chk').classList.toggle('on',this.checked)"> 시공 확정</label>
       <div class="fld full"><label>특이사항</label><textarea id="s-note" placeholder="현장 메모">${esc(v.note || '')}</textarea></div>
-      <div class="fld full"><label style="color:var(--red-t)"><i class="ti ti-alert-triangle"></i> 현장 이슈 <span style="color:var(--t3);font-weight:500">(문제 발생 시 소상히 기록 · '이슈' 탭에 모아 보관 · 완료 후에도 남음)</span></label><textarea id="s-issue" placeholder="이슈 내용을 자세히 적어주세요">${esc(v.issue || '')}</textarea></div>
     </div>
     <button class="btn btn-ghost btn-block" style="margin-top:12px" onclick="runRecommend()"><i class="ti ti-wand"></i>매뉴얼 기반 시공팀·공장 자동추천</button>
     <div id="reco-out"></div>
@@ -1045,15 +1139,17 @@ async function submitSite(id) {
   if (!constructDate) { toast('시공일을 선택하세요'); return; }
   if (!factory) { toast('가공 공장을 선택하세요'); return; }
   if (!team) { toast('시공팀을 선택하세요'); return; }
+  const stage = el('s-stage').value || '접수';
+  if (id && stage === '완료' && siteOpenIssues(id).length) { toast(`미해결 이슈 ${siteOpenIssues(id).length}건 — 이슈를 처리 완료해야 현장을 완료할 수 있어요`); return; }
   const obj = {
     name: name || (client + ' 현장'), client, region: el('s-region').value.trim(),
     address: el('s-address').value.trim(), manager: el('s-manager').value.trim() || me.name,
-    orderType: curOrderType(), stage: el('s-stage').value || '접수',
+    orderType: curOrderType(), stage,
     items, materialName: items[0].name, qty: String(items[0].qty), unit: '',
     measureDate: el('s-measureDate').value, constructDate,
     factory, team,
     paid: el('s-paid').checked, confirmed: el('s-confirmed').checked,
-    note: el('s-note').value.trim(), issue: el('s-issue') ? el('s-issue').value.trim() : '', updatedBy: me.name
+    note: el('s-note').value.trim(), updatedBy: me.name
   };
   if (id) {
     const s = state.sites.find(x => x.id === id);
@@ -1470,6 +1566,7 @@ function renderShip() {
             </div>
             <div style="margin-top:7px;font-size:13px">${g.items.map(t => `<div style="color:var(--t2)">· ${esc(t.itemName)} <b style="color:var(--t1)">${+t.jang || 0}장</b>${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}${t.lot ? ` · 롯트 ${esc(t.lot)}` : ''}${t.pattern ? ` · 패턴 ${esc(t.pattern)}` : ''}</div>`).join('')}</div>
             ${g.items.length > 1 ? `<div style="font-size:11.5px;color:var(--t3);margin-top:6px;text-align:right">합계 ${totJang}장 · ${totHebe.toFixed(1)}㎡</div>` : ''}
+            <div style="margin-top:9px;text-align:right"><button class="btn btn-sm" onclick="printShipSlip('${g.key}')"><i class="ti ti-printer"></i>출고증 인쇄</button></div>
           </div>`;
         }).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`;
       })()}
@@ -1543,6 +1640,66 @@ ${body}
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
   toast('엑셀 다운로드 (' + list.length + '건)');
 }
+/* 출고증 인쇄 — 출고 묶음(shipId) 기준. 출고일자/발주업체명/자재명/수량/롯트/패턴/출고지/담당자/출고담당자 */
+function printShipSlip(key) {
+  const items = state.transactions.filter(t => t.type === 'out' && (t.shipId || t.id) === key)
+    .sort((a, b) => (a.itemName || '').localeCompare(b.itemName || ''));
+  if (!items.length) { toast('출고 내역을 찾을 수 없습니다'); return; }
+  const g = items[0];
+  const totJang = items.reduce((a, b) => a + (+b.jang || 0), 0);
+  const totHebe = items.reduce((a, b) => a + (+b.hebe || 0), 0);
+  const e = s => esc(s == null ? '' : String(s));
+  const rows = items.map((t, i) => `<tr>
+      <td class="c">${i + 1}</td>
+      <td class="l">${e(t.itemName)}</td>
+      <td class="r">${+t.jang || 0}</td>
+      <td class="r">${t.hebe ? (+t.hebe).toFixed(2) : ''}</td>
+      <td class="c">${e(t.lot)}</td>
+      <td class="c">${e(t.pattern)}</td>
+    </tr>`).join('');
+  const meta = (k, v) => `<tr><th>${k}</th><td>${v || '-'}</td></tr>`;
+  const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>출고증 ${e(g.targetName)} ${e(g.date)}</title>
+<style>
+  *{box-sizing:border-box}
+  body{font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#16201c;margin:0;padding:26px 30px}
+  .head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #0F6E56;padding-bottom:12px;margin-bottom:16px}
+  .head h1{margin:0;font-size:26px;letter-spacing:8px;color:#0F6E56}
+  .head .co{text-align:right;font-size:13px;line-height:1.5;color:#465650}
+  .head .co b{font-size:15px;color:#16201c}
+  table{border-collapse:collapse;width:100%}
+  .meta{margin-bottom:16px}
+  .meta th,.meta td{border:1px solid #cfd8d4;padding:7px 11px;font-size:13.5px;text-align:left}
+  .meta th{background:#eef5f2;color:#0a4f3e;width:110px;font-weight:700;white-space:nowrap}
+  .items th{background:#0F6E56;color:#fff;border:1px solid #0a4f3e;padding:9px 8px;font-size:13px}
+  .items td{border:1px solid #cfd8d4;padding:8px;font-size:13.5px}
+  .items td.c{text-align:center}.items td.r{text-align:right}.items td.l{text-align:left}
+  .items tfoot td{background:#e1f5ee;font-weight:700;color:#0a4f3e}
+  .note{margin-top:14px;font-size:12.5px;color:#465650;white-space:pre-wrap}
+  .sign{margin-top:34px;display:flex;justify-content:flex-end;gap:40px;font-size:13px;color:#465650}
+  .sign .box{text-align:center}.sign .ln{margin-top:26px;border-top:1px solid #999;width:150px}
+  @media print{body{padding:10px 12px}}
+</style></head><body>
+  <div class="head"><h1>출 고 증</h1><div class="co"><b>다우세라믹앤석재</b><br>Dawoo Ceramic &amp; Stone<br>발행일 ${e(todayStr())}</div></div>
+  <table class="meta">
+    ${meta('출고일자', e(g.date))}
+    ${meta('발주 업체명', e(g.targetName))}
+    ${meta('출고지', e(g.dest || g.factory))}
+    ${meta('담당자', e(g.manager))}
+    ${meta('출고 담당자', e(g.by))}
+  </table>
+  <table class="items">
+    <thead><tr><th style="width:36px">No</th><th>자재명</th><th style="width:66px">수량(장)</th><th style="width:80px">헤베(㎡)</th><th style="width:110px">롯트</th><th style="width:110px">패턴</th></tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr><td class="c" colspan="2">합계</td><td class="r">${totJang}</td><td class="r">${totHebe.toFixed(2)}</td><td colspan="2"></td></tr></tfoot>
+  </table>
+  ${g.note ? `<div class="note">비고: ${e(g.note)}</div>` : ''}
+  <div class="sign"><div class="box">인수자<div class="ln"></div></div><div class="box">인계자<div class="ln"></div></div></div>
+</body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { toast('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요'); return; }
+  w.document.write(html); w.document.close(); w.focus();
+  setTimeout(() => { try { w.print(); } catch (e) { } }, 350);
+}
 function openShipForm(pre) {
   _mrowPattern = true;
   openModal(`
@@ -1551,6 +1708,7 @@ function openShipForm(pre) {
       <div class="fld full"><label>업체명<span class="req">*</span></label>${searchBox('o-targetName', '업체명 검색·입력', '', 'companyNames', '')}</div>
       <div class="fld full"><label>출고 자재 / 장수 / 롯트 / 패턴<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(여러 자재는 '자재 추가')</span></label>${matRowsHtml(pre && pre.items && pre.items.length ? pre.items : (pre && pre.material ? [{ name: pre.material, qty: pre.jang, lot: pre.lot, pattern: pre.pattern }] : [{}]), '장수')}</div>
       <div class="fld"><label>출고일<span class="req">*</span></label><input type="date" id="o-date" value="${todayStr()}"></div>
+      <div class="fld"><label>담당자 <span style="color:var(--t3);font-weight:500">(현장/거래)</span></label><input id="o-manager" value="${esc((pre && pre.manager) || '')}" placeholder="담당자" autocomplete="off"></div>
       <div class="fld full"><label>출고지(공장/현장)<span class="req">*</span></label>
         <select id="o-dest" onchange="onShipDest()">
           <option value="">선택…</option>
@@ -1620,6 +1778,7 @@ async function submitShip() {
   try {
     const shipId = 'S' + Date.now();
     const note = el('o-note').value.trim();
+    const manager = el('o-manager') ? el('o-manager').value.trim() : '';
     let totalJang = 0; const zeroed = [];
     for (const r of rows) {
       const material = r.name, jang = r.qty;
@@ -1628,7 +1787,7 @@ async function submitShip() {
       const newJang = Math.max(0, oldJang - jang);
       const hebe = it ? +(jang * (+it.hebePerJang || 0)).toFixed(2) : 0;
       if (it) await Store.update('inventory', it.id, { jang: newJang });
-      await Store.add('transactions', { type: 'out', shipId, itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot: r.lot, pattern: r.pattern, dest, factory: dest, target: '', targetName, date, note, by: me.name });
+      await Store.add('transactions', { type: 'out', shipId, itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot: r.lot, pattern: r.pattern, dest, factory: dest, target: '', targetName, date, note, manager, by: me.name });
       totalJang += jang;
       if (it && oldJang > 0 && newJang <= 0) zeroed.push(material);
     }
@@ -1671,35 +1830,20 @@ async function delIn(id) {
 /* ===================================================================
    홀딩 (업체 · 장수/헤베 · 사용일정)
    =================================================================== */
-function renderHold() {
-  const isResv = h => (h.status || '홀딩') === '홀딩';
-  const released = state.holdings.filter(h => h.status === '해제');
-  const list = state.holdings.filter(h => filters.holdArchive ? true : h.status !== '해제').sort((a, b) => {
-    const ra = isResv(a) ? 0 : 1, rb = isResv(b) ? 0 : 1;
-    if (ra !== rb) return ra - rb;
-    return (a.useDate || '').localeCompare(b.useDate || '');
-  });
-  const reserved = list.filter(isResv);
-  const planned = list.filter(h => h.status === '예정');
-  const confirmed = list.filter(h => h.status === '확정');
-  const soon = reserved.filter(h => { const d = daysFromNow(h.useDate); return d != null && d >= 0 && d <= 3; });
-  el('pg-hold').innerHTML = `
-    <div class="ph"><div><h2><i class="ti ti-lock"></i>자재 홀딩</h2><p>예약 → 출고 시 '확정' · 재고 부족 시 예정홀딩</p></div>
-      <button class="btn btn-pri btn-sm" onclick="openHoldForm()"><i class="ti ti-plus"></i>홀딩 등록</button></div>
-    <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
-      <div class="stat"><div class="ic b"><i class="ti ti-lock"></i></div><div class="v">${reserved.length}</div><div class="l">홀딩 중</div><div class="s">임박 ${soon.length}</div></div>
-      <div class="stat"><div class="ic a"><i class="ti ti-clock-pause"></i></div><div class="v" style="color:${planned.length ? 'var(--amber-t)' : 'inherit'}">${planned.length}</div><div class="l">예정홀딩</div><div class="s">입고 대기</div></div>
-      <div class="stat"><div class="ic g"><i class="ti ti-circle-check"></i></div><div class="v">${confirmed.length}</div><div class="l">확정</div><div class="s">출고완료</div></div>
-    </div>
-    <div class="banner info"><i class="ti ti-info-circle"></i><span>재고 부족 시 <b>예정홀딩</b>으로 등록되고 입고되면 자동 전환됩니다. <b>사용예정일이 지나면 자동으로 '해제'</b>되어 아래 '지난·해제 내역'으로 이동합니다(삭제 아님 — 다시 보거나 복원 가능).</span></div>
-    <button class="btn btn-block" style="margin-bottom:10px" onclick="filters.holdArchive=!filters.holdArchive;renderHold()"><i class="ti ti-history"></i>${filters.holdArchive ? '지난·해제 내역 숨기기' : '지난·해제 내역 보기'}${released.length ? ' (' + released.length + '건)' : ''}</button>
-    ${list.length ? list.map(h => {
-      const d = daysFromNow(h.useDate);
-      const conf = h.status === '확정';
-      const plan = h.status === '예정';
-      const rel = h.status === '해제';
-      const cls = conf ? 'p-done' : (d != null && d >= 0 && d <= 3 ? 'p-wait' : 'p-hold');
-      return `<div class="card" style="margin-bottom:11px;${conf ? 'opacity:.92' : ''}">
+function holdMatchesSearch(h) {
+  const q = (filters.holdSearch || '').trim().toLowerCase();
+  if (!q) return true;
+  if ((h.vendor || '').toLowerCase().includes(q)) return true;
+  if ((h.forSiteName || '').toLowerCase().includes(q)) return true;
+  return holdItems(h).some(it => (it.materialName || '').toLowerCase().includes(q));
+}
+function holdCardHtml(h) {
+  const d = daysFromNow(h.useDate);
+  const conf = h.status === '확정';
+  const plan = h.status === '예정';
+  const rel = h.status === '해제';
+  const cls = conf ? 'p-done' : (d != null && d >= 0 && d <= 3 ? 'p-wait' : 'p-hold');
+  return `<div class="card" style="margin-bottom:11px;${conf ? 'opacity:.92' : ''}">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
           <div><div style="font-size:15px;font-weight:700">${esc(h.vendor || '-')}</div><div style="font-size:12.5px;color:var(--t2);margin-top:2px">${holdItems(h).map(it => esc(it.materialName)).filter(Boolean).join(', ')}</div>${h.forSiteName ? `<div style="margin-top:5px"><span class="pill p-hold"><i class="ti ti-building-community"></i>${esc(h.forSiteName)}</span></div>` : ''}</div>
           ${rel ? `<span class="pill p-gray"><i class="ti ti-lock-open"></i>해제됨</span>` : (conf ? `<span class="pill p-done"><i class="ti ti-circle-check"></i>확정</span>` : (plan ? `<span class="pill p-wait"><i class="ti ti-clock-pause"></i>예정 · 입고대기</span>` : `<span class="pill ${cls}"><i class="ti ti-calendar"></i>${h.useDate || '미정'}${d != null && d >= 0 && d <= 7 ? ' · D-' + d : ''}</span>`))}
@@ -1727,7 +1871,52 @@ function renderHold() {
           ${isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="delHold('${h.id}')"><i class="ti ti-trash"></i>삭제</button>` : ''}
         </div>`))}
       </div>`;
-    }).join('') : `<div class="empty"><i class="ti ti-lock-off"></i>홀딩이 없습니다</div>`}`;
+}
+function holdGroupedHtml(list, keyFn, icon) {
+  const map = new Map();
+  list.forEach(h => keyFn(h).forEach(k => {
+    if (!map.has(k)) map.set(k, []);
+    const arr = map.get(k); if (!arr.some(x => x.id === h.id)) arr.push(h);
+  }));
+  const keys = [...map.keys()].sort((a, b) => a.localeCompare(b));
+  if (!keys.length) return `<div class="empty"><i class="ti ti-lock-off"></i>해당하는 홀딩이 없습니다</div>`;
+  return keys.map(k => `<div class="sec-label" style="margin-top:8px"><i class="ti ${icon}"></i> ${esc(k)} <span style="color:var(--t3);font-weight:500">· ${map.get(k).length}건</span></div>${map.get(k).map(holdCardHtml).join('')}`).join('');
+}
+function renderHold() {
+  const isResv = h => (h.status || '홀딩') === '홀딩';
+  const released = state.holdings.filter(h => h.status === '해제');
+  const list = state.holdings.filter(h => (filters.holdArchive ? true : h.status !== '해제') && holdMatchesSearch(h)).sort((a, b) => {
+    const ra = isResv(a) ? 0 : 1, rb = isResv(b) ? 0 : 1;
+    if (ra !== rb) return ra - rb;
+    return (a.useDate || '9999-99-99').localeCompare(b.useDate || '9999-99-99'); // 기한 임박순
+  });
+  const reserved = list.filter(isResv);
+  const planned = list.filter(h => h.status === '예정');
+  const confirmed = list.filter(h => h.status === '확정');
+  const soon = reserved.filter(h => { const d = daysFromNow(h.useDate); return d != null && d >= 0 && d <= 3; });
+  const g = filters.holdGroup || 'none';
+  const gchip = (v, label, ic) => `<button class="chip ${g === v ? 'active' : ''}" onclick="filters.holdGroup='${v}';renderHold()"><i class="ti ${ic}"></i> ${label}</button>`;
+  let body;
+  if (!list.length) body = `<div class="empty"><i class="ti ti-lock-off"></i>${(filters.holdSearch || '').trim() ? '검색 결과가 없습니다' : '홀딩이 없습니다'}</div>`;
+  else if (g === 'material') body = holdGroupedHtml(list, h => { const ms = holdItems(h).map(it => it.materialName || '(자재 미지정)'); return ms.length ? [...new Set(ms)] : ['(자재 미지정)']; }, 'ti-box');
+  else if (g === 'vendor') body = holdGroupedHtml(list, h => [h.vendor || '(업체 미지정)'], 'ti-briefcase');
+  else body = list.map(holdCardHtml).join('');
+  el('pg-hold').innerHTML = `
+    <div class="ph"><div><h2><i class="ti ti-lock"></i>자재 홀딩</h2><p>예약 → 출고 시 '확정' · 재고 부족 시 예정홀딩</p></div>
+      <button class="btn btn-pri btn-sm" onclick="openHoldForm()"><i class="ti ti-plus"></i>홀딩 등록</button></div>
+    <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat"><div class="ic b"><i class="ti ti-lock"></i></div><div class="v">${reserved.length}</div><div class="l">홀딩 중</div><div class="s">임박 ${soon.length}</div></div>
+      <div class="stat"><div class="ic a"><i class="ti ti-clock-pause"></i></div><div class="v" style="color:${planned.length ? 'var(--amber-t)' : 'inherit'}">${planned.length}</div><div class="l">예정홀딩</div><div class="s">입고 대기</div></div>
+      <div class="stat"><div class="ic g"><i class="ti ti-circle-check"></i></div><div class="v">${confirmed.length}</div><div class="l">확정</div><div class="s">출고완료</div></div>
+    </div>
+    <div class="search-box">
+      <i class="ti ti-search"></i>
+      <input id="hold-search" placeholder="업체명·자재명 검색" value="${esc(filters.holdSearch || '')}" oninput="filters.holdSearch=this.value;renderHold();setTimeout(()=>{const i=el('hold-search');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length);}},20)" autocomplete="off">
+      ${(filters.holdSearch || '').trim() ? `<button class="search-x" onclick="filters.holdSearch='';renderHold()"><i class="ti ti-x"></i></button>` : ''}
+    </div>
+    <div class="chips">${gchip('none', '전체', 'ti-list')}${gchip('material', '자재별', 'ti-box')}${gchip('vendor', '업체별', 'ti-briefcase')}</div>
+    <button class="btn btn-block" style="margin-bottom:10px" onclick="filters.holdArchive=!filters.holdArchive;renderHold()"><i class="ti ti-history"></i>${filters.holdArchive ? '지난·해제 내역 숨기기' : '지난·해제 내역 보기'}${released.length ? ' (' + released.length + '건)' : ''}</button>
+    ${body}`;
 }
 function openHoldForm(id, pre) {
   const h = id ? state.holdings.find(x => x.id === id) : null; const v = h || Object.assign({}, pre || {});
