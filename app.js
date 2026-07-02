@@ -1640,60 +1640,101 @@ ${body}
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
   toast('엑셀 다운로드 (' + list.length + '건)');
 }
-/* 출고증 인쇄 — 출고 묶음(shipId) 기준. 출고일자/발주업체명/자재명/수량/롯트/패턴/출고지/담당자/출고담당자 */
+/* 출고표(출고증) 인쇄 — 회사 양식 기준. 출고 묶음(shipId) 단위로 발행 */
+const DAWOO_CO = {
+  name: '주식회사 다우세라믹 &amp; 석재',
+  addr: '경기도 용인시 처인구 모현읍 곡현로 425, 2동',
+  tel: 'Tel ) 070-8211-0144　Fax ) 0503-8379-3628',
+  biztype: '건설업 도소매',
+  ceo: 'LIN CHANGJIE',
+  bizno: '711-86-03547',
+  email: 'dawoost@naver.com',
+  web: 'www.dawoostone.kr'
+};
 function printShipSlip(key) {
   const items = state.transactions.filter(t => t.type === 'out' && (t.shipId || t.id) === key)
     .sort((a, b) => (a.itemName || '').localeCompare(b.itemName || ''));
   if (!items.length) { toast('출고 내역을 찾을 수 없습니다'); return; }
   const g = items[0];
+  const e = s => esc(s == null ? '' : String(s));
   const totJang = items.reduce((a, b) => a + (+b.jang || 0), 0);
   const totHebe = items.reduce((a, b) => a + (+b.hebe || 0), 0);
-  const e = s => esc(s == null ? '' : String(s));
-  const rows = items.map((t, i) => `<tr>
+  // 문서번호: 출고일(YYYYMMDD) + 당일 출고 순번
+  const dayKeys = [...new Set(state.transactions.filter(t => t.type === 'out' && (t.date || '') === (g.date || '')).map(t => t.shipId || t.id))].sort();
+  const seq = Math.max(1, dayKeys.indexOf(key) + 1);
+  const docNo = (g.date || '').replace(/-/g, '') + '-' + seq;
+  const route = (g.note && g.note.trim()) ? e(g.note) : ((g.dest || '') ? e(g.dest) + ' 상차 → ' + e(g.targetName || '') + ' 하차' : '');
+  const MINROWS = 8;
+  let rows = items.map((t, i) => `<tr>
       <td class="c">${i + 1}</td>
       <td class="l">${e(t.itemName)}</td>
-      <td class="r">${+t.jang || 0}</td>
+      <td class="c">${e(t.unit || '㎡')}</td>
+      <td class="c">${e(t.spec)}</td>
       <td class="r">${t.hebe ? (+t.hebe).toFixed(2) : ''}</td>
-      <td class="c">${e(t.lot)}</td>
-      <td class="c">${e(t.pattern)}</td>
+      <td class="r">${+t.jang || 0}</td>
+      <td class="l">${e([t.pattern, t.lot ? '롯트 ' + t.lot : ''].filter(Boolean).join(' · '))}</td>
     </tr>`).join('');
-  const meta = (k, v) => `<tr><th>${k}</th><td>${v || '-'}</td></tr>`;
-  const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>출고증 ${e(g.targetName)} ${e(g.date)}</title>
+  for (let i = items.length; i < MINROWS; i++) rows += `<tr><td class="c">${i + 1}</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
+  const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>출고표 ${e(g.targetName)} ${e(g.date)}</title>
 <style>
   *{box-sizing:border-box}
-  body{font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#16201c;margin:0;padding:26px 30px}
-  .head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #0F6E56;padding-bottom:12px;margin-bottom:16px}
-  .head h1{margin:0;font-size:26px;letter-spacing:8px;color:#0F6E56}
-  .head .co{text-align:right;font-size:13px;line-height:1.5;color:#465650}
-  .head .co b{font-size:15px;color:#16201c}
+  body{font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#111;margin:0;padding:22px 26px}
   table{border-collapse:collapse;width:100%}
-  .meta{margin-bottom:16px}
-  .meta th,.meta td{border:1px solid #cfd8d4;padding:7px 11px;font-size:13.5px;text-align:left}
-  .meta th{background:#eef5f2;color:#0a4f3e;width:110px;font-weight:700;white-space:nowrap}
-  .items th{background:#0F6E56;color:#fff;border:1px solid #0a4f3e;padding:9px 8px;font-size:13px}
-  .items td{border:1px solid #cfd8d4;padding:8px;font-size:13.5px}
-  .items td.c{text-align:center}.items td.r{text-align:right}.items td.l{text-align:left}
-  .items tfoot td{background:#e1f5ee;font-weight:700;color:#0a4f3e}
-  .note{margin-top:14px;font-size:12.5px;color:#465650;white-space:pre-wrap}
-  .sign{margin-top:34px;display:flex;justify-content:flex-end;gap:40px;font-size:13px;color:#465650}
-  .sign .box{text-align:center}.sign .ln{margin-top:26px;border-top:1px solid #999;width:150px}
-  @media print{body{padding:10px 12px}}
+  .top{table-layout:fixed}
+  .top td{border:1px solid #444;padding:8px 10px;vertical-align:middle}
+  .doc{padding:0!important;text-align:center}
+  .doc .dl{border-bottom:1px solid #444;padding:9px 6px;letter-spacing:4px;font-size:13px;font-weight:600}
+  .doc .dv{padding:9px 6px;font-size:13.5px}
+  .title{text-align:center;font-size:30px;font-weight:800;letter-spacing:16px}
+  .issue{text-align:center;font-size:14px}
+  .issue .ik{letter-spacing:4px;font-weight:600;margin-right:20px}
+  .conm{text-align:center;font-size:18px;font-weight:800}
+  .recip{text-align:center;vertical-align:middle}
+  .recip .rn{font-size:24px;font-weight:800}
+  .recip .rt{font-size:16px;font-weight:600;margin-top:30px}
+  .ck{text-align:center;font-weight:700;background:#f4f4f4;white-space:nowrap}
+  .cv{font-size:13.5px}
+  .cv .tel{font-size:12px;color:#333}
+  .web{text-align:center;font-weight:800;text-decoration:underline;letter-spacing:1px}
+  .items{table-layout:fixed;margin-top:14px}
+  .items th{border:1px solid #444;background:#eee;padding:8px 6px;font-size:13.5px;font-weight:700}
+  .items td{border:1px solid #444;padding:7px 6px;font-size:13px;height:31px}
+  .items td.c{text-align:center}.items td.r{text-align:right;padding-right:9px}.items td.l{text-align:left;padding-left:9px}
+  .items tfoot td{font-weight:800;background:#faf7ee}
+  .who{table-layout:fixed;margin-top:12px}
+  .who td{border:1px solid #444;padding:8px 10px;font-size:13px}
+  .who .wk{text-align:center;font-weight:700;background:#f4f4f4;width:16%}
+  @media print{body{padding:8px 10px}}
 </style></head><body>
-  <div class="head"><h1>출 고 증</h1><div class="co"><b>다우세라믹앤석재</b><br>Dawoo Ceramic &amp; Stone<br>발행일 ${e(todayStr())}</div></div>
-  <table class="meta">
-    ${meta('출고일자', e(g.date))}
-    ${meta('발주 업체명', e(g.targetName))}
-    ${meta('출고지', e(g.dest || g.factory))}
-    ${meta('담당자', e(g.manager))}
-    ${meta('출고 담당자', e(g.by))}
+  <table class="top">
+    <colgroup><col style="width:27%"><col style="width:14%"><col style="width:59%"></colgroup>
+    <tr>
+      <td class="doc"><div class="dl">문 서 번 호</div><div class="dv">${docNo}</div></td>
+      <td class="title" colspan="2">출 고 표</td>
+    </tr>
+    <tr>
+      <td class="issue"><span class="ik">발 행 일 자</span>${e(g.date)}</td>
+      <td class="conm" colspan="2">${DAWOO_CO.name}</td>
+    </tr>
+    <tr>
+      <td class="recip" rowspan="6"><div class="rn">${e(g.targetName)}</div><div class="rt">${route}</div></td>
+      <td class="ck">주 소</td><td class="cv">${DAWOO_CO.addr}<br><span class="tel">${DAWOO_CO.tel}</span></td>
+    </tr>
+    <tr><td class="ck">업 태</td><td class="cv">${DAWOO_CO.biztype}</td></tr>
+    <tr><td class="ck">대표이사</td><td class="cv">${DAWOO_CO.ceo}</td></tr>
+    <tr><td class="ck">등록번호</td><td class="cv">${DAWOO_CO.bizno}</td></tr>
+    <tr><td class="ck">E-mail</td><td class="cv">${DAWOO_CO.email}</td></tr>
+    <tr><td class="web" colspan="2">${DAWOO_CO.web}</td></tr>
   </table>
   <table class="items">
-    <thead><tr><th style="width:36px">No</th><th>자재명</th><th style="width:66px">수량(장)</th><th style="width:80px">헤베(㎡)</th><th style="width:110px">롯트</th><th style="width:110px">패턴</th></tr></thead>
+    <colgroup><col style="width:6%"><col style="width:30%"><col style="width:8%"><col style="width:16%"><col style="width:12%"><col style="width:10%"><col style="width:18%"></colgroup>
+    <thead><tr><th>NO</th><th>품명</th><th>단위</th><th>규격</th><th>면적</th><th>수량</th><th>비고</th></tr></thead>
     <tbody>${rows}</tbody>
-    <tfoot><tr><td class="c" colspan="2">합계</td><td class="r">${totJang}</td><td class="r">${totHebe.toFixed(2)}</td><td colspan="2"></td></tr></tfoot>
+    <tfoot><tr><td class="c" colspan="4">합 계</td><td class="r">${totHebe.toFixed(2)}</td><td class="r">${totJang}</td><td></td></tr></tfoot>
   </table>
-  ${g.note ? `<div class="note">비고: ${e(g.note)}</div>` : ''}
-  <div class="sign"><div class="box">인수자<div class="ln"></div></div><div class="box">인계자<div class="ln"></div></div></div>
+  <table class="who">
+    <tr><td class="wk">담당자</td><td>${e(g.manager)}</td><td class="wk">출고 담당자</td><td>${e(g.by)}</td></tr>
+  </table>
 </body></html>`;
   const w = window.open('', '_blank');
   if (!w) { toast('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요'); return; }
