@@ -1923,25 +1923,40 @@ function holdGroupedHtml(list, keyFn, icon) {
   if (!keys.length) return `<div class="empty"><i class="ti ti-lock-off"></i>해당하는 홀딩이 없습니다</div>`;
   return keys.map(k => `<div class="sec-label" style="margin-top:8px"><i class="ti ${icon}"></i> ${esc(k)} <span style="color:var(--t3);font-weight:500">· ${map.get(k).length}건</span></div>${map.get(k).map(holdCardHtml).join('')}`).join('');
 }
-function renderHold() {
+/* 홀딩 목록 본문만 계산 (검색 시 이 부분만 갱신 → 입력 포커스 유지) */
+function holdBodyHtml() {
   const isResv = h => (h.status || '홀딩') === '홀딩';
-  const released = state.holdings.filter(h => h.status === '해제');
   const list = state.holdings.filter(h => (filters.holdArchive ? true : h.status !== '해제') && holdMatchesSearch(h)).sort((a, b) => {
     const ra = isResv(a) ? 0 : 1, rb = isResv(b) ? 0 : 1;
     if (ra !== rb) return ra - rb;
     return (a.useDate || '9999-99-99').localeCompare(b.useDate || '9999-99-99'); // 기한 임박순
   });
-  const reserved = list.filter(isResv);
-  const planned = list.filter(h => h.status === '예정');
-  const confirmed = list.filter(h => h.status === '확정');
+  const g = filters.holdGroup || 'none';
+  if (!list.length) return `<div class="empty"><i class="ti ti-lock-off"></i>${(filters.holdSearch || '').trim() ? '검색 결과가 없습니다' : '홀딩이 없습니다'}</div>`;
+  if (g === 'material') return holdGroupedHtml(list, h => { const ms = holdItems(h).map(it => it.materialName || '(자재 미지정)'); return ms.length ? [...new Set(ms)] : ['(자재 미지정)']; }, 'ti-box');
+  if (g === 'vendor') return holdGroupedHtml(list, h => [h.vendor || '(업체 미지정)'], 'ti-briefcase');
+  return list.map(holdCardHtml).join('');
+}
+/* 검색어 입력 시: 전체 재렌더 없이 목록 영역만 교체 (모바일 한글 입력 끊김 방지) */
+function filterHold() {
+  filters.holdSearch = el('hold-search') ? el('hold-search').value : '';
+  if (el('hold-body')) el('hold-body').innerHTML = holdBodyHtml();
+  const x = el('hold-search-x'); if (x) x.style.display = (filters.holdSearch || '').trim() ? '' : 'none';
+}
+function clearHoldSearch() {
+  filters.holdSearch = ''; if (el('hold-search')) el('hold-search').value = '';
+  filterHold(); const i = el('hold-search'); if (i) i.focus();
+}
+function renderHold() {
+  const isResv = h => (h.status || '홀딩') === '홀딩';
+  const released = state.holdings.filter(h => h.status === '해제');
+  const active = state.holdings.filter(h => h.status !== '해제');
+  const reserved = active.filter(isResv);
+  const planned = active.filter(h => h.status === '예정');
+  const confirmed = active.filter(h => h.status === '확정');
   const soon = reserved.filter(h => { const d = daysFromNow(h.useDate); return d != null && d >= 0 && d <= 3; });
   const g = filters.holdGroup || 'none';
   const gchip = (v, label, ic) => `<button class="chip ${g === v ? 'active' : ''}" onclick="filters.holdGroup='${v}';renderHold()"><i class="ti ${ic}"></i> ${label}</button>`;
-  let body;
-  if (!list.length) body = `<div class="empty"><i class="ti ti-lock-off"></i>${(filters.holdSearch || '').trim() ? '검색 결과가 없습니다' : '홀딩이 없습니다'}</div>`;
-  else if (g === 'material') body = holdGroupedHtml(list, h => { const ms = holdItems(h).map(it => it.materialName || '(자재 미지정)'); return ms.length ? [...new Set(ms)] : ['(자재 미지정)']; }, 'ti-box');
-  else if (g === 'vendor') body = holdGroupedHtml(list, h => [h.vendor || '(업체 미지정)'], 'ti-briefcase');
-  else body = list.map(holdCardHtml).join('');
   el('pg-hold').innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-lock"></i>자재 홀딩</h2><p>예약 → 출고 시 '확정' · 재고 부족 시 예정홀딩</p></div>
       <button class="btn btn-pri btn-sm" onclick="openHoldForm()"><i class="ti ti-plus"></i>홀딩 등록</button></div>
@@ -1952,12 +1967,12 @@ function renderHold() {
     </div>
     <div class="search-box">
       <i class="ti ti-search"></i>
-      <input id="hold-search" placeholder="업체명·자재명 검색" value="${esc(filters.holdSearch || '')}" oninput="filters.holdSearch=this.value;renderHold();setTimeout(()=>{const i=el('hold-search');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length);}},20)" autocomplete="off">
-      ${(filters.holdSearch || '').trim() ? `<button class="search-x" onclick="filters.holdSearch='';renderHold()"><i class="ti ti-x"></i></button>` : ''}
+      <input id="hold-search" placeholder="업체명·자재명 검색" value="${esc(filters.holdSearch || '')}" oninput="filterHold()" autocomplete="off">
+      <button class="search-x" id="hold-search-x" style="${(filters.holdSearch || '').trim() ? '' : 'display:none'}" onclick="clearHoldSearch()"><i class="ti ti-x"></i></button>
     </div>
     <div class="chips">${gchip('none', '전체', 'ti-list')}${gchip('material', '자재별', 'ti-box')}${gchip('vendor', '업체별', 'ti-briefcase')}</div>
     <button class="btn btn-block" style="margin-bottom:10px" onclick="filters.holdArchive=!filters.holdArchive;renderHold()"><i class="ti ti-history"></i>${filters.holdArchive ? '지난·해제 내역 숨기기' : '지난·해제 내역 보기'}${released.length ? ' (' + released.length + '건)' : ''}</button>
-    ${body}`;
+    <div id="hold-body">${holdBodyHtml()}</div>`;
 }
 function openHoldForm(id, pre) {
   const h = id ? state.holdings.find(x => x.id === id) : null; const v = h || Object.assign({}, pre || {});
