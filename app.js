@@ -288,6 +288,7 @@ function onData(coll) {
     _membersWaiters.splice(0).forEach(fn => fn());
   }
   if (coll === 'sites' && me) autoAdvanceStages();
+  if (coll === 'holdings' && me) autoReleaseHolds();
   if (me) render();
 }
 
@@ -666,6 +667,18 @@ async function autoAdvanceStages() {
     try { await Store.update('sites', s.id, { stage: '시공', history: hist }); } catch (e) { }
   }
   setTimeout(() => { _autoStageRun = false; }, 5000);
+}
+/* 사용예정일 지난 홀딩 → 자동 '해제'(삭제 아님, 지난·해제 내역으로 이동) */
+let _autoRelRun = false;
+async function autoReleaseHolds() {
+  if (_autoRelRun) return;
+  const due = state.holdings.filter(h => (h.status === '홀딩' || h.status === '예정') && h.useDate && daysFromNow(h.useDate) < 0);
+  if (!due.length) return;
+  _autoRelRun = true;
+  for (const h of due) {
+    try { await Store.update('holdings', h.id, { status: '해제', releasedAuto: true, releasedDate: todayStr() }); } catch (e) { }
+  }
+  setTimeout(() => { _autoRelRun = false; }, 5000);
 }
 /* 활성 홀딩 목록 (현장/출고에서 골라쓰기용) */
 function activeHoldings() { return state.holdings.filter(h => (h.status || '홀딩') === '홀딩'); }
@@ -1673,7 +1686,7 @@ function renderHold() {
       <div class="stat"><div class="ic a"><i class="ti ti-clock-pause"></i></div><div class="v" style="color:${planned.length ? 'var(--amber-t)' : 'inherit'}">${planned.length}</div><div class="l">예정홀딩</div><div class="s">입고 대기</div></div>
       <div class="stat"><div class="ic g"><i class="ti ti-circle-check"></i></div><div class="v">${confirmed.length}</div><div class="l">확정</div><div class="s">출고완료</div></div>
     </div>
-    <div class="banner info"><i class="ti ti-info-circle"></i><span>재고가 부족하면 <b>예정홀딩</b>으로 등록되고, 그 자재가 <b>입고되면 자동으로 홀딩</b>으로 전환됩니다. 홀딩은 <b>자동 삭제되지 않습니다</b> — '해제'하면 목록에서만 숨겨지고 아래에서 다시 볼 수 있습니다.</span></div>
+    <div class="banner info"><i class="ti ti-info-circle"></i><span>재고 부족 시 <b>예정홀딩</b>으로 등록되고 입고되면 자동 전환됩니다. <b>사용예정일이 지나면 자동으로 '해제'</b>되어 아래 '지난·해제 내역'으로 이동합니다(삭제 아님 — 다시 보거나 복원 가능).</span></div>
     <button class="btn btn-block" style="margin-bottom:10px" onclick="filters.holdArchive=!filters.holdArchive;renderHold()"><i class="ti ti-history"></i>${filters.holdArchive ? '지난·해제 내역 숨기기' : '지난·해제 내역 보기'}${released.length ? ' (' + released.length + '건)' : ''}</button>
     ${list.length ? list.map(h => {
       const d = daysFromNow(h.useDate);
@@ -1691,6 +1704,7 @@ function renderHold() {
         </div>
         ${conf ? `<div style="font-size:12px;color:var(--lime-t);margin-top:4px"><i class="ti ti-truck-delivery"></i> 출고 완료 ${esc(h.shippedDate || '')} · ${+h.shippedJang || 0}장</div>` : ''}
         ${plan ? `<div style="font-size:12px;color:var(--amber-t);margin-top:4px"><i class="ti ti-clock-pause"></i> 입고되면 자동으로 홀딩으로 전환됩니다</div>` : ''}
+        ${rel && h.releasedAuto ? `<div style="font-size:12px;color:var(--t3);margin-top:4px"><i class="ti ti-history"></i> 사용예정일 경과로 자동 해제됨 (${esc(h.releasedDate || '')})</div>` : ''}
         ${h.note ? `<div style="font-size:12px;color:var(--t3);margin-top:6px">${esc(h.note)}</div>` : ''}
         ${rel ? `<div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-sm" style="flex:1" onclick="restoreHold('${h.id}')"><i class="ti ti-refresh"></i>복원</button>${isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="delHold('${h.id}')"><i class="ti ti-trash"></i>영구삭제</button>` : ''}</div>` : (conf ? `<div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-sm" style="flex:1" onclick="openHoldForm('${h.id}')"><i class="ti ti-edit"></i>수정</button>${isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="delHold('${h.id}')"><i class="ti ti-trash"></i>삭제</button>` : ''}</div>` : (plan ? `
         <div style="display:flex;gap:8px;margin-top:10px">
