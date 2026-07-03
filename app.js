@@ -1663,7 +1663,7 @@ function printShipSlip(key) {
   const dayKeys = [...new Set(state.transactions.filter(t => t.type === 'out' && (t.date || '') === (g.date || '')).map(t => t.shipId || t.id))].sort();
   const seq = Math.max(1, dayKeys.indexOf(key) + 1);
   const docNo = (g.date || '').replace(/-/g, '') + '-' + seq;
-  const route = (g.note && g.note.trim()) ? e(g.note) : ((g.dest || '') ? '다우세라믹 상차 →<br>' + e(g.dest) + ' 하차' : '');
+  const route = (g.dest || '') ? '다우세라믹 상차 →<br>' + e(g.dest) + ' 하차' : '';
   // 출고 확인 도장 (가운데에 출고일자)
   const stamp = `<svg viewBox="0 0 200 200" width="150" height="150" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
     <defs><path id="arcTop" d="M 30,100 A 70,70 0 0 1 170,100"/></defs>
@@ -1747,7 +1747,7 @@ function printShipSlip(key) {
     <tfoot><tr><td class="c" colspan="4">합 계</td><td class="r">${totHebe.toFixed(2)}</td><td class="r">${totJang}</td><td></td></tr></tfoot>
   </table>
   <div class="bottom">
-    <table class="who"><tr><td class="wk">담당자</td><td>${e(g.by)}</td></tr></table>
+    <table class="who"><tr><td class="wk">담당자</td><td>${e(g.by)}</td></tr>${(g.note && g.note.trim()) ? `<tr><td class="wk">메모</td><td style="white-space:pre-wrap">${e(g.note)}</td></tr>` : ''}</table>
     <div class="stamp">${stamp}</div>
   </div>
 </body></html>`;
