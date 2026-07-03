@@ -1909,11 +1909,11 @@ function holdCardHtml(h) {
   const cls = conf ? 'p-done' : (d != null && d >= 0 && d <= 3 ? 'p-wait' : 'p-hold');
   return `<div class="card" style="margin-bottom:11px;${conf ? 'opacity:.92' : ''}">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-          <div><div style="font-size:15px;font-weight:700">${esc(h.vendor || '-')}</div><div style="font-size:12.5px;color:var(--t2);margin-top:2px">${holdItems(h).map(it => esc(it.materialName)).filter(Boolean).join(', ')}</div>${h.forSiteName ? `<div style="margin-top:5px"><span class="pill p-hold"><i class="ti ti-building-community"></i>${esc(h.forSiteName)}</span></div>` : ''}</div>
+          <div><div style="font-size:14px;font-weight:600;color:var(--t2)"><i class="ti ti-briefcase" style="font-size:13px"></i> ${esc(h.vendor || '-')}</div>${h.forSiteName ? `<div style="margin-top:5px"><span class="pill p-hold"><i class="ti ti-building-community"></i>${esc(h.forSiteName)}</span></div>` : ''}</div>
           ${rel ? `<span class="pill p-gray"><i class="ti ti-lock-open"></i>해제됨</span>` : (conf ? `<span class="pill p-done"><i class="ti ti-circle-check"></i>확정</span>` : (plan ? `<span class="pill p-wait"><i class="ti ti-clock-pause"></i>예정 · 입고대기</span>` : `<span class="pill ${cls}"><i class="ti ti-calendar"></i>${h.useDate || '미정'}${d != null && d >= 0 && d <= 7 ? ' · D-' + d : ''}</span>`))}
         </div>
-        <div style="font-size:13px;margin-bottom:4px">
-          ${holdItems(h).map(it => `<div style="color:var(--t2)">${esc(it.materialName || '-')} · <b style="color:var(--t1)">${+it.jang || 0}장</b>${it.hebe ? ` (${(+it.hebe).toFixed(1)}㎡)` : ''}${it.lot ? ` · 롯트 ${esc(it.lot)}` : ''}${it.pattern ? ` · 패턴 ${esc(it.pattern)}` : ''}</div>`).join('')}
+        <div style="margin:6px 0 4px">
+          ${holdItems(h).map(it => `<div style="margin-bottom:3px"><span style="font-size:15px;font-weight:700;color:var(--t1)">${esc(it.materialName || '-')}</span> <span style="color:var(--t2);font-size:12.5px">· ${+it.jang || 0}장${it.hebe ? ` (${(+it.hebe).toFixed(1)}㎡)` : ''}${it.lot ? ` · 롯트 ${esc(it.lot)}` : ''}${it.pattern ? ` · 패턴 ${esc(it.pattern)}` : ''}</span></div>`).join('')}
         </div>
         ${conf ? `<div style="font-size:12px;color:var(--lime-t);margin-top:4px"><i class="ti ti-truck-delivery"></i> 출고 완료 ${esc(h.shippedDate || '')} · ${+h.shippedJang || 0}장</div>` : ''}
         ${plan ? `<div style="font-size:12px;color:var(--amber-t);margin-top:4px"><i class="ti ti-clock-pause"></i> 입고되면 자동으로 홀딩으로 전환됩니다</div>` : ''}
@@ -1946,14 +1946,48 @@ function holdGroupedHtml(list, keyFn, icon) {
   if (!keys.length) return `<div class="empty"><i class="ti ti-lock-off"></i>해당하는 홀딩이 없습니다</div>`;
   return keys.map(k => `<div class="sec-label" style="margin-top:8px"><i class="ti ${icon}"></i> ${esc(k)} <span style="color:var(--t3);font-weight:500">· ${map.get(k).length}건</span></div>${map.get(k).map(holdCardHtml).join('')}`).join('');
 }
-/* 홀딩 목록 본문만 계산 (검색 시 이 부분만 갱신 → 입력 포커스 유지) */
-function holdBodyHtml() {
+/* 현재 검색/보관 필터가 적용된 홀딩 목록 (기한 임박순) */
+function holdFilteredList() {
   const isResv = h => (h.status || '홀딩') === '홀딩';
-  const list = state.holdings.filter(h => (filters.holdArchive ? true : h.status !== '해제') && holdMatchesSearch(h)).sort((a, b) => {
+  return state.holdings.filter(h => (filters.holdArchive ? true : h.status !== '해제') && holdMatchesSearch(h)).sort((a, b) => {
     const ra = isResv(a) ? 0 : 1, rb = isResv(b) ? 0 : 1;
     if (ra !== rb) return ra - rb;
     return (a.useDate || '9999-99-99').localeCompare(b.useDate || '9999-99-99'); // 기한 임박순
   });
+}
+function holdStatusText(h) { const s = h.status || '홀딩'; return s === '확정' ? '출고완료' : s; }
+/* 홀딩 목록 → 엑셀(.xls) 다운로드. 업체별로 묶어 한눈에 */
+function downloadHoldXls() {
+  const list = holdFilteredList().slice().sort((a, b) => (a.vendor || '').localeCompare(b.vendor || '') || (a.useDate || '9999-99-99').localeCompare(b.useDate || '9999-99-99'));
+  const rows = [];
+  list.forEach(h => holdItems(h).forEach(it => rows.push({ vendor: h.vendor || '', mat: it.materialName || '', jang: +it.jang || 0, hebe: +it.hebe || 0, lot: it.lot || '', pattern: it.pattern || '', useDate: h.useDate || '', site: h.forSiteName || '', status: holdStatusText(h) })));
+  if (!rows.length) { toast('내보낼 홀딩이 없습니다'); return; }
+  const tj = rows.reduce((a, b) => a + b.jang, 0), th = rows.reduce((a, b) => a + b.hebe, 0);
+  const TH = (t, w) => `<th style="background:#0F6E56;color:#fff;font-weight:bold;border:0.5pt solid #0a4f3e;padding:7px 10px;text-align:center" ${w ? 'width="' + w + '"' : ''}>${t}</th>`;
+  const TD = (t, st) => `<td style="border:0.5pt solid #cfd8d4;padding:5px 10px;${st || ''}">${t}</td>`;
+  const body = rows.map((r, i) => {
+    const bg = i % 2 ? 'background:#f3f6f4;' : '';
+    return `<tr>${TD(esc(r.vendor), bg)}${TD('<b>' + esc(r.mat) + '</b>', bg)}${TD(r.jang, bg + 'text-align:right')}${TD(r.hebe.toFixed(2), bg + 'text-align:right')}${TD(esc(r.lot), bg)}${TD(esc(r.pattern), bg)}${TD(esc(r.useDate), bg)}${TD(esc(r.site), bg)}${TD(esc(r.status), bg)}</tr>`;
+  }).join('');
+  const sumStyle = 'border:0.5pt solid #cfd8d4;background:#e1f5ee;color:#0a4f3e;font-weight:bold;padding:7px 10px';
+  const scope = (filters.holdSearch || '').trim() ? `검색 "${esc(filters.holdSearch.trim())}"` : (filters.holdArchive ? '전체(지난·해제 포함)' : '진행중');
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>홀딩내역</x:Name><x:WorksheetOptions><x:FreezePanes/><x:SplitHorizontal>3</x:SplitHorizontal><x:TopRowBottomPane>3</x:TopRowBottomPane></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body>
+<table style="border-collapse:collapse;font-family:'맑은 고딕','Malgun Gothic',sans-serif;font-size:10.5pt">
+<tr><td colspan="9" style="font-size:16pt;font-weight:bold;color:#0F6E56;padding:8px 4px 2px">다우세라믹앤석재 · 자재 홀딩 내역</td></tr>
+<tr><td colspan="9" style="font-size:9pt;color:#777;padding:0 4px 10px">범위 ${scope}  ·  생성일 ${todayStr()}  ·  총 ${rows.length}건</td></tr>
+<tr>${TH('업체', 130)}${TH('자재명', 160)}${TH('장수', 60)}${TH('헤베(㎡)', 80)}${TH('롯트', 110)}${TH('패턴', 100)}${TH('사용예정일', 100)}${TH('현장', 130)}${TH('상태', 80)}</tr>
+${body}
+<tr><td colspan="2" style="${sumStyle};text-align:right">합계</td><td style="${sumStyle};text-align:right">${tj}</td><td style="${sumStyle};text-align:right">${th.toFixed(2)}</td><td colspan="5" style="${sumStyle}"></td></tr>
+</table></body></html>`;
+  const blob = new Blob(['﻿' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = '홀딩내역_' + todayStr() + '.xls'; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
+  toast('홀딩 엑셀 다운로드 (' + rows.length + '건)');
+}
+/* 홀딩 목록 본문만 계산 (검색 시 이 부분만 갱신 → 입력 포커스 유지) */
+function holdBodyHtml() {
+  const list = holdFilteredList();
   const g = filters.holdGroup || 'none';
   if (!list.length) return `<div class="empty"><i class="ti ti-lock-off"></i>${(filters.holdSearch || '').trim() ? '검색 결과가 없습니다' : '홀딩이 없습니다'}</div>`;
   if (g === 'material') return holdGroupedHtml(list, h => { const ms = holdItems(h).map(it => it.materialName || '(자재 미지정)'); return ms.length ? [...new Set(ms)] : ['(자재 미지정)']; }, 'ti-box');
@@ -1993,7 +2027,10 @@ function renderHold() {
       <input id="hold-search" placeholder="업체명·자재명 검색" value="${esc(filters.holdSearch || '')}" oninput="filterHold()" autocomplete="off">
       <button class="search-x" id="hold-search-x" style="${(filters.holdSearch || '').trim() ? '' : 'display:none'}" onclick="clearHoldSearch()"><i class="ti ti-x"></i></button>
     </div>
-    <div class="chips">${gchip('none', '전체', 'ti-list')}${gchip('material', '자재별', 'ti-box')}${gchip('vendor', '업체별', 'ti-briefcase')}</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:2px">
+      <div class="chips" style="margin:0">${gchip('none', '전체', 'ti-list')}${gchip('material', '자재별', 'ti-box')}${gchip('vendor', '업체별', 'ti-briefcase')}</div>
+      <button class="btn btn-sm" style="flex:none" onclick="downloadHoldXls()"><i class="ti ti-file-spreadsheet"></i>엑셀</button>
+    </div>
     <button class="btn btn-block" style="margin-bottom:10px" onclick="filters.holdArchive=!filters.holdArchive;renderHold()"><i class="ti ti-history"></i>${filters.holdArchive ? '지난·해제 내역 숨기기' : '지난·해제 내역 보기'}${released.length ? ' (' + released.length + '건)' : ''}</button>
     <div id="hold-body">${holdBodyHtml()}</div>`;
 }
