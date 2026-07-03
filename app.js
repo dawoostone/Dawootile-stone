@@ -1663,7 +1663,18 @@ function printShipSlip(key) {
   const dayKeys = [...new Set(state.transactions.filter(t => t.type === 'out' && (t.date || '') === (g.date || '')).map(t => t.shipId || t.id))].sort();
   const seq = Math.max(1, dayKeys.indexOf(key) + 1);
   const docNo = (g.date || '').replace(/-/g, '') + '-' + seq;
-  const route = (g.note && g.note.trim()) ? e(g.note) : ((g.dest || '') ? '다우세라믹 상차 → ' + e(g.dest) + ' 하차' : '');
+  const route = (g.note && g.note.trim()) ? e(g.note) : ((g.dest || '') ? '다우세라믹 상차 →<br>' + e(g.dest) + ' 하차' : '');
+  // 출고 확인 도장 (가운데에 출고일자)
+  const stamp = `<svg viewBox="0 0 200 200" width="150" height="150" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <defs><path id="arcTop" d="M 30,100 A 70,70 0 0 1 170,100"/></defs>
+    <circle cx="100" cy="100" r="94" fill="none" stroke="#111" stroke-width="4"/>
+    <text font-size="15" font-weight="700" fill="#111" letter-spacing="1"><textPath xlink:href="#arcTop" href="#arcTop" startOffset="50%" text-anchor="middle">주식회사 다우세라믹앤석재</textPath></text>
+    <text x="100" y="68" text-anchor="middle" font-size="30" font-weight="800" fill="#111">출고</text>
+    <line x1="32" y1="84" x2="168" y2="84" stroke="#111" stroke-width="3"/>
+    <text x="100" y="110" text-anchor="middle" font-size="17" font-weight="700" fill="#111">${e(g.date)}</text>
+    <line x1="32" y1="122" x2="168" y2="122" stroke="#111" stroke-width="3"/>
+    <text x="100" y="152" text-anchor="middle" font-size="30" font-weight="800" fill="#111">확인</text>
+  </svg>`;
   const MINROWS = 8;
   let rows = items.map((t, i) => `<tr>
       <td class="c">${i + 1}</td>
@@ -1686,12 +1697,13 @@ function printShipSlip(key) {
   .doc .dl{border-bottom:1px solid #444;padding:9px 6px;letter-spacing:4px;font-size:13px;font-weight:600}
   .doc .dv{padding:9px 6px;font-size:13.5px}
   .title{text-align:center;font-size:30px;font-weight:800;letter-spacing:16px}
-  .issue{text-align:center;font-size:14px}
-  .issue .ik{letter-spacing:4px;font-weight:600;margin-right:20px}
+  .issue{text-align:center;font-size:13px}
+  .issue .ik{letter-spacing:3px;font-weight:600}
+  .issue .iv{font-size:14px;font-weight:600;margin-top:5px;white-space:nowrap}
   .conm{text-align:center;font-size:18px;font-weight:800}
   .recip{text-align:center;vertical-align:middle}
   .recip .rn{font-size:24px;font-weight:800}
-  .recip .rt{font-size:16px;font-weight:600;margin-top:30px}
+  .recip .rt{font-size:15px;font-weight:600;margin-top:22px;word-break:keep-all;line-height:1.55}
   .ck{text-align:center;font-weight:700;background:#f4f4f4;white-space:nowrap}
   .cv{font-size:13.5px}
   .cv .tel{font-size:12px;color:#333}
@@ -1701,9 +1713,11 @@ function printShipSlip(key) {
   .items td{border:1px solid #444;padding:7px 6px;font-size:13px;height:31px}
   .items td.c{text-align:center}.items td.r{text-align:right;padding-right:9px}.items td.l{text-align:left;padding-left:9px}
   .items tfoot td{font-weight:800;background:#faf7ee}
-  .who{table-layout:fixed;margin-top:12px}
-  .who td{border:1px solid #444;padding:8px 10px;font-size:13px}
+  .bottom{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-top:12px}
+  .who{table-layout:fixed;flex:1}
+  .who td{border:1px solid #444;padding:10px 10px;font-size:13px}
   .who .wk{text-align:center;font-weight:700;background:#f4f4f4;width:16%}
+  .stamp{flex:none;width:150px;height:150px}
   @media print{body{padding:8px 10px}}
 </style></head><body>
   <table class="top">
@@ -1713,7 +1727,7 @@ function printShipSlip(key) {
       <td class="title" colspan="2">출 고 표</td>
     </tr>
     <tr>
-      <td class="issue"><span class="ik">발 행 일 자</span>${e(g.date)}</td>
+      <td class="issue"><div class="ik">발 행 일 자</div><div class="iv">${e(g.date)}</div></td>
       <td class="conm" colspan="2">${DAWOO_CO.name}</td>
     </tr>
     <tr>
@@ -1732,9 +1746,10 @@ function printShipSlip(key) {
     <tbody>${rows}</tbody>
     <tfoot><tr><td class="c" colspan="4">합 계</td><td class="r">${totHebe.toFixed(2)}</td><td class="r">${totJang}</td><td></td></tr></tfoot>
   </table>
-  <table class="who">
-    <tr><td class="wk">담당자</td><td>${e(g.by)}</td></tr>
-  </table>
+  <div class="bottom">
+    <table class="who"><tr><td class="wk">담당자</td><td>${e(g.by)}</td></tr></table>
+    <div class="stamp">${stamp}</div>
+  </div>
 </body></html>`;
   const w = window.open('', '_blank');
   if (!w) { toast('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요'); return; }
