@@ -2110,7 +2110,20 @@ async function submitHold(id) {
   toast(status === '예정' ? '예정홀딩으로 등록 — 입고되면 자동 전환' : (id ? '저장됨' : '홀딩 등록 완료')); closeModal();
 }
 async function releaseHold(id) { if (!confirm('홀딩을 해제할까요? (기록은 남고 목록에서만 빠집니다 — 지난·해제 내역 보기에서 다시 볼 수 있음)')) return; await Store.update('holdings', id, { status: '해제' }); toast('홀딩 해제됨'); }
-async function restoreHold(id) { await Store.update('holdings', id, { status: '홀딩' }); toast('홀딩으로 복원됨'); }
+/* 특정 자재의 가용 장수(이 홀딩 제외, 활성 '홀딩'만 차감) */
+function holdAvailExcl(mat, excludeId) {
+  const it = state.inventory.find(i => _normName(i.name) === _normName(mat)); const phys = it ? +it.jang || 0 : 0;
+  let held = 0;
+  state.holdings.forEach(h => { if (h.id === excludeId) return; if ((h.status || '홀딩') !== '홀딩') return; holdItems(h).forEach(x => { if (_normName(x.materialName) === _normName(mat)) held += (+x.jang || 0); }); });
+  return phys - held;
+}
+function holdFitsStock(h) { return holdItems(h).every(it => holdAvailExcl(it.materialName, h.id) >= (+it.jang || 0)); }
+async function restoreHold(id) {
+  const h = state.holdings.find(x => x.id === id); if (!h) return;
+  const status = holdFitsStock(h) ? '홀딩' : '예정';   // 재고 부족하면 예정홀딩으로 복원
+  await Store.update('holdings', id, { status, releasedAuto: false, releasedDate: '' });
+  toast(status === '예정' ? '재고 부족 — 예정홀딩으로 복원 (입고 시 자동 전환)' : '홀딩으로 복원됨');
+}
 async function delHold(id) {
   if (!isAdmin()) { toast('관리자만 삭제할 수 있습니다'); return; }
   const h = state.holdings.find(x => x.id === id); if (!h) return;
