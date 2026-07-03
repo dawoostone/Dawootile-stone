@@ -1663,7 +1663,7 @@ function printShipSlip(key) {
   const dayKeys = [...new Set(state.transactions.filter(t => t.type === 'out' && (t.date || '') === (g.date || '')).map(t => t.shipId || t.id))].sort();
   const seq = Math.max(1, dayKeys.indexOf(key) + 1);
   const docNo = (g.date || '').replace(/-/g, '') + '-' + seq;
-  const route = (g.note && g.note.trim()) ? e(g.note) : ((g.dest || '') ? e(g.dest) + ' 상차 → ' + e(g.targetName || '') + ' 하차' : '');
+  const route = (g.note && g.note.trim()) ? e(g.note) : ((g.dest || '') ? '다우세라믹 상차 → ' + e(g.dest) + ' 하차' : '');
   const MINROWS = 8;
   let rows = items.map((t, i) => `<tr>
       <td class="c">${i + 1}</td>
