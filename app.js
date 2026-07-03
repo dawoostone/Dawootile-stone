@@ -1733,7 +1733,7 @@ function printShipSlip(key) {
     <tfoot><tr><td class="c" colspan="4">합 계</td><td class="r">${totHebe.toFixed(2)}</td><td class="r">${totJang}</td><td></td></tr></tfoot>
   </table>
   <table class="who">
-    <tr><td class="wk">담당자</td><td>${e(g.manager)}</td><td class="wk">출고 담당자</td><td>${e(g.by)}</td></tr>
+    <tr><td class="wk">담당자</td><td>${e(g.by)}</td></tr>
   </table>
 </body></html>`;
   const w = window.open('', '_blank');
@@ -1749,7 +1749,6 @@ function openShipForm(pre) {
       <div class="fld full"><label>업체명<span class="req">*</span></label>${searchBox('o-targetName', '업체명 검색·입력', '', 'companyNames', '')}</div>
       <div class="fld full"><label>출고 자재 / 장수 / 롯트 / 패턴<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(여러 자재는 '자재 추가')</span></label>${matRowsHtml(pre && pre.items && pre.items.length ? pre.items : (pre && pre.material ? [{ name: pre.material, qty: pre.jang, lot: pre.lot, pattern: pre.pattern }] : [{}]), '장수')}</div>
       <div class="fld"><label>출고일<span class="req">*</span></label><input type="date" id="o-date" value="${todayStr()}"></div>
-      <div class="fld"><label>담당자 <span style="color:var(--t3);font-weight:500">(현장/거래)</span></label><input id="o-manager" value="${esc((pre && pre.manager) || '')}" placeholder="담당자" autocomplete="off"></div>
       <div class="fld full"><label>출고지(공장/현장)<span class="req">*</span></label>
         <select id="o-dest" onchange="onShipDest()">
           <option value="">선택…</option>
@@ -1819,7 +1818,6 @@ async function submitShip() {
   try {
     const shipId = 'S' + Date.now();
     const note = el('o-note').value.trim();
-    const manager = el('o-manager') ? el('o-manager').value.trim() : '';
     let totalJang = 0; const zeroed = [];
     for (const r of rows) {
       const material = r.name, jang = r.qty;
@@ -1828,7 +1826,7 @@ async function submitShip() {
       const newJang = Math.max(0, oldJang - jang);
       const hebe = it ? +(jang * (+it.hebePerJang || 0)).toFixed(2) : 0;
       if (it) await Store.update('inventory', it.id, { jang: newJang });
-      await Store.add('transactions', { type: 'out', shipId, itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot: r.lot, pattern: r.pattern, dest, factory: dest, target: '', targetName, date, note, manager, by: me.name });
+      await Store.add('transactions', { type: 'out', shipId, itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot: r.lot, pattern: r.pattern, dest, factory: dest, target: '', targetName, date, note, by: me.name });
       totalJang += jang;
       if (it && oldJang > 0 && newJang <= 0) zeroed.push(material);
     }
