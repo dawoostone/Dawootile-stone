@@ -1031,7 +1031,7 @@ function holdFromSite(id) {
   const s = state.sites.find(x => x.id === id); if (!s) return;
   const existing = state.holdings.find(h => h.status !== '해제' && (h.forSiteId === id || (s.name && h.forSiteName === s.name)));
   if (existing) { toast(`이미 홀딩이 연결된 현장입니다 (${existing.status || '홀딩'}) — 중복 방지`); return; }
-  openHoldForm(null, { forSiteId: id, items: siteItems(s).map(it => ({ materialName: it.name, jang: it.qty, lot: it.lot })), useDate: s.constructDate });
+  openHoldForm(null, { forSiteId: id, vendor: s.client || '', items: siteItems(s).map(it => ({ materialName: it.name, jang: it.qty, lot: it.lot })), useDate: s.constructDate });
 }
 async function advanceStage(id, stage) {
   const s = state.sites.find(x => x.id === id); if (!s) return;
@@ -1845,7 +1845,7 @@ async function submitShip() {
       totalJang += jang;
       if (it && oldJang > 0 && newJang <= 0) zeroed.push(material);
     }
-    if (_holdConfirm) { await Store.update('holdings', _holdConfirm, { status: '확정', shippedDate: date, shippedJang: totalJang }); _holdConfirm = null; }
+    if (_holdConfirm) { await Store.update('holdings', _holdConfirm, { status: '확정', shippedDate: date, shippedJang: totalJang, confirmShipId: shipId }); _holdConfirm = null; }
     for (const nm of zeroed) notifyStockOut(nm);   // 재고 소진 → 즉시 푸시
     toast(`출고 완료 · ${rows.length}개 자재 · ${totalJang}장`); closeModal();
   } finally { _busy = false; }
@@ -1857,7 +1857,16 @@ async function delShip(id) {
   if (!confirm(`이 출고를 삭제할까요?\n${t.itemName} ${t.jang}장 · ${t.date}\n재고 연동분은 자동 복구됩니다.`)) return;
   if (t.itemId) { const it = state.inventory.find(i => i.id === t.itemId); if (it) await Store.update('inventory', it.id, { jang: (+it.jang || 0) + (+t.jang || 0) }); }
   await Store.remove('transactions', id);
+  const key = t.shipId || t.id;
+  // 같은 출고건이 더 없으면, 이 출고로 '확정'된 홀딩을 홀딩 상태로 되돌림(출고완료 해제)
+  if (!state.transactions.some(x => x.id !== id && x.type === 'out' && (x.shipId || x.id) === key)) await revertHoldsForShip(key);
   toast('출고 삭제됨 (재고 복구)');
+}
+/* 이 출고(shipId)로 확정됐던 홀딩을 되돌림 — 출고완료 해제 → 홀딩 */
+async function revertHoldsForShip(key) {
+  for (const h of state.holdings.filter(h => h.confirmShipId === key)) {
+    await Store.update('holdings', h.id, { status: '홀딩', shippedDate: '', shippedJang: 0, confirmShipId: '' });
+  }
 }
 /* 출고 묶음 삭제 (관리자) — 같은 shipId 전체 복구 */
 async function delShipGroup(key) {
@@ -1869,6 +1878,7 @@ async function delShipGroup(key) {
     if (t.itemId) { const it = state.inventory.find(i => i.id === t.itemId); if (it) await Store.update('inventory', it.id, { jang: (+it.jang || 0) + (+t.jang || 0) }); }
     await Store.remove('transactions', t.id);
   }
+  await revertHoldsForShip(key); // 출고완료됐던 홀딩 되돌리기
   toast(`출고 ${list.length}건 삭제됨 (재고 복구)`);
 }
 /* 입고 삭제 (관리자) — 오입고 정정: 재고에서 그만큼 차감(되돌림) */
@@ -2040,6 +2050,7 @@ function pickHoldSite() {
   const box = el('mat-rows');
   if (box) { box.innerHTML = ''; const its = siteItems(s); (its.length ? its : [{}]).forEach(it => addMaterialRow({ name: it.name, qty: it.qty, lot: it.lot }, '장수')); }
   if (s.constructDate && !el('h-useDate').value) el('h-useDate').value = s.constructDate;
+  if (el('h-vendor') && s.client) el('h-vendor').value = s.client; // 업체(거래처) 자동 채움
   toast('현장 정보를 불러왔습니다');
 }
 async function submitHold(id) {
@@ -2080,7 +2091,7 @@ function holdToSite(id) {
 function holdToShip(id) {
   const h = state.holdings.find(x => x.id === id); if (!h) return;
   _holdConfirm = id;
-  openShipForm({ items: holdItems(h).map(it => ({ name: it.materialName, qty: it.jang, lot: it.lot, pattern: it.pattern })), targetName: h.forSiteName || h.vendor || '' });
+  openShipForm({ items: holdItems(h).map(it => ({ name: it.materialName, qty: it.jang, lot: it.lot, pattern: it.pattern })), targetName: h.vendor || h.forSiteName || '' });
 }
 
 /* ===================================================================
