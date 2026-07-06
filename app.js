@@ -749,11 +749,17 @@ async function autoReleaseHolds() {
 }
 /* 활성 홀딩 목록 (현장/출고에서 골라쓰기용) */
 function activeHoldings() { return state.holdings.filter(h => (h.status || '홀딩') === '홀딩'); }
+/* 현장에서 불러올 수 있는 홀딩 (진행 홀딩 + 예정홀딩) */
+function holdingsForSite() { return state.holdings.filter(h => ['홀딩', '예정'].includes(h.status || '홀딩')); }
 function holdingOptions() {
-  const list = activeHoldings();
+  const list = holdingsForSite();
   if (!list.length) return '';
-  return list.sort((a, b) => (a.useDate || '').localeCompare(b.useDate || '')).map(h =>
-    `<option value="${esc(h.id)}">${esc(h.vendor || '')} · ${esc(h.materialName || '')} · ${+h.jang || 0}장${h.useDate ? ' · ' + esc(h.useDate) : ''}</option>`).join('');
+  return list.sort((a, b) => {
+    const pa = a.status === '예정' ? 1 : 0, pb = b.status === '예정' ? 1 : 0;   // 진행 홀딩 먼저, 예정은 뒤
+    if (pa !== pb) return pa - pb;
+    return (a.useDate || '').localeCompare(b.useDate || '');
+  }).map(h =>
+    `<option value="${esc(h.id)}">${h.status === '예정' ? '[예정] ' : ''}${esc(h.vendor || '')} · ${esc(h.materialName || '')} · ${+h.jang || 0}장${h.useDate ? ' · ' + esc(h.useDate) : ''}</option>`).join('');
 }
 /* 현장 목록 옵션 (홀딩에서 골라쓰기용) */
 function siteOptions(sel) {
@@ -1132,7 +1138,7 @@ function openSiteForm(id, pre) {
         </div>
       </div>
       <div class="fld"><label>진행 단계</label><select id="s-stage">${SITE_STAGES.map(st => `<option ${(v.stage || '접수') === st ? 'selected' : ''}>${st}</option>`).join('')}</select></div>
-      ${activeHoldings().length ? `<div class="fld full"><label><i class="ti ti-lock" style="font-size:13px;color:var(--blue)"></i> 홀딩에서 불러오기 <span style="color:var(--t3);font-weight:500">(선택 — 없으면 아래에 직접 입력)</span></label><select id="s-hold" onchange="pickSiteHolding()"><option value="">— 직접 입력 —</option>${holdingOptions()}</select></div>` : ''}
+      ${holdingsForSite().length ? `<div class="fld full"><label><i class="ti ti-lock" style="font-size:13px;color:var(--blue)"></i> 홀딩에서 불러오기 <span style="color:var(--t3);font-weight:500">(진행·예정홀딩 · 선택 — 없으면 아래에 직접 입력)</span></label><select id="s-hold" onchange="pickSiteHolding()"><option value="">— 직접 입력 —</option>${holdingOptions()}</select></div>` : ''}
       <div class="fld full"><label>자재 / 수량 / 롯트<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(여러 종류면 '자재 추가')</span></label>${matRowsHtml(siteItems(v), '수량')}</div>
       <div class="fld"><label>실측일 <span id="s-measure-lbl" style="color:var(--t3)">${v.orderType === '도면' ? '(도면발주·생략)' : ''}</span></label><input type="date" id="s-measureDate" value="${esc(v.measureDate || '')}" ${v.orderType === '도면' ? 'disabled' : ''}></div>
       <div class="fld"><label>시공일<span class="req">*</span></label><input type="date" id="s-constructDate" value="${esc(v.constructDate || '')}"></div>
