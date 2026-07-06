@@ -86,7 +86,7 @@ if (bc) bc.onmessage = (e) => { const c = e.data; if (Store._watchers[c]) Store.
 const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [], issues: [] };
 let me = null;          // 로그인한 사용자
 let tab = 'home';
-let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all', holdArchive: false, holdSearch: '', holdGroup: 'none', custSearch: '', shipSearch: '' };
+let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all', holdArchive: false, holdDone: false, holdSearch: '', holdGroup: 'none', custSearch: '', shipSearch: '' };
 let _holdLinkSite = null;   // 현장 저장 시 이 홀딩을 현장에 '연결'(소진 아님)
 let _holdConfirm = null;    // 출고 저장 시 이 홀딩을 '확정' 처리
 let _busy = false;          // 등록 버튼 연속 클릭(중복 저장) 방지
@@ -2081,10 +2081,16 @@ function holdGroupedHtml(list, keyFn, icon) {
   if (!keys.length) return `<div class="empty"><i class="ti ti-lock-off"></i>해당하는 홀딩이 없습니다</div>`;
   return keys.map(k => `<div class="sec-label" style="margin-top:8px"><i class="ti ${icon}"></i> ${esc(k)} <span style="color:var(--t3);font-weight:500">· ${map.get(k).length}건</span></div>${map.get(k).map(holdCardHtml).join('')}`).join('');
 }
-/* 현재 검색/보관 필터가 적용된 홀딩 목록 (기한 임박순) */
+/* 홀딩 화면 보기 전환: 'active'(진행+예정) / 'done'(출고완료) / 'released'(지난·해제) */
+function goHoldView(v) { filters.holdDone = (v === 'done'); filters.holdArchive = (v === 'released'); renderHold(); }
+/* 현재 보기/검색이 적용된 홀딩 목록 (기한 임박순). 기본은 출고완료·해제 제외 */
 function holdFilteredList() {
   const isResv = h => (h.status || '홀딩') === '홀딩';
-  return state.holdings.filter(h => (filters.holdArchive ? true : h.status !== '해제') && holdMatchesSearch(h)).sort((a, b) => {
+  let base;
+  if (filters.holdArchive) base = state.holdings.filter(h => h.status === '해제');
+  else if (filters.holdDone) base = state.holdings.filter(h => h.status === '확정');
+  else base = state.holdings.filter(h => !['해제', '확정'].includes(h.status));   // 진행 홀딩 + 예정홀딩
+  return base.filter(holdMatchesSearch).sort((a, b) => {
     const ra = isResv(a) ? 0 : 1, rb = isResv(b) ? 0 : 1;
     if (ra !== rb) return ra - rb;
     return (a.useDate || '9999-99-99').localeCompare(b.useDate || '9999-99-99'); // 기한 임박순
@@ -2105,7 +2111,7 @@ function downloadHoldXls() {
     return `<tr>${TD(esc(r.vendor), bg)}${TD('<b>' + esc(r.mat) + '</b>', bg)}${TD(r.jang, bg + 'text-align:right')}${TD(r.hebe.toFixed(2), bg + 'text-align:right')}${TD(esc(r.lot), bg)}${TD(esc(r.pattern), bg)}${TD(esc(r.useDate), bg)}${TD(esc(r.site), bg)}${TD(esc(r.status), bg)}</tr>`;
   }).join('');
   const sumStyle = 'border:0.5pt solid #cfd8d4;background:#e1f5ee;color:#0a4f3e;font-weight:bold;padding:7px 10px';
-  const scope = (filters.holdSearch || '').trim() ? `검색 "${esc(filters.holdSearch.trim())}"` : (filters.holdArchive ? '전체(지난·해제 포함)' : '진행중');
+  const scope = (filters.holdSearch || '').trim() ? `검색 "${esc(filters.holdSearch.trim())}"` : (filters.holdArchive ? '지난·해제' : (filters.holdDone ? '출고완료' : '진행중'));
   const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>홀딩내역</x:Name><x:WorksheetOptions><x:FreezePanes/><x:SplitHorizontal>3</x:SplitHorizontal><x:TopRowBottomPane>3</x:TopRowBottomPane></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body>
 <table style="border-collapse:collapse;font-family:'맑은 고딕','Malgun Gothic',sans-serif;font-size:10.5pt">
 <tr><td colspan="9" style="font-size:16pt;font-weight:bold;color:#0F6E56;padding:8px 4px 2px">다우세라믹앤석재 · 자재 홀딩 내역</td></tr>
@@ -2148,14 +2154,23 @@ function renderHold() {
   const confirmed = active.filter(h => h.status === '확정');
   const soon = reserved.filter(h => { const d = daysFromNow(h.useDate); return d != null && d >= 0 && d <= 3; });
   const g = filters.holdGroup || 'none';
+  const view = filters.holdArchive ? 'released' : (filters.holdDone ? 'done' : 'active');
   const gchip = (v, label, ic) => `<button class="chip ${g === v ? 'active' : ''}" onclick="filters.holdGroup='${v}';renderHold()"><i class="ti ${ic}"></i> ${label}</button>`;
+  const viewBanner = view === 'done' ? `<div class="banner info" style="margin-bottom:10px"><i class="ti ti-circle-check"></i> <b>출고완료</b> 홀딩 내역입니다. 위 '진행 홀딩으로'를 누르면 돌아갑니다.</div>`
+    : (view === 'released' ? `<div class="banner info" style="margin-bottom:10px"><i class="ti ti-history"></i> <b>지난·해제</b> 홀딩 내역입니다.</div>` : '');
+  const viewBtns = view !== 'active'
+    ? `<button class="btn btn-block" style="margin-bottom:10px" onclick="goHoldView('active')"><i class="ti ti-arrow-left"></i>진행 홀딩으로 돌아가기</button>`
+    : `<div style="display:flex;gap:8px;margin-bottom:10px">
+        <button class="btn" style="flex:1" onclick="goHoldView('done')"><i class="ti ti-circle-check"></i>출고완료 내역${confirmed.length ? ' (' + confirmed.length + ')' : ''}</button>
+        <button class="btn" style="flex:1" onclick="goHoldView('released')"><i class="ti ti-history"></i>지난·해제${released.length ? ' (' + released.length + ')' : ''}</button>
+      </div>`;
   el('pg-hold').innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-lock"></i>자재 홀딩</h2><p>예약 → 출고 시 '확정' · 재고 부족 시 예정홀딩</p></div>
       <button class="btn btn-pri btn-sm" onclick="openHoldForm()"><i class="ti ti-plus"></i>홀딩 등록</button></div>
     <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
-      <div class="stat"><div class="ic b"><i class="ti ti-lock"></i></div><div class="v">${reserved.length}</div><div class="l">홀딩 중</div><div class="s">임박 ${soon.length}</div></div>
-      <div class="stat"><div class="ic a"><i class="ti ti-clock-pause"></i></div><div class="v" style="color:${planned.length ? 'var(--amber-t)' : 'inherit'}">${planned.length}</div><div class="l">예정홀딩</div><div class="s">입고 대기</div></div>
-      <div class="stat"><div class="ic g"><i class="ti ti-circle-check"></i></div><div class="v">${confirmed.length}</div><div class="l">확정</div><div class="s">출고완료</div></div>
+      <button class="stat tap" onclick="goHoldView('active')"><div class="ic b"><i class="ti ti-lock"></i></div><div class="v">${reserved.length}</div><div class="l">홀딩 중</div><div class="s">임박 ${soon.length}</div></button>
+      <button class="stat tap" onclick="goHoldView('active')"><div class="ic a"><i class="ti ti-clock-pause"></i></div><div class="v" style="color:${planned.length ? 'var(--amber-t)' : 'inherit'}">${planned.length}</div><div class="l">예정홀딩</div><div class="s">입고 대기</div></button>
+      <button class="stat tap" onclick="goHoldView('done')"><div class="ic g"><i class="ti ti-circle-check"></i></div><div class="v">${confirmed.length}</div><div class="l">확정 <i class="ti ti-chevron-right tap-arrow"></i></div><div class="s">출고완료 보기</div></button>
     </div>
     <div class="search-box">
       <i class="ti ti-search"></i>
@@ -2166,7 +2181,8 @@ function renderHold() {
       <div class="chips" style="margin:0">${gchip('none', '전체', 'ti-list')}${gchip('material', '자재별', 'ti-box')}${gchip('vendor', '업체별', 'ti-briefcase')}</div>
       <button class="btn btn-sm" style="flex:none" onclick="downloadHoldXls()"><i class="ti ti-file-spreadsheet"></i>엑셀</button>
     </div>
-    <button class="btn btn-block" style="margin-bottom:10px" onclick="filters.holdArchive=!filters.holdArchive;renderHold()"><i class="ti ti-history"></i>${filters.holdArchive ? '지난·해제 내역 숨기기' : '지난·해제 내역 보기'}${released.length ? ' (' + released.length + '건)' : ''}</button>
+    ${viewBtns}
+    ${viewBanner}
     <div id="hold-body">${holdBodyHtml()}</div>`;
 }
 function openHoldForm(id, pre) {
