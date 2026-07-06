@@ -2093,7 +2093,7 @@ function holdGroupedHtml(list, keyFn, icon) {
   }));
   const keys = [...map.keys()].sort((a, b) => a.localeCompare(b));
   if (!keys.length) return `<div class="empty"><i class="ti ti-lock-off"></i>해당하는 홀딩이 없습니다</div>`;
-  return keys.map(k => `<div class="sec-label" style="margin-top:8px"><i class="ti ${icon}"></i> ${esc(k)} <span style="color:var(--t3);font-weight:500">· ${map.get(k).length}건</span></div>${map.get(k).map(holdCardHtml).join('')}`).join('');
+  return keys.map(k => `<div class="sec-label" style="margin-top:8px"><i class="ti ${icon}"></i> ${esc(k)} <span style="color:var(--t3);font-weight:500">· ${map.get(k).length}건</span></div><div class="hold-grid">${map.get(k).map(holdCardHtml).join('')}</div>`).join('');
 }
 /* 홀딩 화면 보기 전환: 'active'(진행+예정) / 'done'(출고완료) / 'released'(지난·해제) */
 function goHoldView(v) { filters.holdDone = (v === 'done'); filters.holdArchive = (v === 'released'); renderHold(); }
@@ -2147,7 +2147,7 @@ function holdBodyHtml() {
   if (!list.length) return `<div class="empty"><i class="ti ti-lock-off"></i>${(filters.holdSearch || '').trim() ? '검색 결과가 없습니다' : '홀딩이 없습니다'}</div>`;
   if (g === 'material') return holdGroupedHtml(list, h => { const ms = holdItems(h).map(it => it.materialName || '(자재 미지정)'); return ms.length ? [...new Set(ms)] : ['(자재 미지정)']; }, 'ti-box');
   if (g === 'vendor') return holdGroupedHtml(list, h => [h.vendor || '(업체 미지정)'], 'ti-briefcase');
-  return list.map(holdCardHtml).join('');
+  return `<div class="hold-grid">${list.map(holdCardHtml).join('')}</div>`;
 }
 /* 검색어 입력 시: 전체 재렌더 없이 목록 영역만 교체 (모바일 한글 입력 끊김 방지) */
 function filterHold() {
