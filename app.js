@@ -781,14 +781,9 @@ function renderHome() {
   const plannedHolds = state.holdings.filter(h => h.status === '예정');
   const waitQuote = state.sites.filter(s => ['접수', '가견적', '견적'].includes(s.stage));
 
-  const openIssues = state.issues.filter(i => i.status !== '처리완료');
-  const alerts = [];
-  lowItems.forEach(i => alerts.push({ c: 'r', ic: 'ti-alert-triangle', t: `${i.name} 입고 필요`, s: `가용 ${availJang(i)}장 · 안전재고 ${(+i.safeJang || 0)}장 미만`, tag: '재고부족' }));
-  openIssues.forEach(i => alerts.push({ c: 'r', ic: 'ti-alert-triangle', t: `${i.siteName || '현장'} 이슈 미해결`, s: (i.reason || '').slice(0, 40), tag: '이슈' }));
-  plannedHolds.forEach(h => alerts.push({ c: 'a', ic: 'ti-clock-pause', t: `${h.materialName || '-'} 입고 대기`, s: `${h.vendor || ''} · ${(+h.jang || 0)}장 예약(예정홀딩) · 입고 시 자동 전환`, tag: '예정홀딩' }));
-  soonConstruct.forEach(s => alerts.push({ c: 'a', ic: 'ti-tools', t: `${s.name} 시공 임박`, s: `${s.constructDate} 시공 예정 · ${s.team || '시공팀 미정'}`, tag: 'D-' + daysFromNow(s.constructDate) }));
-  soonHold.forEach(h => alerts.push({ c: 'b', ic: 'ti-lock', t: `${h.vendor} 홀딩 사용 임박`, s: `${h.materialName} ${(+h.hebe || 0).toFixed(1)}㎡ · ${h.useDate} 사용`, tag: '홀딩' }));
-  waitQuote.forEach(s => alerts.push({ c: 'a', ic: 'ti-file-invoice', t: `${s.name} 견적 진행 필요`, s: `현재 단계: ${s.stage} · ${s.client || ''}`, tag: s.stage }));
+  const alerts = buildAlerts();
+  const _adism = getAlertDismissed();
+  const visible = alerts.filter(a => !_adism.includes(a.key));
 
   el('pg-home').innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-layout-dashboard"></i>주요 현황</h2><p>${new Date().toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })} 기준 · 실시간 공유</p></div></div>
@@ -800,13 +795,12 @@ function renderHome() {
     </div>
 
     <div class="card">
-      <div class="card-h"><h3><i class="ti ti-bell-ringing"></i>긴급 알림</h3><span class="more">${alerts.length}건</span></div>
-      ${alerts.length ? alerts.slice(0, 8).map(a => `
-        <div class="alert-i ${a.c}">
-          <div class="ai"><i class="ti ${a.ic}"></i></div>
-          <div class="at"><b>${esc(a.t)}</b><span>${esc(a.s)}</span></div>
-          <span class="tag">${esc(a.tag)}</span>
-        </div>`).join('') : `<div class="empty"><i class="ti ti-circle-check"></i>처리할 긴급 항목이 없습니다</div>`}
+      <div class="card-h"><h3><i class="ti ti-bell-ringing"></i>긴급 알림</h3><span class="more tap" onclick="openAlerts()" style="cursor:pointer">${visible.length}건${visible.length > 8 ? ' · 전체보기' : ''} <i class="ti ti-chevron-right"></i></span></div>
+      <div id="home-alerts">
+        ${visible.length ? visible.slice(0, 8).map(alertRowHtml).join('') : `<div class="empty"><i class="ti ti-circle-check"></i>처리할 긴급 항목이 없습니다</div>`}
+      </div>
+      ${visible.length > 8 ? `<button class="btn btn-ghost btn-block" style="margin-top:8px" onclick="openAlerts()"><i class="ti ti-list"></i>전체 ${visible.length}건 보기</button>` : ''}
+      ${_adism.length ? `<button class="btn btn-ghost btn-sm btn-block" style="margin-top:6px;color:var(--t3)" onclick="clearAlertDismiss()"><i class="ti ti-rotate"></i>확인한 알림 다시 보기 (${_adism.length})</button>` : ''}
     </div>
 
     <div class="card">
@@ -818,6 +812,57 @@ function renderHome() {
         <button class="qa" onclick="go('hold');setTimeout(openHoldForm,50)"><span class="qi ic r"><i class="ti ti-lock-plus"></i></span><span><b>홀딩 등록</b><small>자재 홀딩</small></span></button>
       </div>
     </div>`;
+}
+/* ---------- 긴급 알림: 생성 + 기기별 '확인(숨김)' ---------- */
+function buildAlerts() {
+  const alerts = [];
+  const lowItems = state.inventory.filter(i => { const s = stockState(i).k; return s === '부족' || s === '없음'; });
+  const soonConstruct = state.sites.filter(s => { const d = daysFromNow(s.constructDate); return s.stage !== '완료' && d != null && d >= 0 && d <= 3; });
+  const soonHold = state.holdings.filter(h => { const d = daysFromNow(h.useDate); return (h.status || '홀딩') === '홀딩' && d != null && d >= 0 && d <= 3; });
+  const plannedHolds = state.holdings.filter(h => h.status === '예정');
+  const waitQuote = state.sites.filter(s => ['접수', '가견적', '견적'].includes(s.stage));
+  const openIssues = state.issues.filter(i => i.status !== '처리완료');
+  lowItems.forEach(i => alerts.push({ key: 'low|' + i.name, c: 'r', ic: 'ti-alert-triangle', t: `${i.name} 입고 필요`, s: `가용 ${availJang(i)}장 · 안전재고 ${(+i.safeJang || 0)}장 미만`, tag: '재고부족' }));
+  openIssues.forEach(i => alerts.push({ key: 'issue|' + (i.id || i.reason), c: 'r', ic: 'ti-alert-triangle', t: `${i.siteName || '현장'} 이슈 미해결`, s: (i.reason || '').slice(0, 40), tag: '이슈' }));
+  plannedHolds.forEach(h => alerts.push({ key: 'plan|' + h.id, c: 'a', ic: 'ti-clock-pause', t: `${h.materialName || '-'} 입고 대기`, s: `${h.vendor || ''} · ${(+h.jang || 0)}장 예약(예정홀딩) · 입고 시 자동 전환`, tag: '예정홀딩' }));
+  soonConstruct.forEach(s => alerts.push({ key: 'const|' + s.id + '|' + s.constructDate, c: 'a', ic: 'ti-tools', t: `${s.name} 시공 임박`, s: `${s.constructDate} 시공 예정 · ${s.team || '시공팀 미정'}`, tag: 'D-' + daysFromNow(s.constructDate) }));
+  soonHold.forEach(h => alerts.push({ key: 'hold|' + h.id + '|' + h.useDate, c: 'b', ic: 'ti-lock', t: `${h.vendor} 홀딩 사용 임박`, s: `${h.materialName} ${(+h.hebe || 0).toFixed(1)}㎡ · ${h.useDate} 사용`, tag: '홀딩' }));
+  waitQuote.forEach(s => alerts.push({ key: 'quote|' + s.id + '|' + s.stage, c: 'a', ic: 'ti-file-invoice', t: `${s.name} 견적 진행 필요`, s: `현재 단계: ${s.stage} · ${s.client || ''}`, tag: s.stage }));
+  return alerts;
+}
+function getAlertDismissed() { try { return JSON.parse(localStorage.getItem('dws_alertDismiss') || '[]'); } catch (e) { return []; } }
+function _akey(k) { return String(k).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+function alertRowHtml(a) {
+  return `<div class="alert-i ${a.c}">
+    <div class="ai"><i class="ti ${a.ic}"></i></div>
+    <div class="at"><b>${esc(a.t)}</b><span>${esc(a.s)}</span></div>
+    <span class="tag">${esc(a.tag)}</span>
+    <button onclick="dismissAlert('${_akey(a.key)}')" title="확인(이 기기에서 숨김)" style="flex:none;background:none;border:none;color:var(--t3);padding:6px;margin-left:2px;cursor:pointer"><i class="ti ti-check" style="font-size:18px"></i></button>
+  </div>`;
+}
+function _alertBodyHtml(list) {
+  return list.length ? list.map(alertRowHtml).join('') : `<div class="empty"><i class="ti ti-circle-check"></i>확인할 긴급 항목이 없습니다</div>`;
+}
+function dismissAlert(key) {
+  const d = getAlertDismissed(); if (!d.includes(key)) { d.push(key); localStorage.setItem('dws_alertDismiss', JSON.stringify(d)); }
+  const mb = el('alerts-modal-body');
+  if (mb) mb.innerHTML = _alertBodyHtml(buildAlerts().filter(a => !getAlertDismissed().includes(a.key)));
+  if (tab === 'home') renderHome();
+}
+function clearAlertDismiss() {
+  localStorage.removeItem('dws_alertDismiss'); toast('확인한 알림을 다시 표시합니다');
+  const mb = el('alerts-modal-body');
+  if (mb) mb.innerHTML = _alertBodyHtml(buildAlerts());
+  if (tab === 'home') renderHome();
+}
+function openAlerts() {
+  const visible = buildAlerts().filter(a => !getAlertDismissed().includes(a.key));
+  const dcount = getAlertDismissed().length;
+  openModal(`
+    <div class="sheet-h"><h3><i class="ti ti-bell-ringing"></i>긴급 알림 ${visible.length}건</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:12.5px;color:var(--t3);margin:-4px 0 10px"><i class="ti ti-info-circle"></i> 확인(체크)한 알림은 <b>이 기기에서만</b> 사라집니다. 다른 직원 화면에는 그대로 보여요.</div>
+    <div id="alerts-modal-body" style="max-height:62vh;overflow:auto">${_alertBodyHtml(visible)}</div>
+    ${dcount ? `<button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="clearAlertDismiss()"><i class="ti ti-rotate"></i>확인한 알림 다시 보기 (${dcount})</button>` : ''}`);
 }
 
 /* ===================================================================
