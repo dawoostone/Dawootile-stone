@@ -86,7 +86,7 @@ if (bc) bc.onmessage = (e) => { const c = e.data; if (Store._watchers[c]) Store.
 const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [], issues: [] };
 let me = null;          // 로그인한 사용자
 let tab = 'home';
-let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all', holdArchive: false, holdSearch: '', holdGroup: 'none' };
+let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all', holdArchive: false, holdSearch: '', holdGroup: 'none', custSearch: '' };
 let _holdLinkSite = null;   // 현장 저장 시 이 홀딩을 현장에 '연결'(소진 아님)
 let _holdConfirm = null;    // 출고 저장 시 이 홀딩을 '확정' 처리
 let _busy = false;          // 등록 버튼 연속 클릭(중복 저장) 방지
@@ -102,6 +102,7 @@ function daysFromNow(d) { if (!d) return null; return Math.ceil((new Date(d + 'T
 function initial(n) { return (n || '?').trim().slice(-2); }
 function toast(msg) { const t = el('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 2200); }
 function isAdmin() { return me && me.role === 'admin'; }
+function isCustomerRole() { return me && me.role === 'customer'; }  // 고객(거래처) — 재고 조회 전용
 
 const STATUS = {
   접수: 'p-gray', 견적전달: 'p-wait', 결제완료: 'p-prog', 확정: 'p-prog',
@@ -183,6 +184,7 @@ function init() {
       await afterAuth(user);
     } else {
       me = null;
+      document.body.classList.remove('cust-mode');
       el('app').style.display = 'none';
       el('login').style.display = 'flex';
       const e = el('login-err'); if (e) { e.style.color = ''; e.textContent = ''; }
@@ -208,8 +210,9 @@ async function afterAuth(user) {
   el('app').style.display = 'block';
   el('me-av').textContent = initial(me.name);
   el('me-nm').textContent = me.name;
-  render();
-  refreshPushToken();
+  document.body.classList.toggle('cust-mode', isCustomerRole());  // 고객: 재고 조회 전용 UI
+  if (isCustomerRole()) { go('stock'); }
+  else { render(); refreshPushToken(); }
 }
 function findMemberByEmail(email) {
   if (!email) return null;
@@ -287,9 +290,20 @@ function onData(coll) {
     _membersLoaded = true;
     _membersWaiters.splice(0).forEach(fn => fn());
   }
-  if (coll === 'sites' && me) autoAdvanceStages();
-  if (coll === 'holdings' && me) autoReleaseHolds();
+  if (coll === 'sites' && me && !isCustomerRole()) autoAdvanceStages();
+  if (coll === 'holdings' && me && !isCustomerRole()) autoReleaseHolds();
+  if (coll === 'members' && me && isAdmin()) syncCustomerEmails();  // 보안규칙용 고객 이메일 목록 유지
   if (me) render();
+}
+/* 고객(거래처) 계정 이메일 목록을 meta/access 에 기록 → 보안규칙에서 쓰기 차단에 사용 */
+let _lastCustEmails = null;
+async function syncCustomerEmails() {
+  if (!CLOUD) return;
+  const emails = [...new Set(state.members.filter(m => m.role === 'customer').map(m => (m.email || '').trim().toLowerCase()).filter(Boolean))].sort();
+  const key = emails.join('|');
+  if (key === _lastCustEmails) return;
+  _lastCustEmails = key;
+  try { await cref('meta').doc('access').set({ customerEmails: emails }, { merge: true }); } catch (e) { console.warn('customerEmails sync', e); }
 }
 
 /* ---------- 5. 로그인 (이메일 + 비밀번호 / Firebase 인증) ---------- */
@@ -423,6 +437,7 @@ function closeDrawer() { el('drawer').classList.remove('open'); el('drawer-ov').
 function goD(t) { closeDrawer(); go(t); }
 
 function go(t) {
+  if (isCustomerRole()) t = 'stock';   // 고객은 재고 화면만
   tab = t;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-i').forEach(n => n.classList.toggle('active', n.dataset.tab === t));
@@ -440,12 +455,58 @@ function fabAction() {
 }
 function render() {
   if (!me) return;
+  if (isCustomerRole()) { renderCustomerStock(); return; }   // 고객: 재고 조회 전용
   if (tab === 'home') renderHome();
   else if (tab === 'sites') renderSites();
   else if (tab === 'stock') renderStock();
   else if (tab === 'ship') renderShip();
   else if (tab === 'hold') renderHold();
   else if (tab === 'settings') renderSettings();
+}
+/* ---------- 고객(거래처) 재고 조회 전용 화면 (읽기 전용) ---------- */
+function custStockList() {
+  const q = (filters.custSearch || '').trim().toLowerCase();
+  let l = state.inventory.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  if (q) l = l.filter(i => (i.name || '').toLowerCase().includes(q) || (i.spec || '').toLowerCase().includes(q));
+  return l;
+}
+function custStockBody(list) {
+  if (!list.length) return `<div class="empty"><i class="ti ti-search-off"></i>해당하는 자재가 없습니다</div>`;
+  return list.map(i => {
+    const jang = +i.jang || 0;
+    const hebe = jang * (+i.hebePerJang || 0);
+    const inStock = jang > 0;
+    return `<div class="card" style="margin-bottom:9px;padding:12px 14px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+        <div style="min-width:0"><div style="font-size:15.5px;font-weight:700;color:var(--t1)">${esc(i.name)}</div>
+          ${i.spec ? `<div style="font-size:12.5px;color:var(--t3);margin-top:3px"><i class="ti ti-ruler-2" style="font-size:12px"></i> 규격 ${esc(i.spec)}</div>` : ''}</div>
+        <span class="pill ${inStock ? 'p-prog' : 'p-issue'}" style="flex:none">${inStock ? '재고 있음' : '품절'}</span>
+      </div>
+      <div style="display:flex;gap:22px;margin-top:10px;font-size:14px">
+        <div><span style="color:var(--t3);font-size:12.5px">재고</span> <b style="font-size:15px">${jang}장</b></div>
+        <div><span style="color:var(--t3);font-size:12.5px">면적</span> <b style="font-size:15px">${hebe.toFixed(1)}㎡</b></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+function filterCustStock() {
+  filters.custSearch = el('cust-search') ? el('cust-search').value : '';
+  if (el('cust-body')) el('cust-body').innerHTML = custStockBody(custStockList());
+  const x = el('cust-search-x'); if (x) x.style.display = (filters.custSearch || '').trim() ? '' : 'none';
+}
+function clearCustStock() { filters.custSearch = ''; if (el('cust-search')) el('cust-search').value = ''; filterCustStock(); const i = el('cust-search'); if (i) i.focus(); }
+function renderCustomerStock() {
+  const list = custStockList();
+  const total = state.inventory.length;
+  el('pg-stock').innerHTML = `
+    <div class="ph"><div><h2><i class="ti ti-packages"></i>재고 조회</h2><p>${esc(me.name)} 님 · 실시간 재고 (총 ${total}종)</p></div>
+      <button class="btn btn-sm" onclick="logout()"><i class="ti ti-logout"></i>로그아웃</button></div>
+    <div class="search-box">
+      <i class="ti ti-search"></i>
+      <input id="cust-search" placeholder="자재명·규격 검색" value="${esc(filters.custSearch || '')}" oninput="filterCustStock()" autocomplete="off">
+      <button class="search-x" id="cust-search-x" style="${(filters.custSearch || '').trim() ? '' : 'display:none'}" onclick="clearCustStock()"><i class="ti ti-x"></i></button>
+    </div>
+    <div id="cust-body">${custStockBody(list)}</div>`;
 }
 
 /* ===================================================================
@@ -2195,7 +2256,7 @@ function openMemberForm(id) {
     <div class="sheet-h"><h3><i class="ti ti-user-plus"></i>${m ? '직원 수정' : '직원 추가'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
       <div class="fld full"><label>이름<span class="req">*</span></label><input id="m-name" value="${esc(v.name || '')}" placeholder="이름"></div>
-      <div class="fld"><label>권한</label><select id="m-role"><option value="staff" ${v.role === 'staff' ? 'selected' : ''}>직원</option><option value="admin" ${v.role === 'admin' ? 'selected' : ''}>관리자</option></select></div>
+      <div class="fld"><label>권한</label><select id="m-role"><option value="staff" ${v.role === 'staff' ? 'selected' : ''}>직원</option><option value="admin" ${v.role === 'admin' ? 'selected' : ''}>관리자</option><option value="customer" ${v.role === 'customer' ? 'selected' : ''}>고객(거래처) · 재고조회만</option></select></div>
       <div class="fld full"><label>로그인 이메일<span class="req">*</span></label><input id="m-email" type="email" value="${esc(v.email || '')}" autocapitalize="none" spellcheck="false" placeholder="예) hong@dawoo.com"></div>
     </div>
     <div class="banner info" style="margin:0 0 12px"><i class="ti ti-info-circle"></i>이 이메일로 Firebase 콘솔에서 계정(비밀번호)을 만들어야 로그인됩니다. 비밀번호는 콘솔에서 관리합니다.</div>
