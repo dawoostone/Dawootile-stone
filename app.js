@@ -86,7 +86,7 @@ if (bc) bc.onmessage = (e) => { const c = e.data; if (Store._watchers[c]) Store.
 const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [], issues: [] };
 let me = null;          // 로그인한 사용자
 let tab = 'home';
-let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all', holdArchive: false, holdSearch: '', holdGroup: 'none', custSearch: '' };
+let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all', holdArchive: false, holdSearch: '', holdGroup: 'none', custSearch: '', shipSearch: '' };
 let _holdLinkSite = null;   // 현장 저장 시 이 홀딩을 현장에 '연결'(소진 아님)
 let _holdConfirm = null;    // 출고 저장 시 이 홀딩을 '확정' 처리
 let _busy = false;          // 등록 버튼 연속 클릭(중복 저장) 방지
@@ -1640,6 +1640,11 @@ function renderShip() {
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-table"></i>출고 내역 조회·추출</h3></div>
+      <div class="search-box" style="margin-bottom:10px">
+        <i class="ti ti-search"></i>
+        <input id="r-search" placeholder="자재명·업체명 검색" value="${esc(filters.shipSearch || '')}" oninput="filters.shipSearch=this.value;shipReport()" autocomplete="off">
+        ${(filters.shipSearch || '').trim() ? `<button class="search-x" onclick="filters.shipSearch='';el('r-search').value='';shipReport()"><i class="ti ti-x"></i></button>` : ''}
+      </div>
       <div class="frm">
         <div class="fld"><label>시작일</label><input type="date" id="r-from" oninput="shipReport()"></div>
         <div class="fld"><label>종료일</label><input type="date" id="r-to" oninput="shipReport()"></div>
@@ -1669,8 +1674,10 @@ function renderShip() {
 function shipReportList() {
   const from = el('r-from') && el('r-from').value, to = el('r-to') && el('r-to').value;
   const cl = el('r-client') && el('r-client').value, mt = el('r-mat') && el('r-mat').value;
+  const q = (filters.shipSearch || '').trim().toLowerCase();
   return state.transactions.filter(t => t.type === 'out')
-    .filter(t => (!from || (t.date || '') >= from) && (!to || (t.date || '') <= to) && (!cl || t.targetName === cl) && (!mt || t.itemName === mt))
+    .filter(t => (!from || (t.date || '') >= from) && (!to || (t.date || '') <= to) && (!cl || t.targetName === cl) && (!mt || t.itemName === mt)
+      && (!q || (t.itemName || '').toLowerCase().includes(q) || (t.targetName || '').toLowerCase().includes(q)))
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 }
 function shipReport() {
