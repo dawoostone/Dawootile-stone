@@ -1233,8 +1233,18 @@ async function submitSite(id) {
     obj.history = { '접수': todayStr() }; if (obj.stage !== '접수') obj.history[obj.stage] = todayStr();
     await Store.add('sites', obj); toast('현장 등록 완료');
   }
-  // 선택한 홀딩을 이 현장에 '연결'(소진 아님 — 홀딩은 그대로 살아있음)
-  if (_holdLinkSite) { await Store.update('holdings', _holdLinkSite, { forSiteName: obj.name }); _holdLinkSite = null; }
+  // 선택한 홀딩을 이 현장에 '연결' + 실사용 수량을 홀딩에도 연동 반영(출고는 홀딩에서 하므로)
+  if (_holdLinkSite) {
+    const hItems = items.map(r => {
+      const inv = state.inventory.find(i => _normName(i.name) === _normName(r.name));
+      return { materialName: r.name, jang: r.qty, hebe: inv ? +(r.qty * (+inv.hebePerJang || 0)).toFixed(2) : 0, lot: r.lot, pattern: r.pattern || '' };
+    });
+    await Store.update('holdings', _holdLinkSite, {
+      forSiteName: obj.name, items: hItems,
+      materialName: hItems[0].materialName, jang: hItems[0].jang, hebe: hItems[0].hebe, lot: hItems[0].lot
+    });
+    _holdLinkSite = null;
+  }
   closeModal();
 }
 
