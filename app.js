@@ -194,6 +194,23 @@ function init() {
 }
 /* 로그인 성공 후: 직원 디렉터리에서 본인(이메일) 찾기 → 앱 진입 */
 async function afterAuth(user) {
+  const _email = (user.email || '').toLowerCase();
+  // 고객(거래처) 우선 확인 — 직원 목록을 읽지 않고 '본인 역할 문서(roles/이메일)'만 확인
+  if (CLOUD) {
+    try {
+      const rd = await cref('roles').doc(_email).get();
+      if (rd.exists && (rd.data() || {}).role === 'customer') {
+        me = { name: (rd.data().name || _email.split('@')[0]), email: _email, role: 'customer' };
+        el('login').style.display = 'none';
+        el('app').style.display = 'block';
+        el('me-av').textContent = initial(me.name);
+        el('me-nm').textContent = me.name;
+        document.body.classList.add('cust-mode');
+        go('stock');
+        return;
+      }
+    } catch (e) { /* 역할 문서 읽기 실패 → 일반(직원) 흐름으로 진행 */ }
+  }
   seedIfEmpty();                 // 규격/공장/팀 등 기본값(백그라운드)
   await whenMembersReady();       // 직원 목록 첫 로딩 대기
   let member = findMemberByEmail(user.email);
@@ -292,18 +309,7 @@ function onData(coll) {
   }
   if (coll === 'sites' && me && !isCustomerRole()) autoAdvanceStages();
   if (coll === 'holdings' && me && !isCustomerRole()) autoReleaseHolds();
-  if (coll === 'members' && me && isAdmin()) syncCustomerEmails();  // 보안규칙용 고객 이메일 목록 유지
   if (me) render();
-}
-/* 고객(거래처) 계정 이메일 목록을 meta/access 에 기록 → 보안규칙에서 쓰기 차단에 사용 */
-let _lastCustEmails = null;
-async function syncCustomerEmails() {
-  if (!CLOUD) return;
-  const emails = [...new Set(state.members.filter(m => m.role === 'customer').map(m => (m.email || '').trim().toLowerCase()).filter(Boolean))].sort();
-  const key = emails.join('|');
-  if (key === _lastCustEmails) return;
-  _lastCustEmails = key;
-  try { await cref('meta').doc('access').set({ customerEmails: emails }, { merge: true }); } catch (e) { console.warn('customerEmails sync', e); }
 }
 
 /* ---------- 5. 로그인 (이메일 + 비밀번호 / Firebase 인증) ---------- */
@@ -2272,10 +2278,28 @@ async function submitMember(id) {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { toast('이메일 형식을 확인하세요'); return; }
   if (state.members.some(m => m.id !== id && (m.email || '').toLowerCase() === email)) { toast('이미 등록된 이메일입니다'); return; }
   const obj = { name, role: el('m-role').value, email };
+  // 이메일이 바뀌었으면 이전 이메일의 역할 문서 정리
+  const prevEmail = id ? ((state.members.find(m => m.id === id) || {}).email || '').toLowerCase() : '';
   if (id) await Store.update('members', id, obj); else await Store.add('members', obj);
+  await setRoleDoc(email, obj.role, name, prevEmail);
   toast('저장됨'); closeModal();
 }
-async function delMember(id) { if (!confirm('이 직원을 삭제할까요?')) return; await Store.remove('members', id); toast('삭제됨'); closeModal(); }
+/* 고객 로그인용 역할 문서(roles/{이메일}) 관리 — 고객이면 생성, 아니면 삭제 */
+async function setRoleDoc(email, role, name, prevEmail) {
+  if (!CLOUD) return;
+  try {
+    if (prevEmail && prevEmail !== email) await cref('roles').doc(prevEmail).delete();
+    if (role === 'customer') await cref('roles').doc(email).set({ role: 'customer', name: name || '' });
+    else await cref('roles').doc(email).delete();
+  } catch (e) { console.warn('roles doc', e); }
+}
+async function delMember(id) {
+  if (!confirm('이 직원을 삭제할까요?')) return;
+  const m = state.members.find(x => x.id === id);
+  await Store.remove('members', id);
+  if (m && m.email) { try { await cref('roles').doc((m.email || '').toLowerCase()).delete(); } catch (e) { } }
+  toast('삭제됨'); closeModal();
+}
 async function addClient() {
   const v = (el('client-new') && el('client-new').value || '').trim();
   if (!v) { toast('거래처명을 입력하세요'); return; }
