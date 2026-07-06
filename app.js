@@ -1161,7 +1161,16 @@ async function advanceStage(id, stage) {
   await Store.update('sites', id, { stage, history: hist, updatedBy: me.name });
   toast(`단계 → ${stage}`); closeModal();
 }
-async function delSite(id) { if (!confirm('이 현장을 삭제할까요?')) return; await Store.remove('sites', id); toast('삭제됨'); closeModal(); }
+async function delSite(id) {
+  if (!confirm('이 현장을 삭제할까요?')) return;
+  const s = state.sites.find(x => x.id === id); const nm = s ? s.name : '';
+  await Store.remove('sites', id);
+  // 이 현장에 연결됐던 홀딩의 현장 정보 제거(고아 데이터 방지)
+  for (const h of state.holdings.filter(h => h.forSiteId === id || (nm && h.forSiteName === nm))) {
+    await Store.update('holdings', h.id, { forSiteId: '', forSiteName: '' });
+  }
+  toast('삭제됨 · 연결 홀딩의 현장 정보도 정리'); closeModal();
+}
 
 /* 현장 등록/수정 폼 */
 function openSiteForm(id, pre) {
@@ -1278,18 +1287,23 @@ async function submitSite(id) {
     obj.history = { '접수': todayStr() }; if (obj.stage !== '접수') obj.history[obj.stage] = todayStr();
     await Store.add('sites', obj); toast('현장 등록 완료');
   }
-  // 선택한 홀딩을 이 현장에 '연결' + 실사용 수량을 홀딩에도 연동 반영(출고는 홀딩에서 하므로)
-  if (_holdLinkSite) {
+  // 연결된 홀딩에 실사용 수량 연동(출고는 홀딩에서 함) — 이번에 고른 것 우선, 없으면 이미 연결된 홀딩 자동 탐색(재편집 대응)
+  let linkHoldId = _holdLinkSite;
+  if (!linkHoldId && id) {
+    const s0 = state.sites.find(x => x.id === id); const oldName = s0 ? s0.name : '';
+    const lh = state.holdings.find(h => !['해제', '확정'].includes(h.status || '홀딩') && (h.forSiteId === id || (oldName && h.forSiteName === oldName)));
+    if (lh) linkHoldId = lh.id;
+  }
+  if (linkHoldId) {
     const hItems = items.map(r => {
       const inv = state.inventory.find(i => _normName(i.name) === _normName(r.name));
       return { materialName: r.name, jang: r.qty, hebe: inv ? +(r.qty * (+inv.hebePerJang || 0)).toFixed(2) : 0, lot: r.lot, pattern: r.pattern || '' };
     });
-    await Store.update('holdings', _holdLinkSite, {
-      forSiteName: obj.name, items: hItems,
-      materialName: hItems[0].materialName, jang: hItems[0].jang, hebe: hItems[0].hebe, lot: hItems[0].lot
-    });
-    _holdLinkSite = null;
+    const upd = { forSiteName: obj.name, items: hItems, materialName: hItems[0].materialName, jang: hItems[0].jang, hebe: hItems[0].hebe, lot: hItems[0].lot };
+    if (id) upd.forSiteId = id;
+    await Store.update('holdings', linkHoldId, upd);
   }
+  _holdLinkSite = null;
   closeModal();
 }
 
