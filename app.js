@@ -906,7 +906,7 @@ function companyNames() {
 }
 /* searchBox: 입력하면 부분일치 후보가 아래에 뜨고 클릭 선택. id는 그대로 유지(폼 제출 시 사용). */
 function searchBox(id, placeholder, value, listFn, pickFn) {
-  return `<input id="${id}" class="sb-in" autocomplete="off" placeholder="${esc(placeholder)}" value="${esc(value || '')}" oninput="sbFilter('${id}','${listFn}','${pickFn || ''}')" onfocus="sbFilter('${id}','${listFn}','${pickFn || ''}')" onblur="setTimeout(sbHide,180)">`;
+  return `<input id="${id}" class="sb-in" lang="ko" autocomplete="off" placeholder="${esc(placeholder)}" value="${esc(value || '')}" oninput="sbFilter('${id}','${listFn}','${pickFn || ''}')" onfocus="sbFilter('${id}','${listFn}','${pickFn || ''}')" onblur="setTimeout(sbHide,180)">`;
 }
 function sbEnsurePop() { let p = el('sb-pop'); if (!p) { p = document.createElement('div'); p.id = 'sb-pop'; p.className = 'sb-pop'; document.body.appendChild(p); } return p; }
 function sbFilter(id, listFn, pickFn) {
@@ -1187,11 +1187,11 @@ function openSiteForm(id, pre) {
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-building-community"></i>${s ? '현장 수정' : '현장 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
-      <div class="fld"><label>현장명 <span style="color:var(--t3);font-weight:500">(미입력 시 업체명)</span></label><input id="s-name" value="${esc(v.name || '')}" placeholder="현장명"></div>
+      <div class="fld"><label>현장명 <span style="color:var(--t3);font-weight:500">(미입력 시 업체명)</span></label><input id="s-name" lang="ko" value="${esc(v.name || '')}" placeholder="현장명"></div>
       <div class="fld"><label>업체(거래처)<span class="req">*</span></label>${searchBox('s-client', '업체명 검색·입력', v.client, 'companyNames', '')}</div>
-      <div class="fld"><label>지역</label><input id="s-region" value="${esc(v.region || '')}" placeholder="지역"></div>
-      <div class="fld"><label>현장 담당자</label><input id="s-manager" value="${esc(v.manager || me.name)}"></div>
-      <div class="fld full"><label>현장 주소</label><input id="s-address" value="${esc(v.address || '')}" placeholder="상세 주소"></div>
+      <div class="fld"><label>지역</label><input id="s-region" lang="ko" value="${esc(v.region || '')}" placeholder="지역"></div>
+      <div class="fld"><label>현장 담당자</label><input id="s-manager" lang="ko" value="${esc(v.manager || me.name)}"></div>
+      <div class="fld full"><label>현장 주소</label><input id="s-address" lang="ko" value="${esc(v.address || '')}" placeholder="상세 주소"></div>
       <div class="fld"><label>발주 유형</label>
         <div class="seg" id="s-ordertype">
           <button type="button" class="${v.orderType === '실측' ? 'on' : ''}" onclick="pickOrderType('실측')">실측 발주</button>
@@ -1209,7 +1209,7 @@ function openSiteForm(id, pre) {
       <div class="fld full hidden" id="s-team-add"><label>새 시공팀 입력 후 추가</label><div style="display:flex;gap:8px"><input id="s-team-new" placeholder="이름 입력" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('s-team','teams')"><i class="ti ti-plus"></i>추가</button></div></div>
       <label class="chk full ${v.paid ? 'on' : ''}" id="s-paid-w"><input type="checkbox" id="s-paid" ${v.paid ? 'checked' : ''} onchange="this.closest('.chk').classList.toggle('on',this.checked)"> 결제 완료</label>
       <label class="chk full ${v.confirmed ? 'on' : ''}" id="s-confirmed-w"><input type="checkbox" id="s-confirmed" ${v.confirmed ? 'checked' : ''} onchange="this.closest('.chk').classList.toggle('on',this.checked)"> 시공 확정</label>
-      <div class="fld full"><label>특이사항</label><textarea id="s-note" placeholder="현장 메모">${esc(v.note || '')}</textarea></div>
+      <div class="fld full"><label>특이사항</label><textarea id="s-note" lang="ko" placeholder="현장 메모">${esc(v.note || '')}</textarea></div>
     </div>
     <button class="btn btn-ghost btn-block" style="margin-top:12px" onclick="runRecommend()"><i class="ti ti-wand"></i>매뉴얼 기반 시공팀·공장 자동추천</button>
     <div id="reco-out"></div>
@@ -2156,9 +2156,32 @@ ${body}
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
   toast('홀딩 엑셀 다운로드 (' + rows.length + '건)');
 }
+/* 홀딩 목록 → 한눈에 보는 표(내역). 출고내역처럼 따로 스크롤 */
+function holdListTableHtml(list) {
+  const rows = [];
+  list.forEach(h => holdItems(h).forEach(it => rows.push({ h, it })));
+  if (!rows.length) return `<div class="empty"><i class="ti ti-lock-off"></i>${(filters.holdSearch || '').trim() ? '검색 결과가 없습니다' : '홀딩이 없습니다'}</div>`;
+  const stColor = st => st === '예정' ? 'var(--amber-t)' : (st === '출고완료' ? 'var(--gd)' : (st === '해제' ? 'var(--t3)' : 'var(--blue)'));
+  const body = rows.map(({ h, it }) => {
+    const st = holdStatusText(h);
+    return `<tr onclick="openHoldDetail('${h.id}')" style="cursor:pointer">
+      <td>${esc(h.useDate || '-')}</td>
+      <td><b>${esc(h.vendor || '-')}</b></td>
+      <td>${esc(it.materialName || '-')}</td>
+      <td style="text-align:right">${(+it.jang || 0)}</td>
+      <td style="text-align:right">${(+it.hebe || 0).toFixed(1)}</td>
+      <td>${esc(h.forSiteName || '-')}</td>
+      <td style="color:${stColor(st)};font-weight:700">${esc(st)}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="tbl-wrap" style="max-height:calc(100vh - 320px);overflow:auto">
+    <table class="tbl"><thead><tr><th>예정일</th><th>거래처</th><th>자재</th><th>장수</th><th>헤베</th><th>현장</th><th>상태</th></tr></thead><tbody>${body}</tbody></table>
+  </div>`;
+}
 /* 홀딩 목록 본문만 계산 (검색 시 이 부분만 갱신 → 입력 포커스 유지) */
 function holdBodyHtml() {
   const list = holdFilteredList();
+  if ((filters.holdLayout || 'card') === 'table') return holdListTableHtml(list);
   const g = filters.holdGroup || 'none';
   let inner;
   if (!list.length) inner = `<div class="empty"><i class="ti ti-lock-off"></i>${(filters.holdSearch || '').trim() ? '검색 결과가 없습니다' : '홀딩이 없습니다'}</div>`;
@@ -2210,9 +2233,15 @@ function renderHold() {
         <input id="hold-search" placeholder="업체명·자재명 검색" value="${esc(filters.holdSearch || '')}" oninput="filterHold()" autocomplete="off">
         <button class="search-x" id="hold-search-x" style="${(filters.holdSearch || '').trim() ? '' : 'display:none'}" onclick="clearHoldSearch()"><i class="ti ti-x"></i></button>
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:2px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:2px;flex-wrap:wrap">
         <div class="chips" style="margin:0">${gchip('none', '전체', 'ti-list')}${gchip('material', '자재별', 'ti-box')}${gchip('vendor', '업체별', 'ti-briefcase')}</div>
-        <button class="btn btn-sm" style="flex:none" onclick="downloadHoldXls()"><i class="ti ti-file-spreadsheet"></i>엑셀</button>
+        <div style="display:flex;gap:8px;align-items:center;flex:none">
+          <div class="chips" style="margin:0">
+            <button class="chip ${(filters.holdLayout || 'card') === 'card' ? 'active' : ''}" onclick="filters.holdLayout='card';renderHold()"><i class="ti ti-layout-grid"></i> 카드</button>
+            <button class="chip ${filters.holdLayout === 'table' ? 'active' : ''}" onclick="filters.holdLayout='table';renderHold()"><i class="ti ti-table"></i> 표</button>
+          </div>
+          <button class="btn btn-sm" style="flex:none" onclick="downloadHoldXls()"><i class="ti ti-file-spreadsheet"></i>엑셀</button>
+        </div>
       </div>
       ${viewBtns}
       ${viewBanner}
