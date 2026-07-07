@@ -161,7 +161,9 @@ body.cust-mode .wrap{padding-bottom:24px}
 .site-grid{display:grid;grid-template-columns:1fr;gap:12px}
 @media(min-width:700px){ .site-grid{grid-template-columns:1fr 1fr} }
 .hold-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:stretch}
-.hold-grid>.card{margin-bottom:0!important;height:100%}
+.hold-grid>.card{margin-bottom:0!important;height:100%;display:flex;flex-direction:column}
+.hold-grid>.card .hold-card-body{flex:1 1 auto}
+.hold-grid>.card .hold-card-foot{margin-top:auto}
 .hold-pad{padding-right:64px}
 .hold-scroll{max-height:calc(100vh - 300px);min-height:200px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--bd);border-radius:12px;padding:10px;background:var(--soft,#f6f8f7)}
 .hold-widget{position:fixed;right:6px;top:96px;z-index:30;display:flex;flex-direction:column;gap:6px;width:56px}
