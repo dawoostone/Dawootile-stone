@@ -1695,6 +1695,40 @@ async function bulkInSubmit() {
 /* ===================================================================
    출고 (현장/공장·거래처) + 월별/분석
    =================================================================== */
+/* 출고 건을 shipId 기준으로 묶은 목록 (최신순) */
+function shipSlipGroups() {
+  const outs = state.transactions.filter(t => t.type === 'out').sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const gmap = {}, groups = [];
+  outs.forEach(t => { const k = t.shipId || t.id; if (!gmap[k]) { gmap[k] = { key: k, date: t.date, dest: t.dest || t.factory, targetName: t.targetName, by: t.by, items: [] }; groups.push(gmap[k]); } gmap[k].items.push(t); });
+  return groups;
+}
+/* 출고증 인쇄 목록: 검색 없으면 최근 10건, 검색하면 업체명·자재명으로 전체에서 찾기 */
+function shipSlipListHtml() {
+  const q = (filters.slipSearch || '').trim().toLowerCase();
+  let groups = shipSlipGroups();
+  if (q) groups = groups.filter(g => (g.targetName || '').toLowerCase().includes(q) || (g.dest || '').toLowerCase().includes(q) || g.items.some(t => (t.itemName || '').toLowerCase().includes(q)));
+  const list = q ? groups : groups.slice(0, 10);
+  if (!list.length) return `<div class="empty"><i class="ti ti-inbox"></i>${q ? '검색 결과가 없습니다' : '출고 내역 없음'}</div>`;
+  return list.map(g => {
+    const totJang = g.items.reduce((a, b) => a + (+b.jang || 0), 0), totHebe = g.items.reduce((a, b) => a + (+b.hebe || 0), 0);
+    return `<div class="card" style="margin-bottom:10px;padding:11px 13px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div><div style="font-weight:700;font-size:14px"><i class="ti ti-briefcase" style="color:var(--blue);font-size:14px"></i> ${esc(g.targetName || '-')}</div>
+          <div style="font-size:12px;color:var(--t3);margin-top:2px">${esc(g.date)}${g.dest ? ' · → ' + esc(g.dest) : ''} · ${esc(g.by || '')}</div></div>
+        ${isAdmin() ? `<button class="x" onclick="delShipGroup('${g.key}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}
+      </div>
+      <div style="margin-top:7px;font-size:13px">${g.items.map(t => `<div style="color:var(--t2)">· ${esc(t.itemName)} <b style="color:var(--t1)">${+t.jang || 0}장</b>${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}${t.lot ? ` · 롯트 ${esc(t.lot)}` : ''}${t.pattern ? ` · 패턴 ${esc(t.pattern)}` : ''}</div>`).join('')}</div>
+      ${g.items.length > 1 ? `<div style="font-size:11.5px;color:var(--t3);margin-top:6px;text-align:right">합계 ${totJang}장 · ${totHebe.toFixed(1)}㎡</div>` : ''}
+      <div style="margin-top:9px;text-align:right"><button class="btn btn-sm" onclick="printShipSlip('${g.key}')"><i class="ti ti-printer"></i>출고증 인쇄</button></div>
+    </div>`;
+  }).join('');
+}
+/* 검색어 입력 시 목록만 교체 (한글 입력 끊김 방지) */
+function filterShipSlips() {
+  filters.slipSearch = el('slip-search') ? el('slip-search').value : '';
+  if (el('slip-list')) el('slip-list').innerHTML = shipSlipListHtml();
+  const x = el('slip-search-x'); if (x) x.style.display = (filters.slipSearch || '').trim() ? '' : 'none';
+}
 function renderShip() {
   const outs = state.transactions.filter(t => t.type === 'out').sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   const now = new Date(); const ym = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
@@ -1717,25 +1751,13 @@ function renderShip() {
       <div class="stat"><div class="ic g"><i class="ti ti-package-export"></i></div><div class="v">${outs.length}</div><div class="l">총 출고 건수</div><div class="s">전체 누적</div></div>
     </div>
     <div class="card">
-      <div class="card-h"><h3><i class="ti ti-list-details"></i>최근 출고</h3></div>
-      ${(() => {
-        const gmap = {}, groups = [];
-        outs.forEach(t => { const k = t.shipId || t.id; if (!gmap[k]) { gmap[k] = { key: k, date: t.date, dest: t.dest || t.factory, targetName: t.targetName, by: t.by, items: [] }; groups.push(gmap[k]); } gmap[k].items.push(t); });
-        const top = groups.slice(0, 10);
-        return top.length ? top.map(g => {
-          const totJang = g.items.reduce((a, b) => a + (+b.jang || 0), 0), totHebe = g.items.reduce((a, b) => a + (+b.hebe || 0), 0);
-          return `<div class="card" style="margin-bottom:10px;padding:11px 13px">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start">
-              <div><div style="font-weight:700;font-size:14px"><i class="ti ti-briefcase" style="color:var(--blue);font-size:14px"></i> ${esc(g.targetName || '-')}</div>
-                <div style="font-size:12px;color:var(--t3);margin-top:2px">${esc(g.date)}${g.dest ? ' · → ' + esc(g.dest) : ''} · ${esc(g.by || '')}</div></div>
-              ${isAdmin() ? `<button class="x" onclick="delShipGroup('${g.key}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}
-            </div>
-            <div style="margin-top:7px;font-size:13px">${g.items.map(t => `<div style="color:var(--t2)">· ${esc(t.itemName)} <b style="color:var(--t1)">${+t.jang || 0}장</b>${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}${t.lot ? ` · 롯트 ${esc(t.lot)}` : ''}${t.pattern ? ` · 패턴 ${esc(t.pattern)}` : ''}</div>`).join('')}</div>
-            ${g.items.length > 1 ? `<div style="font-size:11.5px;color:var(--t3);margin-top:6px;text-align:right">합계 ${totJang}장 · ${totHebe.toFixed(1)}㎡</div>` : ''}
-            <div style="margin-top:9px;text-align:right"><button class="btn btn-sm" onclick="printShipSlip('${g.key}')"><i class="ti ti-printer"></i>출고증 인쇄</button></div>
-          </div>`;
-        }).join('') : `<div class="empty"><i class="ti ti-inbox"></i>출고 내역 없음</div>`;
-      })()}
+      <div class="card-h"><h3><i class="ti ti-printer"></i>출고증 인쇄</h3></div>
+      <div class="search-box" style="margin-bottom:10px">
+        <i class="ti ti-search"></i>
+        <input id="slip-search" placeholder="업체명·자재명 검색" value="${esc(filters.slipSearch || '')}" oninput="filterShipSlips()" autocomplete="off" lang="ko">
+        <button class="search-x" id="slip-search-x" style="${(filters.slipSearch || '').trim() ? '' : 'display:none'}" onclick="el('slip-search').value='';filterShipSlips()"><i class="ti ti-x"></i></button>
+      </div>
+      <div id="slip-list">${shipSlipListHtml()}</div>
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-table"></i>출고 내역 조회·추출</h3></div>
