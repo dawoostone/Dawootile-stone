@@ -2085,6 +2085,32 @@ function holdCardHtml(h) {
         </div>`))}
       </div>`;
 }
+/* 홀딩 목록 → 컴팩트 표. 행 클릭 시 상세·작업 모달 */
+function holdTableHtml(list) {
+  if (!list.length) return `<div class="empty"><i class="ti ti-lock-off"></i>${(filters.holdSearch || '').trim() ? '검색 결과가 없습니다' : '홀딩이 없습니다'}</div>`;
+  return `<div style="border:1px solid var(--bd);border-radius:12px;overflow:hidden">` + list.map(h => {
+    const its = holdItems(h);
+    const mat = its.map(it => esc(it.materialName || '')).filter(Boolean).join(', ') || '-';
+    const jang = its.reduce((a, b) => a + (+b.jang || 0), 0);
+    const d = daysFromNow(h.useDate);
+    const dt = h.useDate ? (esc(h.useDate) + (d != null && d >= 0 && d <= 7 && h.status !== '확정' ? ` <b style="color:var(--red-t)">D-${d}</b>` : '')) : '미정';
+    const stColor = h.status === '확정' ? 'var(--gd)' : (h.status === '예정' ? 'var(--amber-t)' : (h.status === '해제' ? 'var(--t3)' : 'var(--blue)'));
+    return `<div onclick="openHoldDetail('${h.id}')" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--bd);cursor:pointer;background:#fff">
+      <div style="min-width:0;flex:1">
+        <div style="font-size:14px;font-weight:700;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${mat} <span style="color:var(--t2);font-weight:600">${jang}장</span></div>
+        <div style="font-size:11.5px;color:var(--t3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><i class="ti ti-briefcase" style="font-size:11px"></i> ${esc(h.vendor || '-')}${h.forSiteName ? ` · ${esc(h.forSiteName)}` : ''}</div>
+      </div>
+      <div style="flex:none;text-align:right;white-space:nowrap">
+        <div style="font-size:12px;color:${stColor};font-weight:700">${holdStatusText(h)}</div>
+        <div style="font-size:11px;color:var(--t3);margin-top:2px">${dt}</div>
+      </div>
+    </div>`;
+  }).join('') + `</div>`;
+}
+function openHoldDetail(id) {
+  const h = state.holdings.find(x => x.id === id); if (!h) return;
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-lock"></i>홀딩 상세</h3><button class="x" onclick="closeModal()">×</button></div>${holdCardHtml(h)}`);
+}
 function holdGroupedHtml(list, keyFn, icon) {
   const map = new Map();
   list.forEach(h => keyFn(h).forEach(k => {
@@ -2093,7 +2119,7 @@ function holdGroupedHtml(list, keyFn, icon) {
   }));
   const keys = [...map.keys()].sort((a, b) => a.localeCompare(b));
   if (!keys.length) return `<div class="empty"><i class="ti ti-lock-off"></i>해당하는 홀딩이 없습니다</div>`;
-  return keys.map(k => `<div class="sec-label" style="margin-top:8px"><i class="ti ${icon}"></i> ${esc(k)} <span style="color:var(--t3);font-weight:500">· ${map.get(k).length}건</span></div><div class="hold-grid">${map.get(k).map(holdCardHtml).join('')}</div>`).join('');
+  return keys.map(k => `<div class="sec-label" style="margin-top:8px"><i class="ti ${icon}"></i> ${esc(k)} <span style="color:var(--t3);font-weight:500">· ${map.get(k).length}건</span></div>${holdTableHtml(map.get(k))}`).join('');
 }
 /* 홀딩 화면 보기 전환: 'active'(진행+예정) / 'done'(출고완료) / 'released'(지난·해제) */
 function goHoldView(v) { filters.holdDone = (v === 'done'); filters.holdArchive = (v === 'released'); renderHold(); }
@@ -2147,7 +2173,7 @@ function holdBodyHtml() {
   if (!list.length) return `<div class="empty"><i class="ti ti-lock-off"></i>${(filters.holdSearch || '').trim() ? '검색 결과가 없습니다' : '홀딩이 없습니다'}</div>`;
   if (g === 'material') return holdGroupedHtml(list, h => { const ms = holdItems(h).map(it => it.materialName || '(자재 미지정)'); return ms.length ? [...new Set(ms)] : ['(자재 미지정)']; }, 'ti-box');
   if (g === 'vendor') return holdGroupedHtml(list, h => [h.vendor || '(업체 미지정)'], 'ti-briefcase');
-  return `<div class="hold-grid">${list.map(holdCardHtml).join('')}</div>`;
+  return holdTableHtml(list);
 }
 /* 검색어 입력 시: 전체 재렌더 없이 목록 영역만 교체 (모바일 한글 입력 끊김 방지) */
 function filterHold() {
@@ -2179,12 +2205,14 @@ function renderHold() {
         <button class="btn" style="flex:1" onclick="goHoldView('released')"><i class="ti ti-history"></i>지난·해제${released.length ? ' (' + released.length + ')' : ''}</button>
       </div>`;
   el('pg-hold').innerHTML = `
-    <div class="ph"><div><h2><i class="ti ti-lock"></i>자재 홀딩</h2><p>예약 → 출고 시 '확정' · 재고 부족 시 예정홀딩</p></div>
+    <div class="ph"><div><h2><i class="ti ti-lock"></i>자재 홀딩</h2><p>예약 → 출고 시 '확정' · 행을 누르면 상세·작업</p></div>
       <button class="btn btn-pri btn-sm" onclick="openHoldForm()"><i class="ti ti-plus"></i>홀딩 등록</button></div>
-    <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
-      <button class="stat tap" onclick="goHoldView('active')"><div class="ic b"><i class="ti ti-lock"></i></div><div class="v">${reserved.length}</div><div class="l">홀딩 중</div><div class="s">임박 ${soon.length}</div></button>
-      <button class="stat tap" onclick="goHoldView('active')"><div class="ic a"><i class="ti ti-clock-pause"></i></div><div class="v" style="color:${planned.length ? 'var(--amber-t)' : 'inherit'}">${planned.length}</div><div class="l">예정홀딩</div><div class="s">입고 대기</div></button>
-      <button class="stat tap" onclick="goHoldView('done')"><div class="ic g"><i class="ti ti-circle-check"></i></div><div class="v">${confirmed.length}</div><div class="l">확정 <i class="ti ti-chevron-right tap-arrow"></i></div><div class="s">출고완료 보기</div></button>
+    <div class="banner info" style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;margin-bottom:10px;font-size:12.5px;gap:4px">
+      <button onclick="goHoldView('active')" style="flex:1;background:none;border:none;cursor:pointer;color:inherit;text-align:center;padding:2px"><i class="ti ti-lock" style="color:var(--blue)"></i> 홀딩 <b>${reserved.length}</b>${soon.length ? ` · <span style="color:var(--red-t)">임박 ${soon.length}</span>` : ''}</button>
+      <span style="opacity:.3">|</span>
+      <button onclick="goHoldView('active')" style="flex:1;background:none;border:none;cursor:pointer;color:inherit;text-align:center;padding:2px"><i class="ti ti-clock-pause" style="color:var(--amber-t)"></i> 예정 <b>${planned.length}</b></button>
+      <span style="opacity:.3">|</span>
+      <button onclick="goHoldView('done')" style="flex:1;background:none;border:none;cursor:pointer;color:inherit;text-align:center;padding:2px"><i class="ti ti-circle-check" style="color:var(--gd)"></i> 확정 <b>${confirmed.length}</b> <i class="ti ti-chevron-right" style="font-size:12px"></i></button>
     </div>
     <div class="search-box">
       <i class="ti ti-search"></i>
