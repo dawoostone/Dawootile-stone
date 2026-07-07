@@ -632,6 +632,22 @@ function patternList(name) {
   });
   return Object.keys(m).map(k => ({ pattern: k, qty: m[k] })).sort((a, b) => b.qty - a.qty);
 }
+/* 패턴별 잔여 재고 (입고 patterns − 출고 pattern) */
+function patternStock(name) {
+  if (!name) return []; const key = _normName(name); const m = {};
+  state.transactions.forEach(t => {
+    if (_normName(t.itemName) !== key) return;
+    if (t.type === 'in') { (t.patterns || []).forEach(p => { const nm = (p.pattern || '').trim(); if (!nm || nm === '-') return; m[nm] = (m[nm] || 0) + (+p.jang || 0); }); }
+    else if (t.type === 'out') { const nm = (t.pattern || '').trim(); if (!nm || nm === '-') return; m[nm] = (m[nm] || 0) - (+t.jang || 0); }
+  });
+  return Object.keys(m).map(k => ({ pattern: k, remain: m[k] })).filter(x => x.remain !== 0).sort((a, b) => b.remain - a.remain);
+}
+/* 재고 표 셀용: 패턴별 잔여 요약 */
+function patternStockCell(name) {
+  const ps = patternStock(name);
+  if (!ps.length) return '<span style="color:var(--t3)">-</span>';
+  return ps.map(p => `<div style="white-space:nowrap">${esc(p.pattern)} <b style="color:${p.remain <= 0 ? 'var(--t3)' : 'var(--gd)'}">${p.remain}</b>장</div>`).join('');
+}
 function patternSelectHtml(name, current) {
   const ps = patternList(name);
   let html = '<option value="">패턴 선택 (선택)</option>';
@@ -1327,13 +1343,14 @@ function stockBaseList() {
   return list;
 }
 function stockRowsHtml(list) {
-  if (!list.length) return `<tr><td colspan="7"><div class="empty"><i class="ti ti-package-off"></i>해당하는 자재가 없습니다</div></td></tr>`;
+  if (!list.length) return `<tr><td colspan="8"><div class="empty"><i class="ti ti-package-off"></i>해당하는 자재가 없습니다</div></td></tr>`;
   return list.map(i => {
     const s = stockState(i);
     const held = heldJangFor(i.name), avail = (+i.jang || 0) - held;
     return `<tr onclick="openItemForm('${i.id}')">
       <td><b>${esc(i.name)}</b><div style="font-size:11px;color:var(--t3)">${esc(i.vendor || '')}</div></td>
       <td>${esc(i.spec || '-')}</td>
+      <td style="font-size:11px">${patternStockCell(i.name)}</td>
       <td><b>${(+i.jang || 0)}</b>장${i.safeJang ? `<div style="font-size:10px;color:var(--t3)">안전 ${i.safeJang}</div>` : ''}</td>
       <td><b style="color:${avail <= 0 ? 'var(--red-t)' : 'var(--gd)'}">${avail}</b>장${held > 0 ? `<div style="font-size:10px;color:var(--t3)">홀딩 ${held}</div>` : ''}</td>
       <td>${itemHebe(i).toFixed(1)}㎡</td>
@@ -1370,7 +1387,7 @@ function renderStock() {
     <div style="font-size:12px;color:var(--t3);margin-bottom:8px">검색 결과 <b id="stock-count" style="color:var(--t1)">${list.length}종</b></div>
     <div class="tbl-wrap">
       <table class="tbl">
-        <thead><tr><th>자재명</th><th>규격</th><th>실재고</th><th>가용</th><th>헤베(㎡)</th><th>상태</th><th>창고</th></tr></thead>
+        <thead><tr><th>자재명</th><th>규격</th><th>패턴별</th><th>실재고</th><th>가용</th><th>헤베(㎡)</th><th>상태</th><th>창고</th></tr></thead>
         <tbody id="stock-tbody">${stockRowsHtml(list)}</tbody>
       </table>
     </div>
