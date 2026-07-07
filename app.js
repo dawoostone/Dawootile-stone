@@ -828,7 +828,14 @@ function buildAlerts() {
   soonConstruct.forEach(s => alerts.push({ key: 'const|' + s.id + '|' + s.constructDate, c: 'a', ic: 'ti-tools', t: `${s.name} 시공 임박`, s: `${s.constructDate} 시공 예정 · ${s.team || '시공팀 미정'}`, tag: 'D-' + daysFromNow(s.constructDate) }));
   soonHold.forEach(h => alerts.push({ key: 'hold|' + h.id + '|' + h.useDate, c: 'b', ic: 'ti-lock', t: `${h.vendor} 홀딩 사용 임박`, s: `${h.materialName} ${(+h.hebe || 0).toFixed(1)}㎡ · ${h.useDate} 사용`, tag: '홀딩' }));
   waitQuote.forEach(s => alerts.push({ key: 'quote|' + s.id + '|' + s.stage, c: 'a', ic: 'ti-file-invoice', t: `${s.name} 견적 진행 필요`, s: `현재 단계: ${s.stage} · ${s.client || ''}`, tag: s.stage }));
-  return alerts;
+  const _recency = a => {
+    const k = a.key || '';
+    if (k.indexOf('low|') === 0) { const it = state.inventory.find(i => 'low|' + i.name === k); return it ? +it.createdAt || 0 : 0; }
+    if (k.indexOf('issue|') === 0) { const x = state.issues.find(i => 'issue|' + (i.id || i.reason) === k); return x ? +x.createdAt || 0 : 0; }
+    if (k.indexOf('plan|') === 0 || k.indexOf('hold|') === 0) { const x = state.holdings.find(h => k.indexOf('|' + h.id) > -1); return x ? +x.createdAt || 0 : 0; }
+    const x = state.sites.find(s => k.indexOf('|' + s.id + '|') > -1); return x ? +x.createdAt || 0 : 0;
+  };
+  return alerts.sort((a, b) => _recency(b) - _recency(a));   // 최근 등록 항목 알림이 앞에
 }
 function getAlertDismissed() { try { return JSON.parse(localStorage.getItem('dws_alertDismiss') || '[]'); } catch (e) { return []; } }
 function _akey(k) { return String(k).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
@@ -2085,27 +2092,10 @@ function holdCardHtml(h) {
         </div>`))}
       </div>`;
 }
-/* 홀딩 목록 → 컴팩트 표. 행 클릭 시 상세·작업 모달 */
+/* 홀딩 목록 → 2칸 카드 그리드 */
 function holdTableHtml(list) {
   if (!list.length) return `<div class="empty"><i class="ti ti-lock-off"></i>${(filters.holdSearch || '').trim() ? '검색 결과가 없습니다' : '홀딩이 없습니다'}</div>`;
-  return `<div style="border:1px solid var(--bd);border-radius:12px;overflow:hidden">` + list.map(h => {
-    const its = holdItems(h);
-    const mat = its.map(it => esc(it.materialName || '')).filter(Boolean).join(', ') || '-';
-    const jang = its.reduce((a, b) => a + (+b.jang || 0), 0);
-    const d = daysFromNow(h.useDate);
-    const dt = h.useDate ? (esc(h.useDate) + (d != null && d >= 0 && d <= 7 && h.status !== '확정' ? ` <b style="color:var(--red-t)">D-${d}</b>` : '')) : '미정';
-    const stColor = h.status === '확정' ? 'var(--gd)' : (h.status === '예정' ? 'var(--amber-t)' : (h.status === '해제' ? 'var(--t3)' : 'var(--blue)'));
-    return `<div onclick="openHoldDetail('${h.id}')" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--bd);cursor:pointer;background:#fff">
-      <div style="min-width:0;flex:1">
-        <div style="font-size:14px;font-weight:700;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${mat} <span style="color:var(--t2);font-weight:600">${jang}장</span></div>
-        <div style="font-size:11.5px;color:var(--t3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><i class="ti ti-briefcase" style="font-size:11px"></i> ${esc(h.vendor || '-')}${h.forSiteName ? ` · ${esc(h.forSiteName)}` : ''}</div>
-      </div>
-      <div style="flex:none;text-align:right;white-space:nowrap">
-        <div style="font-size:12px;color:${stColor};font-weight:700">${holdStatusText(h)}</div>
-        <div style="font-size:11px;color:var(--t3);margin-top:2px">${dt}</div>
-      </div>
-    </div>`;
-  }).join('') + `</div>`;
+  return `<div class="hold-grid">${list.map(holdCardHtml).join('')}</div>`;
 }
 function openHoldDetail(id) {
   const h = state.holdings.find(x => x.id === id); if (!h) return;
@@ -2170,10 +2160,12 @@ ${body}
 function holdBodyHtml() {
   const list = holdFilteredList();
   const g = filters.holdGroup || 'none';
-  if (!list.length) return `<div class="empty"><i class="ti ti-lock-off"></i>${(filters.holdSearch || '').trim() ? '검색 결과가 없습니다' : '홀딩이 없습니다'}</div>`;
-  if (g === 'material') return holdGroupedHtml(list, h => { const ms = holdItems(h).map(it => it.materialName || '(자재 미지정)'); return ms.length ? [...new Set(ms)] : ['(자재 미지정)']; }, 'ti-box');
-  if (g === 'vendor') return holdGroupedHtml(list, h => [h.vendor || '(업체 미지정)'], 'ti-briefcase');
-  return holdTableHtml(list);
+  let inner;
+  if (!list.length) inner = `<div class="empty"><i class="ti ti-lock-off"></i>${(filters.holdSearch || '').trim() ? '검색 결과가 없습니다' : '홀딩이 없습니다'}</div>`;
+  else if (g === 'material') inner = holdGroupedHtml(list, h => { const ms = holdItems(h).map(it => it.materialName || '(자재 미지정)'); return ms.length ? [...new Set(ms)] : ['(자재 미지정)']; }, 'ti-box');
+  else if (g === 'vendor') inner = holdGroupedHtml(list, h => [h.vendor || '(업체 미지정)'], 'ti-briefcase');
+  else inner = holdTableHtml(list);
+  return `<div class="hold-scroll">${inner}</div>`;
 }
 /* 검색어 입력 시: 전체 재렌더 없이 목록 영역만 교체 (모바일 한글 입력 끊김 방지) */
 function filterHold() {
@@ -2205,27 +2197,27 @@ function renderHold() {
         <button class="btn" style="flex:1" onclick="goHoldView('released')"><i class="ti ti-history"></i>지난·해제${released.length ? ' (' + released.length + ')' : ''}</button>
       </div>`;
   el('pg-hold').innerHTML = `
-    <div class="ph"><div><h2><i class="ti ti-lock"></i>자재 홀딩</h2><p>예약 → 출고 시 '확정' · 행을 누르면 상세·작업</p></div>
-      <button class="btn btn-pri btn-sm" onclick="openHoldForm()"><i class="ti ti-plus"></i>홀딩 등록</button></div>
-    <div class="banner info" style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;margin-bottom:10px;font-size:12.5px;gap:4px">
-      <button onclick="goHoldView('active')" style="flex:1;background:none;border:none;cursor:pointer;color:inherit;text-align:center;padding:2px"><i class="ti ti-lock" style="color:var(--blue)"></i> 홀딩 <b>${reserved.length}</b>${soon.length ? ` · <span style="color:var(--red-t)">임박 ${soon.length}</span>` : ''}</button>
-      <span style="opacity:.3">|</span>
-      <button onclick="goHoldView('active')" style="flex:1;background:none;border:none;cursor:pointer;color:inherit;text-align:center;padding:2px"><i class="ti ti-clock-pause" style="color:var(--amber-t)"></i> 예정 <b>${planned.length}</b></button>
-      <span style="opacity:.3">|</span>
-      <button onclick="goHoldView('done')" style="flex:1;background:none;border:none;cursor:pointer;color:inherit;text-align:center;padding:2px"><i class="ti ti-circle-check" style="color:var(--gd)"></i> 확정 <b>${confirmed.length}</b> <i class="ti ti-chevron-right" style="font-size:12px"></i></button>
+    <div class="hold-widget">
+      <button onclick="goHoldView('active')" class="${view === 'active' ? 'on' : ''}"><div class="wv" style="color:var(--blue)">${reserved.length}</div><div class="wl">홀딩${soon.length ? '<br>임박 ' + soon.length : ''}</div></button>
+      <button onclick="goHoldView('active')" class="${view === 'active' ? 'on' : ''}"><div class="wv" style="color:var(--amber-t)">${planned.length}</div><div class="wl">예정</div></button>
+      <button onclick="goHoldView('done')" class="${view === 'done' ? 'on' : ''}"><div class="wv" style="color:var(--gd)">${confirmed.length}</div><div class="wl">확정</div></button>
     </div>
-    <div class="search-box">
-      <i class="ti ti-search"></i>
-      <input id="hold-search" placeholder="업체명·자재명 검색" value="${esc(filters.holdSearch || '')}" oninput="filterHold()" autocomplete="off">
-      <button class="search-x" id="hold-search-x" style="${(filters.holdSearch || '').trim() ? '' : 'display:none'}" onclick="clearHoldSearch()"><i class="ti ti-x"></i></button>
-    </div>
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:2px">
-      <div class="chips" style="margin:0">${gchip('none', '전체', 'ti-list')}${gchip('material', '자재별', 'ti-box')}${gchip('vendor', '업체별', 'ti-briefcase')}</div>
-      <button class="btn btn-sm" style="flex:none" onclick="downloadHoldXls()"><i class="ti ti-file-spreadsheet"></i>엑셀</button>
-    </div>
-    ${viewBtns}
-    ${viewBanner}
-    <div id="hold-body">${holdBodyHtml()}</div>`;
+    <div class="hold-pad">
+      <div class="ph"><div><h2><i class="ti ti-lock"></i>자재 홀딩</h2><p>예약 → 출고 시 '확정' · 탭하면 상세</p></div>
+        <button class="btn btn-pri btn-sm" onclick="openHoldForm()"><i class="ti ti-plus"></i>홀딩 등록</button></div>
+      <div class="search-box">
+        <i class="ti ti-search"></i>
+        <input id="hold-search" placeholder="업체명·자재명 검색" value="${esc(filters.holdSearch || '')}" oninput="filterHold()" autocomplete="off">
+        <button class="search-x" id="hold-search-x" style="${(filters.holdSearch || '').trim() ? '' : 'display:none'}" onclick="clearHoldSearch()"><i class="ti ti-x"></i></button>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:2px">
+        <div class="chips" style="margin:0">${gchip('none', '전체', 'ti-list')}${gchip('material', '자재별', 'ti-box')}${gchip('vendor', '업체별', 'ti-briefcase')}</div>
+        <button class="btn btn-sm" style="flex:none" onclick="downloadHoldXls()"><i class="ti ti-file-spreadsheet"></i>엑셀</button>
+      </div>
+      ${viewBtns}
+      ${viewBanner}
+      <div id="hold-body">${holdBodyHtml()}</div>
+    </div>`;
 }
 function openHoldForm(id, pre) {
   const h = id ? state.holdings.find(x => x.id === id) : null; const v = h || Object.assign({}, pre || {});

@@ -160,8 +160,15 @@ body.cust-mode .wrap{padding-bottom:24px}
 
 .site-grid{display:grid;grid-template-columns:1fr;gap:12px}
 @media(min-width:700px){ .site-grid{grid-template-columns:1fr 1fr} }
-.hold-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start}
-.hold-grid>.card{margin-bottom:0!important}
+.hold-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:stretch}
+.hold-grid>.card{margin-bottom:0!important;height:100%}
+.hold-pad{padding-right:64px}
+.hold-scroll{max-height:calc(100vh - 300px);min-height:200px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--bd);border-radius:12px;padding:10px;background:var(--soft,#f6f8f7)}
+.hold-widget{position:fixed;right:6px;top:96px;z-index:30;display:flex;flex-direction:column;gap:6px;width:56px}
+.hold-widget button{background:#fff;border:1px solid var(--bd);border-radius:12px;padding:8px 2px;text-align:center;box-shadow:0 3px 10px rgba(16,40,33,.12);cursor:pointer;line-height:1.15}
+.hold-widget button.on{border-color:var(--g);box-shadow:0 3px 12px rgba(15,110,86,.25)}
+.hold-widget .wv{font-size:17px;font-weight:800}
+.hold-widget .wl{font-size:9px;color:var(--t3);margin-top:1px;font-weight:600}
 .site{background:var(--card);border:1px solid var(--bd);border-radius:var(--rl);padding:15px;box-shadow:var(--sh);cursor:pointer;transition:.15s}
 .site:active{transform:scale(.995)}
 .site-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:11px}
