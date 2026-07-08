@@ -2186,7 +2186,7 @@ function holdCardHtml(h) {
           ${rel ? `<span class="pill p-gray"><i class="ti ti-lock-open"></i>해제됨</span>` : (conf ? `<span class="pill p-done"><i class="ti ti-circle-check"></i>확정</span>` : (plan ? `<span class="pill p-wait"><i class="ti ti-clock-pause"></i>예정 · 입고대기</span>` : `<span class="pill ${cls}"><i class="ti ti-calendar"></i>${h.useDate || '미정'}${d != null && d >= 0 && d <= 7 ? ' · D-' + d : ''}</span>`))}
         </div>
         <div style="margin:6px 0 4px">
-          ${holdItems(h).map(it => `<div style="margin-bottom:3px"><span style="font-size:15px;font-weight:700;color:var(--t1)">${esc(it.materialName || '-')}</span> <span style="color:var(--t2);font-size:12.5px">· ${+it.jang || 0}장${it.hebe ? ` (${(+it.hebe).toFixed(1)}㎡)` : ''}${it.lot ? ` · 롯트 ${esc(it.lot)}` : ''}${it.pattern ? ` · 패턴 ${esc(it.pattern)}` : ''}</span></div>`).join('')}
+          ${holdItems(h).map(it => `<div style="margin-bottom:3px"><span style="font-size:15px;font-weight:700;color:var(--t1);word-break:keep-all">${esc(it.materialName || '-')}</span> <span style="color:var(--t2);font-size:12.5px">· ${+it.jang || 0}장${it.hebe ? ` (${(+it.hebe).toFixed(1)}㎡)` : ''}${it.lot ? ` · 롯트 ${esc(it.lot)}` : ''}${it.pattern ? ` · 패턴 ${esc(it.pattern)}` : ''}</span></div>`).join('')}
         </div>
         ${conf ? `<div style="font-size:12px;color:var(--lime-t);margin-top:4px"><i class="ti ti-truck-delivery"></i> 출고 완료 ${esc(h.shippedDate || '')} · ${+h.shippedJang || 0}장</div>` : ''}
         ${plan ? `<div style="font-size:12px;color:var(--amber-t);margin-top:4px"><i class="ti ti-clock-pause"></i> 입고되면 자동으로 홀딩으로 전환됩니다</div>` : ''}
@@ -2271,7 +2271,7 @@ function holdListTableHtml(list) {
     return `<tr onclick="openHoldDetail('${h.id}')" style="cursor:pointer">
       <td>${esc(h.useDate || '-')}</td>
       <td><b>${esc(h.vendor || '-')}</b></td>
-      <td>${esc(it.materialName || '-')}</td>
+      <td style="word-break:keep-all">${esc(it.materialName || '-')}</td>
       <td style="text-align:right">${(+it.jang || 0)}</td>
       <td style="text-align:right">${(+it.hebe || 0).toFixed(1)}</td>
       <td>${esc(h.forSiteName || '-')}</td>
@@ -2324,13 +2324,8 @@ function renderHold() {
         <button class="btn" style="flex:1" onclick="goHoldView('released')"><i class="ti ti-history"></i>지난·해제${released.length ? ' (' + released.length + ')' : ''}</button>
       </div>`;
   el('pg-hold').innerHTML = `
-    <div class="hold-widget">
-      <button onclick="goHoldView('active')" class="${view === 'active' ? 'on' : ''}"><div class="wv" style="color:var(--blue)">${reserved.length}</div><div class="wl">홀딩${soon.length ? '<br>임박 ' + soon.length : ''}</div></button>
-      <button onclick="goHoldView('active')" class="${view === 'active' ? 'on' : ''}"><div class="wv" style="color:var(--amber-t)">${planned.length}</div><div class="wl">예정</div></button>
-      <button onclick="goHoldView('done')" class="${view === 'done' ? 'on' : ''}"><div class="wv" style="color:var(--gd)">${confirmed.length}</div><div class="wl">확정</div></button>
-    </div>
-    <div class="hold-pad">
-      <div class="ph"><div><h2><i class="ti ti-lock"></i>자재 홀딩</h2><p>예약 → 출고 시 '확정' · 탭하면 상세</p></div>
+    <div>
+      <div class="ph"><div><h2><i class="ti ti-lock"></i>자재 홀딩</h2><p>홀딩 ${reserved.length} · 예정 ${planned.length} · 확정 ${confirmed.length}${soon.length ? ' · 임박 ' + soon.length : ''}</p></div>
         <button class="btn btn-pri btn-sm" onclick="openHoldForm()"><i class="ti ti-plus"></i>홀딩 등록</button></div>
       <div class="search-box">
         <i class="ti ti-search"></i>
