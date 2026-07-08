@@ -1365,6 +1365,24 @@ function filterStockTable() {
   if (el('stock-tbody')) el('stock-tbody').innerHTML = stockRowsHtml(list);
   if (el('stock-count')) el('stock-count').textContent = list.length + '종';
 }
+/* 입고 내역 전체 (최신순) */
+function inTxnList() {
+  return state.transactions.filter(t => t.type === 'in').sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0) || (b.date || '').localeCompare(a.date || ''));
+}
+/* 입고 내역 목록 HTML (검색 반영) */
+function inListHtml() {
+  const q = (filters.inSearch || '').trim().toLowerCase();
+  let list = inTxnList();
+  if (q) list = list.filter(t => (t.itemName || '').toLowerCase().includes(q) || (t.vendor || '').toLowerCase().includes(q) || (t.lot || '').toLowerCase().includes(q));
+  if (!list.length) return `<div class="empty"><i class="ti ti-inbox"></i>${q ? '검색 결과가 없습니다' : '입고 내역 없음'}</div>`;
+  return list.map(t => `<div class="alert-i b" style="background:var(--gl2);border-color:var(--gbd)"><div class="ai" style="color:var(--gd)"><i class="ti ti-login"></i></div><div class="at"><b>${esc(t.itemName)} +${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · 롯트 ${esc(t.lot || '-')} · ${esc(t.vendor || '')} · ${esc(t.by || '')}</span></div>${isAdmin() ? `<button class="x" onclick="delIn('${t.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('');
+}
+/* 검색어 입력 시 목록만 교체 (한글 입력 끊김 방지) */
+function filterInList() {
+  filters.inSearch = el('in-search') ? el('in-search').value : '';
+  if (el('in-list')) el('in-list').innerHTML = inListHtml();
+  const x = el('in-search-x'); if (x) x.style.display = (filters.inSearch || '').trim() ? '' : 'none';
+}
 function renderStock() {
   const f = filters.stock;
   const list = stockBaseList();
@@ -1392,8 +1410,13 @@ function renderStock() {
       </table>
     </div>
     <div class="card" style="margin-top:14px">
-      <div class="card-h"><h3><i class="ti ti-login"></i>최근 입고</h3></div>
-      ${ins.length ? ins.map(t => `<div class="alert-i b" style="background:var(--gl2);border-color:var(--gbd)"><div class="ai" style="color:var(--gd)"><i class="ti ti-login"></i></div><div class="at"><b>${esc(t.itemName)} +${(+t.hebe || 0).toFixed(1)}㎡ (${+t.jang || 0}장)</b><span>${esc(t.date)} · 롯트 ${esc(t.lot || '-')} · ${esc(t.vendor || '')} · ${esc(t.by || '')}</span></div>${isAdmin() ? `<button class="x" onclick="delIn('${t.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div class="empty"><i class="ti ti-inbox"></i>입고 내역 없음</div>`}
+      <div class="card-h"><h3><i class="ti ti-login"></i>입고 내역</h3></div>
+      <div class="search-box" style="margin-bottom:10px">
+        <i class="ti ti-search"></i>
+        <input id="in-search" placeholder="자재명·공급처·롯트 검색" value="${esc(filters.inSearch || '')}" oninput="filterInList()" autocomplete="off" lang="ko">
+        <button class="search-x" id="in-search-x" style="${(filters.inSearch || '').trim() ? '' : 'display:none'}" onclick="el('in-search').value='';filterInList()"><i class="ti ti-x"></i></button>
+      </div>
+      <div id="in-list" style="max-height:360px;overflow-y:auto;-webkit-overflow-scrolling:touch">${inListHtml()}</div>
     </div>`;
 }
 function chipS(v, l, c) { return `<button class="chip ${c === v ? 'active' : ''}" onclick="filters.stock='${v}';renderStock()">${l}</button>`; }
