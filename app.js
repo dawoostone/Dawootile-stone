@@ -1436,7 +1436,7 @@ function renderStock() {
     <div class="chips">${chipS('all', '전체', f)}${chipS('low', '부족·없음', f)}${chipS('ok', '정상', f)}</div>
     ${f === 'low' ? `<div class="banner warn"><i class="ti ti-alert-triangle"></i><span><b>입고가 필요한 자재</b>만 모았습니다. 자재명과 현재 장수를 확인하세요.</span></div>` : ''}
     <div style="font-size:12px;color:var(--t3);margin-bottom:8px">검색 결과 <b id="stock-count" style="color:var(--t1)">${list.length}종</b></div>
-    <div class="tbl-wrap">
+    <div class="tbl-wrap" style="max-height:calc(100vh - 360px);min-height:220px;overflow:auto">
       <table class="tbl">
         <thead><tr><th>자재명</th><th>규격</th><th>패턴별</th><th>실재고</th><th>가용</th><th>헤베(㎡)</th><th>상태</th><th>창고</th></tr></thead>
         <tbody id="stock-tbody">${stockRowsHtml(list)}</tbody>
