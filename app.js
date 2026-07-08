@@ -1383,6 +1383,39 @@ function filterInList() {
   if (el('in-list')) el('in-list').innerHTML = inListHtml();
   const x = el('in-search-x'); if (x) x.style.display = (filters.inSearch || '').trim() ? '' : 'none';
 }
+/* 입고 내역 → 엑셀(.xls) 다운로드 (검색 반영, 패턴별 행 분리) */
+function downloadInXls() {
+  const q = (filters.inSearch || '').trim().toLowerCase();
+  let list = inTxnList();
+  if (q) list = list.filter(t => (t.itemName || '').toLowerCase().includes(q) || (t.vendor || '').toLowerCase().includes(q) || (t.lot || '').toLowerCase().includes(q));
+  if (!list.length) { toast('내보낼 입고 내역이 없습니다'); return; }
+  const rows = [];
+  list.forEach(t => {
+    const it = state.inventory.find(i => _normName(i.name) === _normName(t.itemName));
+    const per = it ? (+it.hebePerJang || 0) : 0;
+    const pats = (t.patterns && t.patterns.length) ? t.patterns : [{ pattern: '', jang: +t.jang || 0 }];
+    pats.forEach(p => { const jg = +p.jang || 0; rows.push({ date: t.date || '', name: t.itemName || '', spec: t.spec || (it && it.spec) || '', pattern: p.pattern || '', jang: jg, hebe: +(jg * per).toFixed(2), lot: t.lot || '', vendor: t.vendor || '', by: t.by || '', note: t.note || '' }); });
+  });
+  const tj = rows.reduce((a, b) => a + b.jang, 0), th = rows.reduce((a, b) => a + b.hebe, 0);
+  const TH = (t, w) => `<th style="background:#0F6E56;color:#fff;font-weight:bold;border:0.5pt solid #0a4f3e;padding:7px 10px;text-align:center" ${w ? 'width="' + w + '"' : ''}>${t}</th>`;
+  const TD = (t, st) => `<td style="border:0.5pt solid #cfd8d4;padding:5px 10px;${st || ''}">${t}</td>`;
+  const body = rows.map((r, i) => { const bg = i % 2 ? 'background:#f3f6f4;' : ''; return `<tr>${TD(esc(r.date), bg)}${TD('<b>' + esc(r.name) + '</b>', bg)}${TD(esc(r.spec), bg)}${TD(esc(r.pattern), bg)}${TD(r.jang, bg + 'text-align:right')}${TD(r.hebe.toFixed(2), bg + 'text-align:right')}${TD(esc(r.lot), bg)}${TD(esc(r.vendor), bg)}${TD(esc(r.by), bg)}${TD(esc(r.note), bg)}</tr>`; }).join('');
+  const sumStyle = 'border:0.5pt solid #cfd8d4;background:#e1f5ee;color:#0a4f3e;font-weight:bold;padding:7px 10px';
+  const scope = q ? `검색 "${esc(filters.inSearch.trim())}"` : '전체';
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>입고내역</x:Name><x:WorksheetOptions><x:FreezePanes/><x:SplitHorizontal>3</x:SplitHorizontal><x:TopRowBottomPane>3</x:TopRowBottomPane></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body>
+<table style="border-collapse:collapse;font-family:'맑은 고딕','Malgun Gothic',sans-serif;font-size:10.5pt">
+<tr><td colspan="10" style="font-size:16pt;font-weight:bold;color:#0F6E56;padding:8px 4px 2px">다우세라믹앤석재 · 입고 내역</td></tr>
+<tr><td colspan="10" style="font-size:9pt;color:#777;padding:0 4px 10px">범위 ${scope}  ·  생성일 ${todayStr()}  ·  총 ${rows.length}행</td></tr>
+<tr>${TH('입고일', 90)}${TH('자재명', 150)}${TH('규격', 110)}${TH('패턴', 90)}${TH('장수', 60)}${TH('헤베(㎡)', 80)}${TH('롯트', 110)}${TH('발주처', 120)}${TH('담당', 80)}${TH('메모', 140)}</tr>
+${body}
+<tr><td colspan="4" style="${sumStyle};text-align:right">합계</td><td style="${sumStyle};text-align:right">${tj}</td><td style="${sumStyle};text-align:right">${th.toFixed(2)}</td><td colspan="4" style="${sumStyle}"></td></tr>
+</table></body></html>`;
+  const blob = new Blob(['﻿' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = '입고내역_' + todayStr() + '.xls'; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
+  toast('입고 엑셀 다운로드 (' + rows.length + '행)');
+}
 function renderStock() {
   const f = filters.stock;
   const list = stockBaseList();
@@ -1410,7 +1443,7 @@ function renderStock() {
       </table>
     </div>
     <div class="card" style="margin-top:14px">
-      <div class="card-h"><h3><i class="ti ti-login"></i>입고 내역</h3></div>
+      <div class="card-h"><h3><i class="ti ti-login"></i>입고 내역</h3><button class="btn btn-sm" onclick="downloadInXls()"><i class="ti ti-file-spreadsheet"></i>엑셀</button></div>
       <div class="search-box" style="margin-bottom:10px">
         <i class="ti ti-search"></i>
         <input id="in-search" placeholder="자재명·공급처·롯트 검색" value="${esc(filters.inSearch || '')}" oninput="filterInList()" autocomplete="off" lang="ko">
@@ -1619,7 +1652,13 @@ function bulkInTemplateStock() {
   const header = ['자재명', '규격', '패턴', '장수', '롯트', '입고일', '발주처', '메모'];
   const items = state.inventory.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   if (!items.length) { toast('등록된 품목이 없습니다 — 빈 양식을 사용하세요'); return; }
-  const rows = items.map(i => [i.name || '', i.spec || '', '', '', '', todayStr(), i.vendor || '다우세라믹앤석재', '']);
+  // 각 품목의 과거 패턴(좌상/우상 등)을 미리 채워 고정 — 패턴이 여러 개면 행을 나눠 넣음
+  const rows = [];
+  items.forEach(i => {
+    const pats = patternList(i.name);
+    if (pats.length) pats.forEach(p => rows.push([i.name || '', i.spec || '', p.pattern, '', '', todayStr(), i.vendor || '다우세라믹앤석재', '']));
+    else rows.push([i.name || '', i.spec || '', '', '', '', todayStr(), i.vendor || '다우세라믹앤석재', '']);
+  });
   const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
   ws['!cols'] = [{ wch: 18 }, { wch: 16 }, { wch: 10 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 22 }];
   const wb = XLSX.utils.book_new();
