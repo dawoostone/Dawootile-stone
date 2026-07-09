@@ -29,7 +29,7 @@ function prefillEmail() {
 }
 function cref(name) { return db.collection('teams').doc(TEAM).collection(name); }
 
-const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients', 'issues'];
+const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients', 'issues', 'restocks'];
 
 // 로컬(미리보기) 모드용 - 같은 기기의 다른 탭끼리 실시간 반영
 const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('dws') : null;
@@ -83,7 +83,7 @@ const Store = {
 if (bc) bc.onmessage = (e) => { const c = e.data; if (Store._watchers[c]) Store._watchers[c](Store.read(c)); };
 
 /* ---------- 1. 전역 상태 ---------- */
-const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [], issues: [] };
+const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [], issues: [], restocks: [] };
 let me = null;          // 로그인한 사용자
 let tab = 'home';
 let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all', holdArchive: false, holdDone: false, holdSearch: '', holdGroup: 'none', custSearch: '', shipSearch: '' };
@@ -478,22 +478,24 @@ function custStockList() {
 }
 function custStockBody(list) {
   if (!list.length) return `<div class="empty"><i class="ti ti-search-off"></i>해당하는 자재가 없습니다</div>`;
-  return list.map(i => {
+  const rows = list.map(i => {
     const jang = +i.jang || 0;
     const hebe = jang * (+i.hebePerJang || 0);
     const inStock = jang > 0;
-    return `<div class="card" style="margin-bottom:9px;padding:12px 14px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
-        <div style="min-width:0"><div style="font-size:15.5px;font-weight:700;color:var(--t1)">${esc(i.name)}</div>
-          ${i.spec ? `<div style="font-size:12.5px;color:var(--t3);margin-top:3px"><i class="ti ti-ruler-2" style="font-size:12px"></i> 규격 ${esc(i.spec)}</div>` : ''}</div>
-        <span class="pill ${inStock ? 'p-prog' : 'p-issue'}" style="flex:none">${inStock ? '재고 있음' : '품절'}</span>
-      </div>
-      <div style="display:flex;gap:22px;margin-top:10px;font-size:14px">
-        <div><span style="color:var(--t3);font-size:12.5px">재고</span> <b style="font-size:15px">${jang}장</b></div>
-        <div><span style="color:var(--t3);font-size:12.5px">면적</span> <b style="font-size:15px">${hebe.toFixed(1)}㎡</b></div>
-      </div>
-    </div>`;
+    const dot = inStock ? 'background:#1D9E75;--pc:rgba(29,158,117,.6)' : 'background:#E23B3B;--pc:rgba(226,59,59,.75)';
+    const lbl = inStock ? '<span style="font-size:11.5px;font-weight:600;color:#0F6E56">있음</span>' : '<span style="font-size:11.5px;font-weight:600;color:#A32D2D">품절</span>';
+    let restock = '';
+    if (!inStock && i.restockDate) { const p = String(i.restockDate).split('-'); if (p.length === 3) restock = `<div style="font-size:11px;color:var(--amber-t);margin-top:4px;font-weight:600"><i class="ti ti-truck-delivery" style="font-size:12px;vertical-align:-1px"></i> 재입고 예정 ${+p[1]}/${+p[2]}</div>`; }
+    return `<tr>
+      <td><div style="font-weight:600;color:var(--t1);word-break:keep-all">${esc(i.name)}</div>${i.spec ? `<div style="color:var(--t3);font-size:11px;margin-top:2px">${esc(i.spec)}</div>` : ''}${restock}</td>
+      <td style="text-align:right;white-space:nowrap"><div style="font-weight:700;color:${inStock ? 'var(--t1)' : 'var(--t3)'}">${jang}장</div><div style="color:var(--t3);font-size:11px">${hebe.toFixed(1)}㎡</div></td>
+      <td><span style="display:inline-flex;align-items:center;gap:6px"><span class="live-dot" style="${dot}"></span>${lbl}</span></td>
+    </tr>`;
   }).join('');
+  return `<div style="border:0.5px solid var(--bd);border-radius:12px;overflow:hidden;margin-top:2px">
+    <div style="max-height:calc(100vh - 250px);min-height:200px;overflow-y:auto;-webkit-overflow-scrolling:touch">
+      <table class="cust-tbl"><thead><tr><th>자재명 · 규격</th><th style="text-align:right;width:66px">재고</th><th style="width:62px">상태</th></tr></thead><tbody>${rows}</tbody></table>
+    </div></div>`;
 }
 function filterCustStock() {
   filters.custSearch = el('cust-search') ? el('cust-search').value : '';
@@ -503,9 +505,10 @@ function filterCustStock() {
 function clearCustStock() { filters.custSearch = ''; if (el('cust-search')) el('cust-search').value = ''; filterCustStock(); const i = el('cust-search'); if (i) i.focus(); }
 function renderCustomerStock() {
   const list = custStockList();
-  const total = state.inventory.length;
+  const inN = state.inventory.filter(i => (+i.jang || 0) > 0).length;
+  const outN = state.inventory.length - inN;
   el('pg-stock').innerHTML = `
-    <div class="ph"><div><h2><i class="ti ti-packages"></i>재고 조회</h2><p>${esc(me.name)} 님 · 실시간 재고 (총 ${total}종)</p></div>
+    <div class="ph"><div><h2><i class="ti ti-packages"></i>재고 조회</h2><p><span class="live-dot" style="background:#1D9E75;--pc:rgba(29,158,117,.6);width:7px;height:7px;display:inline-block;vertical-align:middle;margin-right:5px"></span>실시간 · 재고있음 ${inN} · 품절 ${outN}</p></div>
       <button class="btn btn-sm" onclick="logout()"><i class="ti ti-logout"></i>로그아웃</button></div>
     <div class="search-box">
       <i class="ti ti-search"></i>
@@ -654,6 +657,27 @@ function patternSelectHtml(name, current) {
   ps.forEach(p => { html += `<option value="${esc(p.pattern)}" ${current === p.pattern ? 'selected' : ''}>${esc(p.pattern)} · ${p.qty}장</option>`; });
   if (current && !ps.some(p => p.pattern === current)) html += `<option value="${esc(current)}" selected>${esc(current)}</option>`;
   return html;
+}
+/* ===== 예정 입고(재입고 예정) ===== */
+/* 특정 자재의 활성(미완료) 예정입고 — 예정일 빠른 순 */
+function restocksForItem(name) {
+  const key = _normName(name);
+  return (state.restocks || []).filter(r => !r.done && _normName(r.itemName) === key)
+    .sort((a, b) => (a.expectedDate || '9999-99-99').localeCompare(b.expectedDate || '9999-99-99'));
+}
+/* 자재의 가장 이른 재입고 예정일 (없으면 '') */
+function restockDateForItem(name) { const r = restocksForItem(name)[0]; return r ? (r.expectedDate || '') : ''; }
+/* 예정입고 변경 후: inventory.restockDate 를 최신 예정일로 동기화(고객 화면 노출용) */
+async function syncItemRestock(name) {
+  const it = state.inventory.find(i => _normName(i.name) === _normName(name));
+  if (!it) return;
+  const d = restockDateForItem(name);
+  if ((it.restockDate || '') !== d) { try { await Store.update('inventory', it.id, { restockDate: d }); } catch (e) { } }
+}
+/* 입고 등록 시: 해당 자재의 활성 예정입고를 완료 처리 + 미러 동기화 */
+async function clearRestocksOnIn(name) {
+  for (const r of restocksForItem(name)) { try { await Store.update('restocks', r.id, { done: true, doneDate: todayStr() }); } catch (e) { } }
+  await syncItemRestock(name);
 }
 /* 재고 부족 판정 (가용재고 기준 안전재고) */
 function stockState(it) {
@@ -1442,6 +1466,7 @@ function renderStock() {
         <tbody id="stock-tbody">${stockRowsHtml(list)}</tbody>
       </table>
     </div>
+    ${restockCardHtml()}
     <div class="card" style="margin-top:14px">
       <div class="card-h"><h3><i class="ti ti-login"></i>입고 내역</h3><button class="btn btn-sm" onclick="downloadInXls()"><i class="ti ti-file-spreadsheet"></i>엑셀</button></div>
       <div class="search-box" style="margin-bottom:10px">
@@ -1612,8 +1637,72 @@ async function submitStock() {
   const newJang = (+it.jang || 0) + jang;
   await Store.update('inventory', it.id, { jang: newJang, lastInDate: date });
   await Store.add('transactions', { type: 'in', itemId: it.id, itemName: it.name, spec: it.spec, lot, patterns, jang, hebe, vendor, date, note, by: me.name });
+  await clearRestocksOnIn(it.name);
   const conv = await activatePlannedHolds(it.name, newJang);
   toast(`입고 완료 · ${jang}장 (${hebe}㎡)` + (conv ? ` · 예정홀딩 ${conv}건 활성화` : '')); closeModal();
+}
+
+/* ===================================================================
+   예정 입고(재입고 예정) — 발주 등록 · 실제 입고 시 자동 완료
+   =================================================================== */
+/* 활성 예정입고 전체 (예정일 빠른 순) */
+function activeRestocks() {
+  return (state.restocks || []).filter(r => !r.done)
+    .sort((a, b) => (a.expectedDate || '9999-99-99').localeCompare(b.expectedDate || '9999-99-99'));
+}
+function openRestockForm(id) {
+  const r = id ? (state.restocks || []).find(x => x.id === id) : null; const v = r || {};
+  openModal(`
+    <div class="sheet-h"><h3><i class="ti ti-truck-delivery"></i>${r ? '예정 입고 수정' : '예정 입고 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="banner info"><i class="ti ti-info-circle"></i><span>발주한 자재의 <b>입고 예정</b>을 등록합니다. 고객 재고 화면의 <b>품절</b> 자재에 예정일이 표시되고, 실제 입고를 등록하면 자동으로 정리됩니다.</span></div>
+    <div class="frm">
+      <div class="fld full"><label>자재명<span class="req">*</span></label>${searchBox('rs-name', '자재명 검색·입력', v.itemName, 'matNames', '')}</div>
+      <div class="fld"><label>예정 수량(장)</label><input id="rs-jang" inputmode="numeric" placeholder="선택" value="${esc(v.jang || '')}"></div>
+      <div class="fld"><label>입고 예정일<span class="req">*</span></label><input type="date" id="rs-date" value="${esc(v.expectedDate || '')}"></div>
+      <div class="fld full"><label>발주처</label>${searchBox('rs-vendor', '발주처 검색·입력', v.vendor, 'companyNames', '')}</div>
+      <div class="fld full"><label>메모</label><input id="rs-note" lang="ko" value="${esc(v.note || '')}" placeholder="선택"></div>
+    </div>
+    <div class="frm-foot">
+      <button class="btn" style="flex:1" onclick="closeModal()">취소</button>
+      <button class="btn btn-pri" style="flex:2" onclick="submitRestock('${id || ''}')"><i class="ti ti-check"></i>${r ? '저장' : '등록'}</button>
+    </div>`);
+}
+async function submitRestock(id) {
+  const name = (el('rs-name') && el('rs-name').value || '').trim();
+  const date = el('rs-date') && el('rs-date').value;
+  if (!name) { toast('자재명을 입력하세요'); return; }
+  if (!date) { toast('입고 예정일을 선택하세요'); return; }
+  const it = state.inventory.find(i => _normName(i.name) === _normName(name));
+  const obj = { itemName: name, spec: it ? it.spec : '', jang: parseFloat(el('rs-jang').value) || 0, expectedDate: date, vendor: (el('rs-vendor').value || '').trim(), note: (el('rs-note').value || '').trim(), done: false };
+  if (id) { await Store.update('restocks', id, obj); toast('예정 입고 수정됨'); }
+  else { obj.createdAt = Date.now(); obj.by = me.name; await Store.add('restocks', obj); toast('예정 입고 등록됨'); }
+  await syncItemRestock(name);
+  closeModal();
+}
+async function delRestock(id) {
+  const r = (state.restocks || []).find(x => x.id === id);
+  if (!confirm('이 예정 입고를 삭제할까요?')) return;
+  await Store.remove('restocks', id);
+  if (r) await syncItemRestock(r.itemName);
+  toast('삭제됨');
+}
+/* 재고 화면용 예정 입고 목록 카드 */
+function restockCardHtml() {
+  const list = activeRestocks();
+  const rows = list.length ? list.map(r => {
+    const d = daysFromNow(r.expectedDate);
+    const dtag = d != null ? (d < 0 ? '<span style="color:var(--red-t)">지남</span>' : (d === 0 ? '<span style="color:var(--amber-t)">오늘</span>' : `D-${d}`)) : '';
+    return `<div class="alert-i b" style="background:var(--amber-l,#fef6e7);border-color:#f5d99b">
+      <div class="ai" style="color:var(--amber-t)"><i class="ti ti-truck-delivery"></i></div>
+      <div class="at"><b style="word-break:keep-all">${esc(r.itemName)}${r.jang ? ` · ${+r.jang || 0}장` : ''}</b><span>입고 예정 ${esc(r.expectedDate || '-')} ${dtag}${r.vendor ? ` · ${esc(r.vendor)}` : ''}</span></div>
+      <div style="display:flex;gap:2px;flex:none">
+        <button class="x" onclick="openRestockForm('${r.id}')" aria-label="수정"><i class="ti ti-edit" style="font-size:16px;color:var(--t3)"></i></button>
+        <button class="x" onclick="delRestock('${r.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>
+      </div></div>`;
+  }).join('') : `<div class="empty"><i class="ti ti-calendar-off"></i>예정된 입고가 없습니다</div>`;
+  return `<div class="card" style="margin-top:14px">
+    <div class="card-h"><h3><i class="ti ti-truck-delivery"></i>예정 입고 (재입고 예정)</h3><button class="btn btn-sm" onclick="openRestockForm()"><i class="ti ti-plus"></i>예정 등록</button></div>
+    ${rows}</div>`;
 }
 
 /* ===================================================================
@@ -1748,7 +1837,7 @@ async function bulkInSubmit() {
     for (const id in existById) { const g = existById[id]; if (g.add > 0) affected[g.it.name] = (+g.it.jang || 0) + g.add; }
     for (const nm in newByName) { const g = newByName[nm]; if (g.add > 0) affected[g.name] = g.add; }
     let convN = 0;
-    for (const nm in affected) { convN += await activatePlannedHolds(nm, affected[nm]); }
+    for (const nm in affected) { await clearRestocksOnIn(nm); convN += await activatePlannedHolds(nm, affected[nm]); }
     const newCnt = Object.keys(newByName).length, inCnt = ok.filter(r => r.jang > 0).length;
     toast(`완료 · 신규품목 ${newCnt}종 · 입고 ${inCnt}건` + (convN ? ` · 예정홀딩 ${convN}건 활성화` : '')); closeModal();
   } finally { _busy = false; }
@@ -2524,13 +2613,11 @@ async function submitMember(id) {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { toast('이메일 형식을 확인하세요'); return; }
   if (state.members.some(m => m.id !== id && (m.email || '').toLowerCase() === email)) { toast('이미 등록된 이메일입니다'); return; }
   const obj = { name, role: el('m-role').value, email };
-  // 이메일이 바뀌었으면 이전 이메일의 역할 문서 정리
   const prevEmail = id ? ((state.members.find(m => m.id === id) || {}).email || '').toLowerCase() : '';
   if (id) await Store.update('members', id, obj); else await Store.add('members', obj);
   await setRoleDoc(email, obj.role, name, prevEmail);
   toast('저장됨'); closeModal();
 }
-/* 고객 로그인용 역할 문서(roles/{이메일}) 관리 — 고객이면 생성, 아니면 삭제 */
 async function setRoleDoc(email, role, name, prevEmail) {
   if (!CLOUD) return;
   try {
