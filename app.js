@@ -607,7 +607,7 @@ function crewSiteCard(s) {
   const d = daysFromNow(s.constructDate);
   const dtag = d != null ? (d < 0 ? '지남' : (d === 0 ? '오늘' : 'D-' + d)) : '';
   const dcol = d != null && d >= 0 && d <= 3 ? 'var(--red-t)' : 'var(--gd)';
-  const items = siteItems(s).map(it => `<span style="display:inline-block;background:var(--soft,#f6f8f7);border:0.5px solid var(--bd);border-radius:8px;padding:2px 7px;margin:3px 3px 0 0;font-size:11.5px;word-break:keep-all">${esc(it.name)}${it.qty ? ' ' + it.qty : ''}</span>`).join('');
+  const items = s.matPending ? `<span style="display:inline-block;background:#fdf3d6;border:0.5px solid #f0d38a;color:#8a5a00;border-radius:8px;padding:2px 8px;margin-top:3px;font-size:11.5px;font-weight:600"><i class="ti ti-help-circle" style="font-size:12px"></i> 자재 미정</span>` : siteItems(s).map(it => `<span style="display:inline-block;background:var(--soft,#f6f8f7);border:0.5px solid var(--bd);border-radius:8px;padding:2px 7px;margin:3px 3px 0 0;font-size:11.5px;word-break:keep-all">${esc(it.name)}${it.qty ? ' ' + it.qty : ''}</span>`).join('');
   return `<div class="card" style="margin-bottom:9px;padding:12px 14px">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
       <div style="min-width:0"><div style="font-size:15px;font-weight:700;word-break:keep-all">${esc(s.name || s.client || '-')}</div>${s.client && s.name ? `<div style="font-size:11.5px;color:var(--t3);margin-top:1px">${esc(s.client)}</div>` : ''}</div>
@@ -1420,7 +1420,8 @@ function openSiteForm(id, pre) {
       </div>
       <div class="fld"><label>진행 단계</label><select id="s-stage">${SITE_STAGES.map(st => `<option ${(v.stage || '접수') === st ? 'selected' : ''}>${st}</option>`).join('')}</select></div>
       ${holdingsForSite().length ? `<div class="fld full"><label><i class="ti ti-lock" style="font-size:13px;color:var(--blue)"></i> 홀딩에서 불러오기 <span style="color:var(--t3);font-weight:500">(진행·예정홀딩 · 불러온 뒤 수량은 실사용량으로 수정 가능)</span></label><select id="s-hold" onchange="pickSiteHolding()"><option value="">— 직접 입력 —</option>${holdingOptions()}</select></div>` : ''}
-      <div class="fld full"><label>자재 / 수량 / 롯트<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(여러 종류면 '자재 추가' · 수량은 직접 수정 가능)</span></label>${matRowsHtml(siteItems(v), '수량')}</div>
+      <div class="fld full"><label>자재 / 수량 / 롯트<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(여러 종류면 '자재 추가' · 수량은 직접 수정 가능 · 미정이면 아래 체크)</span></label>${matRowsHtml(siteItems(v), '수량')}</div>
+      <label class="chk full ${v.matPending ? 'on' : ''}" id="s-matpending-w"><input type="checkbox" id="s-matpending" ${v.matPending ? 'checked' : ''} onchange="this.closest('.chk').classList.toggle('on',this.checked)"> 자재 미정 (자재 없이 스케줄만 먼저 잡기)</label>
       <div class="fld"><label>실측일 <span id="s-measure-lbl" style="color:var(--t3)">${v.orderType === '도면' ? '(도면발주·생략)' : ''}</span></label><input type="date" id="s-measureDate" value="${esc(v.measureDate || '')}" ${v.orderType === '도면' ? 'disabled' : ''}></div>
       <div class="fld"><label>시공일<span class="req">*</span></label><input type="date" id="s-constructDate" value="${esc(v.constructDate || '')}"></div>
       <div class="fld"><label>가공 공장<span class="req">*</span></label><select id="s-factory" onchange="onMasterChange('s-factory','factories')">${masterOptions('factories', v.factory || '')}</select></div>
@@ -1485,12 +1486,14 @@ function pickSiteHolding() {
 async function submitSite(id) {
   const name = el('s-name').value.trim();
   const client = el('s-client').value.trim();
-  const items = collectMaterialRows();
+  let items = collectMaterialRows();
+  const matPending = !!(el('s-matpending') && el('s-matpending').checked);
+  if (!items.length && matPending) items = [{ name: '(미정)', qty: 0, lot: '' }];
   const constructDate = el('s-constructDate').value;
   const factory = el('s-factory').value === '__add' ? '' : el('s-factory').value;
   const team = el('s-team').value === '__add' ? '' : el('s-team').value;
   if (!client) { toast('업체명을 입력하세요'); return; }
-  if (!items.length) { toast('자재명과 수량을 입력하세요'); return; }
+  if (!items.length) { toast("자재명과 수량을 입력하세요 (미정이면 '자재 미정' 체크)"); return; }
   if (!constructDate) { toast('시공일을 선택하세요'); return; }
   if (!factory) { toast('가공 공장을 선택하세요'); return; }
   if (!team) { toast('시공팀을 선택하세요'); return; }
@@ -1504,7 +1507,7 @@ async function submitSite(id) {
     measureDate: el('s-measureDate').value, constructDate,
     factory, team,
     paid: el('s-paid').checked, confirmed: el('s-confirmed').checked,
-    note: el('s-note').value.trim(), crewNote: (el('s-crewnote') && el('s-crewnote').value || '').trim(), updatedBy: me.name
+    matPending, note: el('s-note').value.trim(), crewNote: (el('s-crewnote') && el('s-crewnote').value || '').trim(), updatedBy: me.name
   };
   if (id) {
     const s = state.sites.find(x => x.id === id);
