@@ -633,7 +633,8 @@ function crewCalendarHtml() {
   const startDow = new Date(Y, M - 1, 1).getDay();
   const daysInMonth = new Date(Y, M, 0).getDate();
   const byDay = {};
-  crewSites().forEach(s => { if ((s.constructDate || '').startsWith(ym)) { const dd = +s.constructDate.slice(8, 10); (byDay[dd] = byDay[dd] || []).push(s); } });
+  const monthSites = crewSites().filter(s => (s.constructDate || '').startsWith(ym)).sort((a, b) => (a.constructDate || '').localeCompare(b.constructDate || ''));
+  monthSites.forEach(s => { const dd = +s.constructDate.slice(8, 10); (byDay[dd] = byDay[dd] || []).push(s); });
   const today = todayStr(), sel = filters.crewDay || '';
   const dow = ['일', '월', '화', '수', '목', '금', '토'];
   let cells = '';
@@ -643,19 +644,36 @@ function crewCalendarHtml() {
     const has = byDay[dd], isToday = ds === today, isSel = ds === sel;
     const dowIdx = (startDow + dd - 1) % 7;
     const col = dowIdx === 0 ? '#d64545' : (dowIdx === 6 ? '#2f6fed' : 'var(--t1)');
-    cells += `<button onclick="crewPickDay('${ds}')" style="aspect-ratio:1;border:0;background:${isSel ? 'var(--g)' : (isToday ? 'var(--gl2,#e8f7f0)' : 'transparent')};border-radius:9px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;padding:0"><span style="font-size:12.5px;font-weight:${has ? '700' : '500'};color:${isSel ? '#fff' : col}">${dd}</span>${has ? `<span style="width:5px;height:5px;border-radius:50%;background:${isSel ? '#fff' : 'var(--gd)'}"></span>` : `<span style="height:5px"></span>`}</button>`;
+    const label = has ? (has.length > 1 ? has.length + '건' : (has[0].name || has[0].client || '현장')) : '';
+    cells += `<button onclick="crewPickDay('${ds}')" style="min-height:48px;border:${isSel ? '0' : '0.5px solid var(--bd)'};background:${isSel ? 'var(--g)' : (isToday ? 'var(--gl2,#e8f7f0)' : '#fff')};border-radius:8px;display:flex;flex-direction:column;align-items:stretch;cursor:pointer;padding:3px 3px 2px;overflow:hidden">
+      <span style="font-size:11px;font-weight:${has ? '700' : '500'};color:${isSel ? '#fff' : col};text-align:left;line-height:1">${dd}</span>
+      ${has ? `<span style="font-size:9px;line-height:1.15;margin-top:2px;background:${isSel ? 'rgba(255,255,255,.22)' : 'var(--gl2,#e8f7f0)'};color:${isSel ? '#fff' : '#0F6E56'};border-radius:4px;padding:1px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600">${esc(label)}</span>` : ''}
+    </button>`;
   }
   const selList = sel ? crewSites().filter(s => s.constructDate === sel) : [];
-  return `<div style="background:#fff;border:0.5px solid var(--bd);border-radius:14px;padding:12px">
+  let below;
+  if (sel) {
+    below = `<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 8px"><div style="font-size:12.5px;color:var(--t2)"><b>${+sel.slice(5, 7)}/${+sel.slice(8, 10)}</b> 시공 ${selList.length}건</div><button class="btn btn-sm" style="padding:2px 10px" onclick="crewPickDay('${sel}')"><i class="ti ti-calendar"></i> 이달 목록</button></div>${crewListBody(selList)}`;
+  } else if (monthSites.length) {
+    const rows = monthSites.map(s => `<div onclick="crewPickDay('${s.constructDate}')" style="display:flex;gap:8px;align-items:center;padding:9px 10px;border-top:0.5px solid var(--bd);cursor:pointer">
+      <div style="font-size:12px;font-weight:700;color:var(--gd);min-width:36px">${+s.constructDate.slice(5, 7)}/${+s.constructDate.slice(8, 10)}</div>
+      <div style="min-width:0;flex:1"><div style="font-size:13px;font-weight:600;word-break:keep-all;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.name || s.client || '-')}</div>${s.address || s.region ? `<div style="font-size:11px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.address || s.region)}</div>` : ''}</div>
+      <span class="pill p-prog" style="flex:none;font-size:10px">${esc(s.stage || '접수')}</span>
+    </div>`).join('');
+    below = `<div style="font-size:12px;color:var(--t3);margin:2px 0 4px">이달 시공 ${monthSites.length}건 · 날짜 또는 항목을 누르면 상세</div><div style="background:#fff;border:0.5px solid var(--bd);border-radius:12px;overflow:hidden">${rows}</div>`;
+  } else {
+    below = `<div class="empty"><i class="ti ti-calendar-off"></i>이달 예정된 시공이 없습니다</div>`;
+  }
+  return `<div style="background:#fff;border:0.5px solid var(--bd);border-radius:14px;padding:10px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <button class="btn btn-sm" onclick="crewMonthShift(-1)" aria-label="이전달"><i class="ti ti-chevron-left"></i></button>
       <b style="font-size:15px">${Y}년 ${M}월</b>
       <button class="btn btn-sm" onclick="crewMonthShift(1)" aria-label="다음달"><i class="ti ti-chevron-right"></i></button>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:2px">${dow.map((w, i) => `<div style="text-align:center;font-size:11px;font-weight:600;color:${i === 0 ? '#d64545' : (i === 6 ? '#2f6fed' : 'var(--t3)')}">${w}</div>`).join('')}</div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:3px">${dow.map((w, i) => `<div style="text-align:center;font-size:10.5px;font-weight:600;color:${i === 0 ? '#d64545' : (i === 6 ? '#2f6fed' : 'var(--t3)')}">${w}</div>`).join('')}</div>
     <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px">${cells}</div>
   </div>
-  <div style="margin-top:10px">${sel ? `<div style="font-size:12.5px;color:var(--t2);margin:2px 0 8px"><b>${+sel.slice(5, 7)}/${+sel.slice(8, 10)}</b> 시공 ${selList.length}건</div>${crewListBody(selList)}` : `<div style="font-size:12px;color:var(--t3);text-align:center;padding:12px">날짜(점 표시)를 누르면 그날 시공 현장이 보입니다</div>`}</div>`;
+  <div style="margin-top:10px">${below}</div>`;
 }
 function crewMonthShift(delta) {
   const ym = filters.crewMonth || todayStr().slice(0, 7);
