@@ -2623,7 +2623,7 @@ function renderSettings() {
     <div class="ph"><div><h2><i class="ti ti-settings"></i>설정</h2><p>${esc(me.name)} 님${isAdmin() ? ' · 관리자' : ''}</p></div></div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-users"></i>직원 관리</h3>${isAdmin() ? `<button class="more" onclick="openMemberForm()"><i class="ti ti-plus"></i>추가</button>` : ''}</div>
-      ${state.members.map(m => `<div class="mem"><div class="av">${esc(initial(m.name))}</div><div class="info"><div class="nm">${esc(m.name)}</div>${isAdmin() ? `<div class="rl">${esc(m.email || '이메일 미설정')}</div>` : ''}</div>${isAdmin() ? `<span class="pill ${m.role === 'admin' ? 'p-prog' : 'p-gray'}">${m.role === 'admin' ? '관리자' : '직원'}</span><button class="x" onclick="openMemberForm('${m.id}')"><i class="ti ti-edit" style="font-size:17px"></i></button>` : ''}</div>`).join('')}
+      ${state.members.map(m => `<div class="mem"><div class="av">${esc(initial(m.name))}</div><div class="info"><div class="nm">${esc(m.name)}</div>${isAdmin() ? `<div class="rl">${esc(m.email || '이메일 미설정')}</div>` : ''}</div>${isAdmin() ? `<span class="pill ${m.role === 'admin' ? 'p-prog' : (m.role === 'customer' ? 'p-hold' : 'p-gray')}">${m.role === 'admin' ? '관리자' : (m.role === 'customer' ? '고객' : '직원')}</span><button class="x" onclick="openMemberForm('${m.id}')"><i class="ti ti-edit" style="font-size:17px"></i></button>` : ''}</div>`).join('')}
       ${isAdmin() && CLOUD ? `<button class="btn btn-block btn-sm" style="margin-top:10px" onclick="syncAllRolesNow()"><i class="ti ti-shield-check"></i>직원 권한 문서 동기화 <span style="color:var(--t3);font-weight:500">(보안규칙 적용 전 1회)</span></button>` : ''}
     </div>
     <div class="card">
