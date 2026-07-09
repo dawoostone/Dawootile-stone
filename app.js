@@ -930,7 +930,7 @@ function matRowHtml(d, qtyPh) {
 function matRowsHtml(items, qtyPh) {
   const arr = (items && items.length) ? items : [{}];
   return `<div id="mat-rows">${arr.map(it => matRowHtml(it, qtyPh)).join('')}</div>
-    <button type="button" class="btn btn-ghost btn-sm" style="margin-bottom:4px" onclick="addMaterialRow({}, '${qtyPh || '수량'}')"><i class="ti ti-plus"></i>자재 추가</button>`;
+    <button type="button" class="btn btn-ghost btn-sm btn-block" style="margin-bottom:6px" onclick="addMaterialRow({}, '${qtyPh || '수량'}')"><i class="ti ti-plus"></i>자재 추가</button>`;
 }
 function addMaterialRow(d, qtyPh) {
   const box = el('mat-rows'); if (!box) return;
@@ -1494,7 +1494,7 @@ function openSiteForm(id, pre) {
       <div class="fld"><label>진행 단계</label><select id="s-stage">${SITE_STAGES.map(st => `<option ${(v.stage || '접수') === st ? 'selected' : ''}>${st}</option>`).join('')}</select></div>
       ${holdingsForSite().length ? `<div class="fld full"><label><i class="ti ti-lock" style="font-size:13px;color:var(--blue)"></i> 홀딩에서 불러오기 <span style="color:var(--t3);font-weight:500">(진행·예정홀딩 · 불러온 뒤 수량은 실사용량으로 수정 가능)</span></label><select id="s-hold" onchange="pickSiteHolding()"><option value="">— 직접 입력 —</option>${holdingOptions()}</select></div>` : ''}
       <div class="fld full"><label>자재 / 수량 / 롯트<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(여러 종류면 '자재 추가' · 수량은 직접 수정 가능 · 미정이면 아래 체크)</span></label>${matRowsHtml(siteItems(v), '수량')}</div>
-      <button type="button" id="s-matpending-btn" class="btn btn-ghost btn-sm${v.matPending ? ' on' : ''}" style="margin:0 0 8px;color:#d64545;border-color:#e6a9a9;font-weight:600${v.matPending ? ';background:#fdeaea' : ''}" onclick="const on=!this.classList.contains('on');this.classList.toggle('on',on);this.style.background=on?'#fdeaea':''"><i class="ti ti-help-circle"></i> 자재 미정</button>
+      <button type="button" id="s-matpending-btn" class="btn btn-ghost btn-sm btn-block${v.matPending ? ' on' : ''}" style="margin:0 0 8px;color:#d64545;border-color:#e6a9a9;font-weight:600${v.matPending ? ';background:#fdeaea' : ''}" onclick="const on=!this.classList.contains('on');this.classList.toggle('on',on);this.style.background=on?'#fdeaea':''"><i class="ti ti-help-circle"></i> 자재 미정</button>
       <div class="fld"><label>실측일 <span id="s-measure-lbl" style="color:var(--t3)">${v.orderType === '도면' ? '(도면발주·생략)' : ''}</span></label><input type="date" id="s-measureDate" value="${esc(v.measureDate || '')}" ${v.orderType === '도면' ? 'disabled' : ''}></div>
       <div class="fld"><label>시공일<span class="req">*</span></label><input type="date" id="s-constructDate" value="${esc(v.constructDate || '')}"></div>
       <div class="fld"><label>가공 공장<span class="req">*</span></label><select id="s-factory" onchange="onMasterChange('s-factory','factories')">${masterOptions('factories', v.factory || '')}</select></div>
