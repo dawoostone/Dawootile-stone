@@ -1147,7 +1147,7 @@ function companyNames() {
 }
 /* searchBox: 입력하면 부분일치 후보가 아래에 뜨고 클릭 선택. id는 그대로 유지(폼 제출 시 사용). */
 function searchBox(id, placeholder, value, listFn, pickFn) {
-  return `<input id="${id}" class="sb-in" lang="ko" autocomplete="off" placeholder="${esc(placeholder)}" value="${esc(value || '')}" oninput="sbFilter('${id}','${listFn}','${pickFn || ''}')" onfocus="sbFilter('${id}','${listFn}','${pickFn || ''}')" onblur="setTimeout(sbHide,180)">`;
+  return `<input id="${id}" class="sb-in" lang="ko" autocomplete="off" placeholder="${esc(placeholder)}" value="${esc(value || '')}" oninput="sbFilter('${id}','${listFn}','${pickFn || ''}')" onfocus="sbFilter('${id}','${listFn}','${pickFn || ''}')" onkeydown="sbKey(event,'${id}','${pickFn || ''}')" onblur="setTimeout(sbHide,180)">`;
 }
 function sbEnsurePop() { let p = el('sb-pop'); if (!p) { p = document.createElement('div'); p.id = 'sb-pop'; p.className = 'sb-pop'; document.body.appendChild(p); } return p; }
 function sbFilter(id, listFn, pickFn) {
@@ -1167,6 +1167,19 @@ function sbFilter(id, listFn, pickFn) {
   if (pickFn && window[pickFn]) window[pickFn]();
 }
 function sbHide() { const p = el('sb-pop'); if (p) p.style.display = 'none'; }
+/* 키보드: 아래/위 방향키로 후보 이동, Enter로 선택, Esc로 닫기 */
+function sbKey(e, id, pickFn) {
+  const p = el('sb-pop'); if (!p || p.style.display === 'none') return;
+  const items = [...p.querySelectorAll('.sb-item')]; if (!items.length) return;
+  let idx = items.findIndex(it => it.classList.contains('hl'));
+  if (e.key === 'ArrowDown') { e.preventDefault(); idx = (idx + 1) % items.length; }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); idx = (idx - 1 + items.length) % items.length; }
+  else if (e.key === 'Enter') { if (idx >= 0) { e.preventDefault(); el(id).value = items[idx].dataset.v; p.style.display = 'none'; if (pickFn && window[pickFn]) window[pickFn](); } return; }
+  else if (e.key === 'Escape') { p.style.display = 'none'; return; }
+  else return;
+  items.forEach((it, i) => it.classList.toggle('hl', i === idx));
+  if (items[idx]) items[idx].scrollIntoView({ block: 'nearest' });
+}
 
 /* 업체명 추천: 과거 출고처 + 거래처(현장) + 공장/공급처 */
 function companyDatalist(id) {
