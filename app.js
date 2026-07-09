@@ -105,6 +105,9 @@ function isAdmin() { return me && me.role === 'admin'; }
 function isCustomerRole() { return me && me.role === 'customer'; }  // 고객(거래처) — 재고 조회 전용
 function isCrewRole() { return me && me.role === 'crew'; }  // 시공팀 — 자기 시공 스케줄만
 function isRestrictedRole() { return isCustomerRole() || isCrewRole(); }
+/* 공장명 통일 규칙: 포함하면 대표명으로 정규화 */
+const FACTORY_RULES = [['토마스', '동양'], ['동호', '동호엠엔지'], ['거봉', '거봉석재'], ['영진', '영진석재']];
+function normFactory(name) { const n = String(name == null ? '' : name).trim(); if (!n) return n; for (const r of FACTORY_RULES) { if (n.includes(r[0])) return r[1]; } return n; }
 
 const STATUS = {
   접수: 'p-gray', 견적전달: 'p-wait', 결제완료: 'p-prog', 확정: 'p-prog',
@@ -259,6 +262,17 @@ async function syncAllRolesNow() {
     try { await cref('roles').doc((m.email || '').toLowerCase()).set({ role: m.role || 'staff', name: m.name || '' }, { merge: true }); n++; } catch (e) { console.warn('syncRoles', e); }
   }
   toast('직원 권한 문서 ' + n + '개 동기화 완료' + (skip ? ' (이메일 없는 ' + skip + '명 제외)' : ''));
+}
+/* 관리자용: 기존 현장·공장 마스터의 공장명을 대표명으로 일괄 통일 */
+async function unifyFactories() {
+  if (!isAdmin()) { toast('관리자만 가능합니다'); return; }
+  if (!confirm('공장명을 통일할까요?\n토마스→동양, 동호→동호엠엔지, 거봉→거봉석재, 영진→영진석재')) return;
+  let sN = 0;
+  for (const s of state.sites) { const nf = normFactory(s.factory); if (s.factory && nf !== s.factory) { try { await Store.update('sites', s.id, { factory: nf }); sN++; } catch (e) { } } }
+  let mDel = 0;
+  for (const f of (state.factories || [])) { const v = f.value || ''; if (v && normFactory(v) !== v) { try { await Store.remove('factories', f.id); mDel++; } catch (e) { } } }
+  for (const c of ['동양', '동호엠엔지', '거봉석재', '영진석재']) { if (!(state.factories || []).some(f => f.value === c)) { try { await Store.add('factories', { value: c }); } catch (e) { } } }
+  toast('공장명 통일 완료 · 현장 ' + sN + '건 변경, 변형 ' + mDel + '개 정리');
 }
 function findMemberByEmail(email) {
   if (!email) return null;
@@ -1490,7 +1504,7 @@ async function submitSite(id) {
   const matPending = !!(el('s-matpending') && el('s-matpending').checked);
   if (!items.length && matPending) items = [{ name: '(미정)', qty: 0, lot: '' }];
   const constructDate = el('s-constructDate').value;
-  const factory = el('s-factory').value === '__add' ? '' : el('s-factory').value;
+  const factory = normFactory(el('s-factory').value === '__add' ? '' : el('s-factory').value);
   const team = el('s-team').value === '__add' ? '' : el('s-team').value;
   if (!client) { toast('업체명을 입력하세요'); return; }
   if (!items.length) { toast("자재명과 수량을 입력하세요 (미정이면 '자재 미정' 체크)"); return; }
@@ -2742,6 +2756,7 @@ function renderSettings() {
       <div class="card-h"><h3><i class="ti ti-users"></i>직원 관리</h3>${isAdmin() ? `<button class="more" onclick="openMemberForm()"><i class="ti ti-plus"></i>추가</button>` : ''}</div>
       ${state.members.map(m => `<div class="mem"><div class="av">${esc(initial(m.name))}</div><div class="info"><div class="nm">${esc(m.name)}</div>${isAdmin() ? `<div class="rl">${esc(m.email || '이메일 미설정')}</div>` : ''}</div>${isAdmin() ? `<span class="pill ${m.role === 'admin' ? 'p-prog' : (m.role === 'customer' ? 'p-hold' : (m.role === 'crew' ? 'p-wait' : 'p-gray'))}">${m.role === 'admin' ? '관리자' : (m.role === 'customer' ? '고객' : (m.role === 'crew' ? '시공팀' : '직원'))}</span><button class="x" onclick="openMemberForm('${m.id}')"><i class="ti ti-edit" style="font-size:17px"></i></button>` : ''}</div>`).join('')}
       ${isAdmin() && CLOUD ? `<button class="btn btn-block btn-sm" style="margin-top:10px" onclick="syncAllRolesNow()"><i class="ti ti-shield-check"></i>직원 권한 문서 동기화 <span style="color:var(--t3);font-weight:500">(보안규칙 적용 전 1회)</span></button>` : ''}
+      ${isAdmin() && CLOUD ? `<button class="btn btn-block btn-sm" style="margin-top:8px" onclick="unifyFactories()"><i class="ti ti-building-factory-2"></i>공장명 통일 <span style="color:var(--t3);font-weight:500">(토마스→동양 등 기존 데이터 정리)</span></button>` : ''}
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-briefcase"></i>거래처 관리</h3>${isAdmin() && (state.clients || []).length ? `<button class="more" style="color:var(--red-t)" onclick="delAllClients()"><i class="ti ti-trash" style="font-size:14px"></i>전체 삭제</button>` : ''}</div>
