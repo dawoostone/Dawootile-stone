@@ -103,6 +103,8 @@ function initial(n) { return (n || '?').trim().slice(-2); }
 function toast(msg) { const t = el('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 2200); }
 function isAdmin() { return me && me.role === 'admin'; }
 function isCustomerRole() { return me && me.role === 'customer'; }  // 고객(거래처) — 재고 조회 전용
+function isCrewRole() { return me && me.role === 'crew'; }  // 시공팀 — 자기 시공 스케줄만
+function isRestrictedRole() { return isCustomerRole() || isCrewRole(); }
 
 const STATUS = {
   접수: 'p-gray', 견적전달: 'p-wait', 결제완료: 'p-prog', 확정: 'p-prog',
@@ -199,14 +201,15 @@ async function afterAuth(user) {
   if (CLOUD) {
     try {
       const rd = await cref('roles').doc(_email).get();
-      if (rd.exists && (rd.data() || {}).role === 'customer') {
-        me = { name: (rd.data().name || _email.split('@')[0]), email: _email, role: 'customer' };
+      const _r = rd.exists ? ((rd.data() || {}).role) : '';
+      if (_r === 'customer' || _r === 'crew') {
+        me = { name: (rd.data().name || _email.split('@')[0]), email: _email, role: _r };
         el('login').style.display = 'none';
         el('app').style.display = 'block';
         el('me-av').textContent = initial(me.name);
         el('me-nm').textContent = me.name;
         document.body.classList.add('cust-mode');
-        startCustomerHoldings();
+        if (_r === 'customer') startCustomerHoldings(); else startCrewSites();
         go('stock');
         return;
       }
@@ -228,8 +231,8 @@ async function afterAuth(user) {
   el('app').style.display = 'block';
   el('me-av').textContent = initial(me.name);
   el('me-nm').textContent = me.name;
-  document.body.classList.toggle('cust-mode', isCustomerRole());  // 고객: 재고 조회 전용 UI
-  if (isCustomerRole()) { go('stock'); }
+  document.body.classList.toggle('cust-mode', isRestrictedRole());  // 고객·시공팀: 전용 UI
+  if (isRestrictedRole()) { go('stock'); }
   else { ensureStaffRoles(); render(); refreshPushToken(); }
 }
 /* 직원/관리자 권한 문서(roles/{이메일}) 자동 생성·동기화 — '승인된 직원만' 보안규칙용.
@@ -469,13 +472,13 @@ function closeDrawer() { el('drawer').classList.remove('open'); el('drawer-ov').
 function goD(t) { closeDrawer(); go(t); }
 
 function go(t) {
-  if (isCustomerRole()) t = 'stock';   // 고객은 재고 화면만
+  if (isRestrictedRole()) t = 'stock';   // 고객·시공팀은 전용 화면만
   tab = t;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-i').forEach(n => n.classList.toggle('active', n.dataset.tab === t));
   document.querySelectorAll('.drawer-i[data-tab]').forEach(n => n.classList.toggle('active', n.dataset.tab === t));
   el('pg-' + t).classList.add('active');
-  el('fab').style.display = (t === 'sites' || t === 'stock' || t === 'hold') ? 'flex' : 'none';
+  el('fab').style.display = (!isRestrictedRole() && (t === 'sites' || t === 'stock' || t === 'hold')) ? 'flex' : 'none';
   render();
   window.scrollTo(0, 0);
 }
@@ -488,6 +491,7 @@ function fabAction() {
 function render() {
   if (!me) return;
   if (isCustomerRole()) { renderCustomerStock(); return; }   // 고객: 재고 조회 전용
+  if (isCrewRole()) { renderCrewSchedule(); return; }        // 시공팀: 시공 스케줄 전용
   if (tab === 'home') renderHome();
   else if (tab === 'sites') renderSites();
   else if (tab === 'stock') renderStock();
@@ -583,6 +587,96 @@ function renderCustomerStock() {
       <button class="chip ${tab === 'holds' ? 'active' : ''}" onclick="goCustTab('holds')"><i class="ti ti-lock"></i> 내 홀딩${myHolds.length ? ` (${myHolds.length})` : ''}</button>
     </div>
     ${tab === 'stock' ? stockSec : holdsSec}`;
+}
+
+/* ---------- 시공팀(crew) 시공 스케줄 전용 화면 (읽기 전용 · 자기 팀 현장만) ---------- */
+function crewSites() {
+  return (state.sites || []).filter(s => _normName(s.team) === _normName(me.name))
+    .sort((a, b) => (a.constructDate || '9999-99-99').localeCompare(b.constructDate || '9999-99-99'));
+}
+function startCrewSites() {
+  if (!CLOUD || !me || me.role !== 'crew' || !me.name) return;
+  try {
+    cref('sites').where('team', '==', me.name).onSnapshot(snap => {
+      state.sites = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+      if (me && me.role === 'crew') render();
+    }, err => console.warn('crew sites', err));
+  } catch (e) { console.warn(e); }
+}
+function crewSiteCard(s) {
+  const d = daysFromNow(s.constructDate);
+  const dtag = d != null ? (d < 0 ? '지남' : (d === 0 ? '오늘' : 'D-' + d)) : '';
+  const dcol = d != null && d >= 0 && d <= 3 ? 'var(--red-t)' : 'var(--gd)';
+  const items = siteItems(s).map(it => `<span style="display:inline-block;background:var(--soft,#f6f8f7);border:0.5px solid var(--bd);border-radius:8px;padding:2px 7px;margin:3px 3px 0 0;font-size:11.5px;word-break:keep-all">${esc(it.name)}${it.qty ? ' ' + it.qty : ''}</span>`).join('');
+  return `<div class="card" style="margin-bottom:9px;padding:12px 14px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+      <div style="min-width:0"><div style="font-size:15px;font-weight:700;word-break:keep-all">${esc(s.name || s.client || '-')}</div>${s.client && s.name ? `<div style="font-size:11.5px;color:var(--t3);margin-top:1px">${esc(s.client)}</div>` : ''}</div>
+      <span class="pill p-prog" style="flex:none">${esc(s.stage || '접수')}</span>
+    </div>
+    ${(s.address || s.region) ? `<div style="font-size:12.5px;color:var(--t2);margin-top:6px;word-break:keep-all"><i class="ti ti-map-pin" style="font-size:12px"></i> ${esc(s.address || s.region)}</div>` : ''}
+    <div style="display:flex;gap:14px;margin-top:8px;font-size:12.5px;flex-wrap:wrap">
+      <div><span style="color:var(--t3)">시공</span> <b style="color:${dcol}">${esc(s.constructDate || '미정')}${dtag ? ' · ' + dtag : ''}</b></div>
+      ${s.measureDate ? `<div><span style="color:var(--t3)">실측</span> <b>${esc(s.measureDate)}</b></div>` : ''}
+      ${s.manager ? `<div><span style="color:var(--t3)">담당</span> <b>${esc(s.manager)}</b></div>` : ''}
+    </div>
+    ${items ? `<div style="margin-top:6px">${items}</div>` : ''}
+    ${s.note ? `<div style="font-size:11.5px;color:var(--t3);margin-top:8px;word-break:keep-all"><i class="ti ti-note" style="font-size:12px"></i> ${esc(s.note)}</div>` : ''}
+  </div>`;
+}
+function crewListBody(list) {
+  if (!list.length) return `<div class="empty"><i class="ti ti-calendar-off"></i>예정된 시공이 없습니다</div>`;
+  return list.map(crewSiteCard).join('');
+}
+function crewCalendarHtml() {
+  const ym = filters.crewMonth || todayStr().slice(0, 7);
+  const [Y, M] = ym.split('-').map(Number);
+  const startDow = new Date(Y, M - 1, 1).getDay();
+  const daysInMonth = new Date(Y, M, 0).getDate();
+  const byDay = {};
+  crewSites().forEach(s => { if ((s.constructDate || '').startsWith(ym)) { const dd = +s.constructDate.slice(8, 10); (byDay[dd] = byDay[dd] || []).push(s); } });
+  const today = todayStr(), sel = filters.crewDay || '';
+  const dow = ['일', '월', '화', '수', '목', '금', '토'];
+  let cells = '';
+  for (let i = 0; i < startDow; i++) cells += `<div></div>`;
+  for (let dd = 1; dd <= daysInMonth; dd++) {
+    const ds = `${ym}-${String(dd).padStart(2, '0')}`;
+    const has = byDay[dd], isToday = ds === today, isSel = ds === sel;
+    const dowIdx = (startDow + dd - 1) % 7;
+    const col = dowIdx === 0 ? '#d64545' : (dowIdx === 6 ? '#2f6fed' : 'var(--t1)');
+    cells += `<button onclick="crewPickDay('${ds}')" style="aspect-ratio:1;border:0;background:${isSel ? 'var(--g)' : (isToday ? 'var(--gl2,#e8f7f0)' : 'transparent')};border-radius:9px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;padding:0"><span style="font-size:12.5px;font-weight:${has ? '700' : '500'};color:${isSel ? '#fff' : col}">${dd}</span>${has ? `<span style="width:5px;height:5px;border-radius:50%;background:${isSel ? '#fff' : 'var(--gd)'}"></span>` : `<span style="height:5px"></span>`}</button>`;
+  }
+  const selList = sel ? crewSites().filter(s => s.constructDate === sel) : [];
+  return `<div style="background:#fff;border:0.5px solid var(--bd);border-radius:14px;padding:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <button class="btn btn-sm" onclick="crewMonthShift(-1)" aria-label="이전달"><i class="ti ti-chevron-left"></i></button>
+      <b style="font-size:15px">${Y}년 ${M}월</b>
+      <button class="btn btn-sm" onclick="crewMonthShift(1)" aria-label="다음달"><i class="ti ti-chevron-right"></i></button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:2px">${dow.map((w, i) => `<div style="text-align:center;font-size:11px;font-weight:600;color:${i === 0 ? '#d64545' : (i === 6 ? '#2f6fed' : 'var(--t3)')}">${w}</div>`).join('')}</div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px">${cells}</div>
+  </div>
+  <div style="margin-top:10px">${sel ? `<div style="font-size:12.5px;color:var(--t2);margin:2px 0 8px"><b>${+sel.slice(5, 7)}/${+sel.slice(8, 10)}</b> 시공 ${selList.length}건</div>${crewListBody(selList)}` : `<div style="font-size:12px;color:var(--t3);text-align:center;padding:12px">날짜(점 표시)를 누르면 그날 시공 현장이 보입니다</div>`}</div>`;
+}
+function crewMonthShift(delta) {
+  const ym = filters.crewMonth || todayStr().slice(0, 7);
+  let [Y, M] = ym.split('-').map(Number);
+  M += delta; if (M < 1) { M = 12; Y--; } else if (M > 12) { M = 1; Y++; }
+  filters.crewMonth = `${Y}-${String(M).padStart(2, '0')}`; render();
+}
+function crewPickDay(ds) { filters.crewDay = (filters.crewDay === ds ? '' : ds); render(); }
+function goCrewTab(v) { filters.crewTab = v; render(); }
+function renderCrewSchedule() {
+  const tab = filters.crewTab || 'cal';
+  const list = crewSites();
+  const upcoming = list.filter(s => { const d = daysFromNow(s.constructDate); return d != null && d >= 0; });
+  el('pg-stock').innerHTML = `
+    <div class="ph"><div><h2><i class="ti ti-tools"></i>${esc(me.name)}</h2><p><i class="ti ti-calendar-event" style="font-size:12px"></i> 시공 스케줄 · 예정 ${upcoming.length}건</p></div>
+      <button class="btn btn-sm" onclick="logout()"><i class="ti ti-logout"></i>로그아웃</button></div>
+    <div class="chips" style="margin-bottom:10px">
+      <button class="chip ${tab === 'cal' ? 'active' : ''}" onclick="goCrewTab('cal')"><i class="ti ti-calendar"></i> 캘린더</button>
+      <button class="chip ${tab === 'list' ? 'active' : ''}" onclick="goCrewTab('list')"><i class="ti ti-list"></i> 목록${list.length ? ` (${list.length})` : ''}</button>
+    </div>
+    ${tab === 'cal' ? crewCalendarHtml() : crewListBody(list)}`;
 }
 
 /* ===================================================================
@@ -2623,7 +2717,7 @@ function renderSettings() {
     <div class="ph"><div><h2><i class="ti ti-settings"></i>설정</h2><p>${esc(me.name)} 님${isAdmin() ? ' · 관리자' : ''}</p></div></div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-users"></i>직원 관리</h3>${isAdmin() ? `<button class="more" onclick="openMemberForm()"><i class="ti ti-plus"></i>추가</button>` : ''}</div>
-      ${state.members.map(m => `<div class="mem"><div class="av">${esc(initial(m.name))}</div><div class="info"><div class="nm">${esc(m.name)}</div>${isAdmin() ? `<div class="rl">${esc(m.email || '이메일 미설정')}</div>` : ''}</div>${isAdmin() ? `<span class="pill ${m.role === 'admin' ? 'p-prog' : (m.role === 'customer' ? 'p-hold' : 'p-gray')}">${m.role === 'admin' ? '관리자' : (m.role === 'customer' ? '고객' : '직원')}</span><button class="x" onclick="openMemberForm('${m.id}')"><i class="ti ti-edit" style="font-size:17px"></i></button>` : ''}</div>`).join('')}
+      ${state.members.map(m => `<div class="mem"><div class="av">${esc(initial(m.name))}</div><div class="info"><div class="nm">${esc(m.name)}</div>${isAdmin() ? `<div class="rl">${esc(m.email || '이메일 미설정')}</div>` : ''}</div>${isAdmin() ? `<span class="pill ${m.role === 'admin' ? 'p-prog' : (m.role === 'customer' ? 'p-hold' : (m.role === 'crew' ? 'p-wait' : 'p-gray'))}">${m.role === 'admin' ? '관리자' : (m.role === 'customer' ? '고객' : (m.role === 'crew' ? '시공팀' : '직원'))}</span><button class="x" onclick="openMemberForm('${m.id}')"><i class="ti ti-edit" style="font-size:17px"></i></button>` : ''}</div>`).join('')}
       ${isAdmin() && CLOUD ? `<button class="btn btn-block btn-sm" style="margin-top:10px" onclick="syncAllRolesNow()"><i class="ti ti-shield-check"></i>직원 권한 문서 동기화 <span style="color:var(--t3);font-weight:500">(보안규칙 적용 전 1회)</span></button>` : ''}
     </div>
     <div class="card">
@@ -2667,7 +2761,7 @@ function openMemberForm(id) {
     <div class="sheet-h"><h3><i class="ti ti-user-plus"></i>${m ? '직원 수정' : '직원 추가'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
       <div class="fld full"><label>이름<span class="req">*</span></label><input id="m-name" value="${esc(v.name || '')}" placeholder="이름"></div>
-      <div class="fld"><label>권한</label><select id="m-role"><option value="staff" ${v.role === 'staff' ? 'selected' : ''}>직원</option><option value="admin" ${v.role === 'admin' ? 'selected' : ''}>관리자</option><option value="customer" ${v.role === 'customer' ? 'selected' : ''}>고객(거래처) · 재고조회만</option></select></div>
+      <div class="fld"><label>권한</label><select id="m-role"><option value="staff" ${v.role === 'staff' ? 'selected' : ''}>직원</option><option value="admin" ${v.role === 'admin' ? 'selected' : ''}>관리자</option><option value="customer" ${v.role === 'customer' ? 'selected' : ''}>고객(거래처) · 재고조회만</option><option value="crew" ${v.role === 'crew' ? 'selected' : ''}>시공팀 · 시공 스케줄만</option></select></div>
       <div class="fld full"><label>로그인 이메일<span class="req">*</span></label><input id="m-email" type="email" value="${esc(v.email || '')}" autocapitalize="none" spellcheck="false" placeholder="예) hong@dawoo.com"></div>
     </div>
     <div class="banner info" style="margin:0 0 12px"><i class="ti ti-info-circle"></i>이 이메일로 Firebase 콘솔에서 계정(비밀번호)을 만들어야 로그인됩니다. 비밀번호는 콘솔에서 관리합니다.</div>
