@@ -644,12 +644,10 @@ function crewCalendarHtml() {
     const has = byDay[dd], isToday = ds === today, isSel = ds === sel;
     const dowIdx = (startDow + dd - 1) % 7;
     const col = dowIdx === 0 ? '#d64545' : (dowIdx === 6 ? '#2f6fed' : 'var(--t1)');
-    const shown = has ? has.slice(0, 2) : [];
-    const moreN = has ? has.length - shown.length : 0;
-    const chips = shown.map(s => `<span style="font-size:9.5px;line-height:1.25;background:${isSel ? 'rgba(255,255,255,.22)' : 'var(--gl2,#e8f7f0)'};color:${isSel ? '#fff' : '#0F6E56'};border-radius:4px;padding:1px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;display:block">${esc(s.name || s.client || '현장')}</span>`).join('');
-    cells += `<button onclick="crewPickDay('${ds}')" style="min-height:66px;border:${isSel ? '0' : '0.5px solid var(--bd)'};background:${isSel ? 'var(--g)' : (isToday ? 'var(--gl2,#e8f7f0)' : '#fff')};border-radius:9px;display:flex;flex-direction:column;align-items:stretch;cursor:pointer;padding:4px 3px 3px;overflow:hidden;gap:2px">
+    const chips = (has || []).map(s => `<span style="font-size:9.5px;line-height:1.25;background:${isSel ? 'rgba(255,255,255,.22)' : 'var(--gl2,#e8f7f0)'};color:${isSel ? '#fff' : '#0F6E56'};border-radius:4px;padding:1px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;display:block;margin-top:2px">${esc(s.name || s.client || '현장')}</span>`).join('');
+    cells += `<button onclick="crewPickDay('${ds}')" style="min-height:52px;border:${isSel ? '0' : '0.5px solid var(--bd)'};background:${isSel ? 'var(--g)' : (isToday ? 'var(--gl2,#e8f7f0)' : '#fff')};border-radius:9px;display:flex;flex-direction:column;align-items:stretch;cursor:pointer;padding:4px 3px;overflow:hidden">
       <span style="font-size:12px;font-weight:${has ? '700' : '500'};color:${isSel ? '#fff' : col};text-align:left;line-height:1">${dd}</span>
-      ${chips}${moreN > 0 ? `<span style="font-size:9px;font-weight:700;color:${isSel ? '#fff' : 'var(--gd)'};text-align:left;padding-left:2px">+${moreN}</span>` : ''}
+      ${chips}
     </button>`;
   }
   const selList = sel ? crewSites().filter(s => s.constructDate === sel) : [];
