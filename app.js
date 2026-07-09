@@ -206,6 +206,7 @@ async function afterAuth(user) {
         el('me-av').textContent = initial(me.name);
         el('me-nm').textContent = me.name;
         document.body.classList.add('cust-mode');
+        startCustomerHoldings();
         go('stock');
         return;
       }
@@ -503,19 +504,60 @@ function filterCustStock() {
   const x = el('cust-search-x'); if (x) x.style.display = (filters.custSearch || '').trim() ? '' : 'none';
 }
 function clearCustStock() { filters.custSearch = ''; if (el('cust-search')) el('cust-search').value = ''; filterCustStock(); const i = el('cust-search'); if (i) i.focus(); }
+/* 고객 본인(업체) 홀딩 — vendor 가 계정명과 같은 것만. 서버 규칙으로도 제한됨 */
+function custMyHolds() {
+  return (state.holdings || []).filter(h => h.status !== '해제' && _normName(h.vendor) === _normName(me.name))
+    .sort((a, b) => (a.useDate || '9999-99-99').localeCompare(b.useDate || '9999-99-99'));
+}
+function custHoldsBody() {
+  const list = custMyHolds();
+  if (!list.length) return `<div class="empty"><i class="ti ti-lock-off"></i>등록된 홀딩이 없습니다</div>`;
+  return list.map(h => {
+    const st = holdStatusText(h);
+    const cls = st === '출고완료' ? 'p-done' : (st === '예정' ? 'p-wait' : 'p-hold');
+    const items = holdItems(h).map(it => `<div style="color:var(--t2);font-size:12.5px;margin-top:2px;word-break:keep-all">· <b style="color:var(--t1)">${esc(it.materialName || '-')}</b> ${+it.jang || 0}장${it.hebe ? ` (${(+it.hebe).toFixed(1)}㎡)` : ''}${it.lot ? ` · 롯트 ${esc(it.lot)}` : ''}</div>`).join('');
+    return `<div class="card" style="margin-bottom:9px;padding:12px 14px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div style="font-size:12.5px;color:var(--t3)"><i class="ti ti-calendar" style="font-size:12px"></i> ${h.useDate ? '사용예정 ' + esc(h.useDate) : '예정일 미정'}</div>
+        <span class="pill ${cls}" style="flex:none">${esc(st)}</span></div>
+      <div style="margin-top:6px">${items}</div>
+    </div>`;
+  }).join('');
+}
+function goCustTab(v) { filters.custTab = v; renderCustomerStock(); }
+/* 고객 로그인 시: 본인 업체 홀딩만 필터 구독(서버 규칙과 일치) */
+function startCustomerHoldings() {
+  if (!CLOUD || !me || me.role !== 'customer' || !me.name) return;
+  try {
+    cref('holdings').where('vendor', '==', me.name).onSnapshot(snap => {
+      state.holdings = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+      if (me && me.role === 'customer' && (filters.custTab || 'stock') === 'holds') renderCustomerStock();
+    }, err => console.warn('cust holds', err));
+  } catch (e) { console.warn(e); }
+}
 function renderCustomerStock() {
+  const tab = filters.custTab || 'stock';
   const list = custStockList();
   const inN = state.inventory.filter(i => (+i.jang || 0) > 0).length;
   const outN = state.inventory.length - inN;
-  el('pg-stock').innerHTML = `
-    <div class="ph"><div><h2><i class="ti ti-packages"></i>재고 조회</h2><p><span class="live-dot" style="background:#1D9E75;--pc:rgba(29,158,117,.6);width:7px;height:7px;display:inline-block;vertical-align:middle;margin-right:5px"></span>실시간 · 재고있음 ${inN} · 품절 ${outN}</p></div>
-      <button class="btn btn-sm" onclick="logout()"><i class="ti ti-logout"></i>로그아웃</button></div>
+  const myHolds = custMyHolds();
+  const stockSec = `
+    <div style="font-size:12px;color:var(--t3);margin:2px 0 8px"><span class="live-dot" style="background:#1D9E75;--pc:rgba(29,158,117,.6);width:7px;height:7px;display:inline-block;vertical-align:middle;margin-right:5px"></span>실시간 · 재고있음 ${inN} · 품절 ${outN}</div>
     <div class="search-box">
       <i class="ti ti-search"></i>
-      <input id="cust-search" placeholder="자재명·규격 검색" value="${esc(filters.custSearch || '')}" oninput="filterCustStock()" autocomplete="off">
+      <input id="cust-search" placeholder="자재명·규격 검색" value="${esc(filters.custSearch || '')}" oninput="filterCustStock()" autocomplete="off" lang="ko">
       <button class="search-x" id="cust-search-x" style="${(filters.custSearch || '').trim() ? '' : 'display:none'}" onclick="clearCustStock()"><i class="ti ti-x"></i></button>
     </div>
     <div id="cust-body">${custStockBody(list)}</div>`;
+  const holdsSec = `<div style="font-size:12px;color:var(--t3);margin:2px 0 8px">우리 업체 홀딩 내역 · 총 ${myHolds.length}건</div>${custHoldsBody()}`;
+  el('pg-stock').innerHTML = `
+    <div class="ph"><div><h2><i class="ti ti-packages"></i>${esc(me.name)}</h2><p><span class="live-dot" style="background:#1D9E75;--pc:rgba(29,158,117,.6);width:7px;height:7px;display:inline-block;vertical-align:middle;margin-right:5px"></span>실시간 조회</p></div>
+      <button class="btn btn-sm" onclick="logout()"><i class="ti ti-logout"></i>로그아웃</button></div>
+    <div class="chips" style="margin-bottom:10px">
+      <button class="chip ${tab === 'stock' ? 'active' : ''}" onclick="goCustTab('stock')"><i class="ti ti-packages"></i> 재고 조회</button>
+      <button class="chip ${tab === 'holds' ? 'active' : ''}" onclick="goCustTab('holds')"><i class="ti ti-lock"></i> 내 홀딩${myHolds.length ? ` (${myHolds.length})` : ''}</button>
+    </div>
+    ${tab === 'stock' ? stockSec : holdsSec}`;
 }
 
 /* ===================================================================
