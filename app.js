@@ -683,7 +683,7 @@ async function clearRestocksOnIn(name) {
 function stockState(it) {
   const avail = availJang(it), safe = +it.safeJang || 0;
   if (avail <= 0) return { k: '없음', cls: 'p-issue' };
-  if (safe > 0 && avail < safe) return { k: '부족', cls: 'p-issue' };
+  if (safe > 0 && avail < safe) return { k: '부족', cls: 'p-wait' };
   if (safe > 0 && avail < safe * 1.5) return { k: '임박', cls: 'p-wait' };
   return { k: '정상', cls: 'p-prog' };
 }
@@ -1360,7 +1360,9 @@ async function submitSite(id) {
 function stockBaseList() {
   const f = filters.stock;
   let list = state.inventory.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  if (f === 'low') list = list.filter(i => ['부족', '없음'].includes(stockState(i).k));
+  if (f === 'none') list = list.filter(i => stockState(i).k === '없음');
+  else if (f === 'short') list = list.filter(i => ['부족', '임박'].includes(stockState(i).k));
+  else if (f === 'low') list = list.filter(i => ['부족', '없음'].includes(stockState(i).k));
   else if (f === 'ok') list = list.filter(i => stockState(i).k === '정상');
   const q = (filters.stockSearch || '').trim().toLowerCase();
   if (q) list = list.filter(i => (i.name || '').toLowerCase().includes(q) || (i.spec || '').toLowerCase().includes(q) || (i.vendor || '').toLowerCase().includes(q));
@@ -1457,7 +1459,7 @@ function renderStock() {
       <input id="stock-search" placeholder="품명·규격·공급처 검색" value="${esc(filters.stockSearch || '')}" oninput="filterStockTable()" autocomplete="off">
       ${filters.stockSearch ? `<button class="search-x" onclick="el('stock-search').value='';filterStockTable()"><i class="ti ti-x"></i></button>` : ''}
     </div>
-    <div class="chips">${chipS('all', '전체', f)}${chipS('low', '부족·없음', f)}${chipS('ok', '정상', f)}</div>
+    <div class="chips">${chipS('all', '전체', f)}${chipS('none', '없음', f)}${chipS('short', '부족', f)}${chipS('ok', '정상', f)}</div>
     ${f === 'low' ? `<div class="banner warn"><i class="ti ti-alert-triangle"></i><span><b>입고가 필요한 자재</b>만 모았습니다. 자재명과 현재 장수를 확인하세요.</span></div>` : ''}
     <div style="font-size:12px;color:var(--t3);margin-bottom:8px">검색 결과 <b id="stock-count" style="color:var(--t1)">${list.length}종</b></div>
     <div class="tbl-wrap" style="max-height:calc(100vh - 360px);min-height:220px;overflow:auto">
