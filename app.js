@@ -1494,15 +1494,13 @@ function openSiteForm(id, pre) {
       <div class="fld"><label>진행 단계</label><select id="s-stage">${SITE_STAGES.map(st => `<option ${(v.stage || '접수') === st ? 'selected' : ''}>${st}</option>`).join('')}</select></div>
       ${holdingsForSite().length ? `<div class="fld full"><label><i class="ti ti-lock" style="font-size:13px;color:var(--blue)"></i> 홀딩에서 불러오기 <span style="color:var(--t3);font-weight:500">(진행·예정홀딩 · 불러온 뒤 수량은 실사용량으로 수정 가능)</span></label><select id="s-hold" onchange="pickSiteHolding()"><option value="">— 직접 입력 —</option>${holdingOptions()}</select></div>` : ''}
       <div class="fld full"><label>자재 / 수량 / 롯트<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(여러 종류면 '자재 추가' · 수량은 직접 수정 가능 · 미정이면 아래 체크)</span></label>${matRowsHtml(siteItems(v), '수량')}</div>
-      <label class="chk full ${v.matPending ? 'on' : ''}" id="s-matpending-w"><input type="checkbox" id="s-matpending" ${v.matPending ? 'checked' : ''} onchange="this.closest('.chk').classList.toggle('on',this.checked)"> 자재 미정 (자재 없이 스케줄만 먼저 잡기)</label>
+      <button type="button" id="s-matpending-btn" class="btn btn-ghost btn-sm${v.matPending ? ' on' : ''}" style="margin:0 0 8px;color:#d64545;border-color:#e6a9a9;font-weight:600${v.matPending ? ';background:#fdeaea' : ''}" onclick="const on=!this.classList.contains('on');this.classList.toggle('on',on);this.style.background=on?'#fdeaea':''"><i class="ti ti-help-circle"></i> 자재 미정</button>
       <div class="fld"><label>실측일 <span id="s-measure-lbl" style="color:var(--t3)">${v.orderType === '도면' ? '(도면발주·생략)' : ''}</span></label><input type="date" id="s-measureDate" value="${esc(v.measureDate || '')}" ${v.orderType === '도면' ? 'disabled' : ''}></div>
       <div class="fld"><label>시공일<span class="req">*</span></label><input type="date" id="s-constructDate" value="${esc(v.constructDate || '')}"></div>
       <div class="fld"><label>가공 공장<span class="req">*</span></label><select id="s-factory" onchange="onMasterChange('s-factory','factories')">${masterOptions('factories', v.factory || '')}</select></div>
       <div class="fld full hidden" id="s-factory-add"><label>새 공장 입력 후 추가</label><div style="display:flex;gap:8px"><input id="s-factory-new" placeholder="이름 입력" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('s-factory','factories')"><i class="ti ti-plus"></i>추가</button></div></div>
       <div class="fld"><label>시공팀<span class="req">*</span></label><select id="s-team" onchange="onMasterChange('s-team','teams')">${masterOptions('teams', v.team || '')}</select></div>
       <div class="fld full hidden" id="s-team-add"><label>새 시공팀 입력 후 추가</label><div style="display:flex;gap:8px"><input id="s-team-new" placeholder="이름 입력" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('s-team','teams')"><i class="ti ti-plus"></i>추가</button></div></div>
-      <label class="chk full ${v.paid ? 'on' : ''}" id="s-paid-w"><input type="checkbox" id="s-paid" ${v.paid ? 'checked' : ''} onchange="this.closest('.chk').classList.toggle('on',this.checked)"> 결제 완료</label>
-      <label class="chk full ${v.confirmed ? 'on' : ''}" id="s-confirmed-w"><input type="checkbox" id="s-confirmed" ${v.confirmed ? 'checked' : ''} onchange="this.closest('.chk').classList.toggle('on',this.checked)"> 시공 확정</label>
       <div class="fld full"><label>특이사항 <span style="color:var(--t3);font-weight:500">(내부용)</span></label><textarea id="s-note" lang="ko" placeholder="현장 메모">${esc(v.note || '')}</textarea></div>
       <div class="fld full"><label><i class="ti ti-message-2" style="font-size:13px;color:var(--blue)"></i> 시공팀 전달사항 <span style="color:var(--t3);font-weight:500">— 시공팀 계정 화면에 표시됨</span></label><textarea id="s-crewnote" lang="ko" placeholder="시공팀(모든대리석 등)에게 전달할 내용">${esc(v.crewNote || '')}</textarea></div>
     </div>
@@ -1560,7 +1558,7 @@ async function submitSite(id) {
   const name = el('s-name').value.trim();
   const client = el('s-client').value.trim();
   let items = collectMaterialRows();
-  const matPending = !!(el('s-matpending') && el('s-matpending').checked);
+  const matPending = !!(el('s-matpending-btn') && el('s-matpending-btn').classList.contains('on'));
   if (!items.length && matPending) items = [{ name: '(미정)', qty: 0, lot: '' }];
   const constructDate = el('s-constructDate').value;
   const factory = normFactory(el('s-factory').value === '__add' ? '' : el('s-factory').value);
@@ -1579,7 +1577,6 @@ async function submitSite(id) {
     items, materialName: items[0].name, qty: String(items[0].qty), unit: '',
     measureDate: el('s-measureDate').value, constructDate,
     factory, team,
-    paid: el('s-paid').checked, confirmed: el('s-confirmed').checked,
     matPending, note: el('s-note').value.trim(), crewNote: (el('s-crewnote') && el('s-crewnote').value || '').trim(), updatedBy: me.name
   };
   if (id) {
