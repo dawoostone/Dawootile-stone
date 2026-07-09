@@ -108,6 +108,11 @@ function isRestrictedRole() { return isCustomerRole() || isCrewRole(); }
 /* 공장명 통일 규칙: 포함하면 대표명으로 정규화 */
 const FACTORY_RULES = [['토마스', '동양'], ['동호', '동호엠엔지'], ['거봉', '거봉석재'], ['영진', '영진석재']];
 function normFactory(name) { const n = String(name == null ? '' : name).trim(); if (!n) return n; for (const r of FACTORY_RULES) { if (n.includes(r[0])) return r[1]; } return n; }
+/* 대한민국 법정공휴일(대체공휴일·명절 포함) — 인사혁신처 고시 기준(2026~2027) */
+const HOLIDAYS = {
+  '2026-01-01': '신정', '2026-02-16': '설날', '2026-02-17': '설날', '2026-02-18': '설날', '2026-03-01': '삼일절', '2026-03-02': '대체휴일', '2026-05-01': '근로자의날', '2026-05-05': '어린이날', '2026-05-24': '부처님오신날', '2026-05-25': '대체휴일', '2026-06-06': '현충일', '2026-07-17': '제헌절', '2026-08-15': '광복절', '2026-08-17': '대체휴일', '2026-09-24': '추석', '2026-09-25': '추석', '2026-09-26': '추석', '2026-10-03': '개천절', '2026-10-05': '대체휴일', '2026-10-09': '한글날', '2026-12-25': '성탄절',
+  '2027-01-01': '신정', '2027-02-06': '설날', '2027-02-07': '설날', '2027-02-08': '설날', '2027-02-09': '대체휴일', '2027-03-01': '삼일절', '2027-05-01': '근로자의날', '2027-05-05': '어린이날', '2027-05-13': '부처님오신날', '2027-06-06': '현충일', '2027-07-17': '제헌절', '2027-08-15': '광복절', '2027-08-16': '대체휴일', '2027-09-14': '추석', '2027-09-15': '추석', '2027-09-16': '추석', '2027-10-03': '개천절', '2027-10-04': '대체휴일', '2027-10-09': '한글날', '2027-10-11': '대체휴일', '2027-12-25': '성탄절', '2027-12-27': '대체휴일'
+};
 
 const STATUS = {
   접수: 'p-gray', 견적전달: 'p-wait', 결제완료: 'p-prog', 확정: 'p-prog',
@@ -658,10 +663,12 @@ function crewCalendarHtml() {
     const ds = `${ym}-${String(dd).padStart(2, '0')}`;
     const has = byDay[dd], isToday = ds === today, isSel = ds === sel;
     const dowIdx = (startDow + dd - 1) % 7;
-    const col = dowIdx === 0 ? '#d64545' : (dowIdx === 6 ? '#2f6fed' : 'var(--t1)');
+    const hol = HOLIDAYS[ds];
+    const col = (dowIdx === 0 || hol) ? '#d64545' : (dowIdx === 6 ? '#2f6fed' : 'var(--t1)');
     const chips = (has || []).map(s => `<span style="font-size:9.5px;line-height:1.25;background:${isSel ? 'rgba(255,255,255,.22)' : 'var(--gl2,#e8f7f0)'};color:${isSel ? '#fff' : '#0F6E56'};border-radius:4px;padding:1px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;display:block;margin-top:2px">${esc(s.name || s.client || '현장')}</span>`).join('');
     cells += `<button onclick="crewPickDay('${ds}')" style="min-height:52px;border:${isSel ? '0' : '0.5px solid var(--bd)'};background:${isSel ? 'var(--g)' : (isToday ? 'var(--gl2,#e8f7f0)' : '#fff')};border-radius:9px;display:flex;flex-direction:column;align-items:stretch;cursor:pointer;padding:4px 3px;overflow:hidden">
       <span style="font-size:12px;font-weight:${has ? '700' : '500'};color:${isSel ? '#fff' : col};text-align:left;line-height:1">${dd}</span>
+      ${hol ? `<span style="font-size:8.5px;color:${isSel ? '#fff' : '#d64545'};font-weight:600;line-height:1.1;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${hol}</span>` : ''}
       ${chips}
     </button>`;
   }
