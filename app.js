@@ -246,6 +246,17 @@ async function ensureStaffRoles() {
     }
   } catch (e) { console.warn('ensureStaffRoles', e); }
 }
+/* 관리자용: members 전체를 roles 문서로 확실히 동기화(보안규칙 적용 전 1회 실행) */
+async function syncAllRolesNow() {
+  if (!CLOUD) { toast('클라우드 모드에서만 가능합니다'); return; }
+  if (!isAdmin()) { toast('관리자만 가능합니다'); return; }
+  let n = 0, skip = 0;
+  for (const m of state.members) {
+    if (!m.email) { skip++; continue; }
+    try { await cref('roles').doc((m.email || '').toLowerCase()).set({ role: m.role || 'staff', name: m.name || '' }, { merge: true }); n++; } catch (e) { console.warn('syncRoles', e); }
+  }
+  toast('직원 권한 문서 ' + n + '개 동기화 완료' + (skip ? ' (이메일 없는 ' + skip + '명 제외)' : ''));
+}
 function findMemberByEmail(email) {
   if (!email) return null;
   const e = email.toLowerCase();
@@ -2613,6 +2624,7 @@ function renderSettings() {
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-users"></i>직원 관리</h3>${isAdmin() ? `<button class="more" onclick="openMemberForm()"><i class="ti ti-plus"></i>추가</button>` : ''}</div>
       ${state.members.map(m => `<div class="mem"><div class="av">${esc(initial(m.name))}</div><div class="info"><div class="nm">${esc(m.name)}</div>${isAdmin() ? `<div class="rl">${esc(m.email || '이메일 미설정')}</div>` : ''}</div>${isAdmin() ? `<span class="pill ${m.role === 'admin' ? 'p-prog' : 'p-gray'}">${m.role === 'admin' ? '관리자' : '직원'}</span><button class="x" onclick="openMemberForm('${m.id}')"><i class="ti ti-edit" style="font-size:17px"></i></button>` : ''}</div>`).join('')}
+      ${isAdmin() && CLOUD ? `<button class="btn btn-block btn-sm" style="margin-top:10px" onclick="syncAllRolesNow()"><i class="ti ti-shield-check"></i>직원 권한 문서 동기화 <span style="color:var(--t3);font-weight:500">(보안규칙 적용 전 1회)</span></button>` : ''}
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-briefcase"></i>거래처 관리</h3>${isAdmin() && (state.clients || []).length ? `<button class="more" style="color:var(--red-t)" onclick="delAllClients()"><i class="ti ti-trash" style="font-size:14px"></i>전체 삭제</button>` : ''}</div>
