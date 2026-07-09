@@ -617,10 +617,11 @@ function crewSiteCard(s) {
     <div style="display:flex;gap:14px;margin-top:8px;font-size:12.5px;flex-wrap:wrap">
       <div><span style="color:var(--t3)">시공</span> <b style="color:${dcol}">${esc(s.constructDate || '미정')}${dtag ? ' · ' + dtag : ''}</b></div>
       ${s.measureDate ? `<div><span style="color:var(--t3)">실측</span> <b>${esc(s.measureDate)}</b></div>` : ''}
+      ${s.factory ? `<div><span style="color:var(--t3)">공장</span> <b>${esc(s.factory)}</b></div>` : ''}
       ${s.manager ? `<div><span style="color:var(--t3)">담당</span> <b>${esc(s.manager)}</b></div>` : ''}
     </div>
     ${items ? `<div style="margin-top:6px">${items}</div>` : ''}
-    ${s.note ? `<div style="font-size:11.5px;color:var(--t3);margin-top:8px;word-break:keep-all"><i class="ti ti-note" style="font-size:12px"></i> ${esc(s.note)}</div>` : ''}
+    ${s.crewNote ? `<div style="margin-top:9px;background:var(--gl2,#e8f7f0);border:0.5px solid var(--gbd,#b8e6d3);border-radius:9px;padding:8px 10px;color:#0F6E56;word-break:keep-all"><b style="font-size:11px;display:block;margin-bottom:2px"><i class="ti ti-message-2" style="font-size:12px"></i> 전달사항</b><span style="font-size:12.5px">${esc(s.crewNote)}</span></div>` : ''}
   </div>`;
 }
 function crewListBody(list) {
@@ -1428,7 +1429,8 @@ function openSiteForm(id, pre) {
       <div class="fld full hidden" id="s-team-add"><label>새 시공팀 입력 후 추가</label><div style="display:flex;gap:8px"><input id="s-team-new" placeholder="이름 입력" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('s-team','teams')"><i class="ti ti-plus"></i>추가</button></div></div>
       <label class="chk full ${v.paid ? 'on' : ''}" id="s-paid-w"><input type="checkbox" id="s-paid" ${v.paid ? 'checked' : ''} onchange="this.closest('.chk').classList.toggle('on',this.checked)"> 결제 완료</label>
       <label class="chk full ${v.confirmed ? 'on' : ''}" id="s-confirmed-w"><input type="checkbox" id="s-confirmed" ${v.confirmed ? 'checked' : ''} onchange="this.closest('.chk').classList.toggle('on',this.checked)"> 시공 확정</label>
-      <div class="fld full"><label>특이사항</label><textarea id="s-note" lang="ko" placeholder="현장 메모">${esc(v.note || '')}</textarea></div>
+      <div class="fld full"><label>특이사항 <span style="color:var(--t3);font-weight:500">(내부용)</span></label><textarea id="s-note" lang="ko" placeholder="현장 메모">${esc(v.note || '')}</textarea></div>
+      <div class="fld full"><label><i class="ti ti-message-2" style="font-size:13px;color:var(--blue)"></i> 시공팀 전달사항 <span style="color:var(--t3);font-weight:500">— 시공팀 계정 화면에 표시됨</span></label><textarea id="s-crewnote" lang="ko" placeholder="시공팀(모든대리석 등)에게 전달할 내용">${esc(v.crewNote || '')}</textarea></div>
     </div>
     <button class="btn btn-ghost btn-block" style="margin-top:12px" onclick="runRecommend()"><i class="ti ti-wand"></i>매뉴얼 기반 시공팀·공장 자동추천</button>
     <div id="reco-out"></div>
@@ -1502,7 +1504,7 @@ async function submitSite(id) {
     measureDate: el('s-measureDate').value, constructDate,
     factory, team,
     paid: el('s-paid').checked, confirmed: el('s-confirmed').checked,
-    note: el('s-note').value.trim(), updatedBy: me.name
+    note: el('s-note').value.trim(), crewNote: (el('s-crewnote') && el('s-crewnote').value || '').trim(), updatedBy: me.name
   };
   if (id) {
     const s = state.sites.find(x => x.id === id);
