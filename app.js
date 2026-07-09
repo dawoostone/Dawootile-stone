@@ -95,7 +95,7 @@ function openStockTab(filter) { filters.stock = filter || 'all'; filters.stockSe
 /* ---------- 2. 유틸 ---------- */
 const $ = (s, r = document) => r.querySelector(s);
 const el = id => document.getElementById(id);
-const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const won = n => (n || 0).toLocaleString('ko-KR');
 const todayStr = () => new Date().toISOString().slice(0, 10);
 function daysFromNow(d) { if (!d) return null; return Math.ceil((new Date(d + 'T00:00') - new Date(todayStr() + 'T00:00')) / 86400000); }
@@ -230,7 +230,21 @@ async function afterAuth(user) {
   el('me-nm').textContent = me.name;
   document.body.classList.toggle('cust-mode', isCustomerRole());  // 고객: 재고 조회 전용 UI
   if (isCustomerRole()) { go('stock'); }
-  else { render(); refreshPushToken(); }
+  else { ensureStaffRoles(); render(); refreshPushToken(); }
+}
+/* 직원/관리자 권한 문서(roles/{이메일}) 자동 생성·동기화 — '승인된 직원만' 보안규칙용.
+   관리자가 로그인하면 전 직원 roles 문서를 한 번에 생성(마이그레이션). */
+async function ensureStaffRoles() {
+  if (!CLOUD || !me || !me.email || me.role === 'customer') return;
+  try {
+    await cref('roles').doc(me.email.toLowerCase()).set({ role: me.role || 'staff', name: me.name || '' }, { merge: true });
+    if (me.role === 'admin') {
+      for (const m of state.members) {
+        if (!m.email) continue;
+        try { await cref('roles').doc(m.email.toLowerCase()).set({ role: m.role || 'staff', name: m.name || '' }, { merge: true }); } catch (e) { }
+      }
+    }
+  } catch (e) { console.warn('ensureStaffRoles', e); }
 }
 function findMemberByEmail(email) {
   if (!email) return null;
@@ -2666,8 +2680,7 @@ async function setRoleDoc(email, role, name, prevEmail) {
   if (!CLOUD) return;
   try {
     if (prevEmail && prevEmail !== email) await cref('roles').doc(prevEmail).delete();
-    if (role === 'customer') await cref('roles').doc(email).set({ role: 'customer', name: name || '' });
-    else await cref('roles').doc(email).delete();
+    await cref('roles').doc(email).set({ role: role || 'staff', name: name || '' });
   } catch (e) { console.warn('roles doc', e); }
 }
 async function delMember(id) {
