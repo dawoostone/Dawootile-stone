@@ -2451,7 +2451,7 @@ function basinFilteredList() {
   let l = (state.basins || []).filter(fdef.match);
   const q = (filters.basinSearch || '').trim().toLowerCase();
   if (q) l = l.filter(b => {
-    const hay = [b.vendor, b.address, b.orderNo].concat(basinItems(b).flatMap(it => [it.stone, it.spec, it.quoteNo]));
+    const hay = [b.vendor, b.address].concat(basinItems(b).flatMap(it => [it.stone, it.spec, it.orderNo, it.quoteNo]));
     return hay.some(v => (v || '').toLowerCase().includes(q));
   });
   l.sort((a, b) => (b.orderDate || '0000').localeCompare(a.orderDate || '0000'));   // 발주일 최신순
@@ -2506,7 +2506,7 @@ function basinCard(b) {
   }).join('');
   const items = basinItems(b);
   const totQty = basinTotalQty(b);
-  const itemLines = items.slice(0, 4).map(it => `<div style="font-size:12px;color:var(--t2);padding:4px 0;border-top:1px solid var(--bd);display:flex;justify-content:space-between;gap:8px"><span><b style="color:var(--t1);font-weight:600">${esc(it.stone || '-')}</b>${it.spec ? ' · ' + esc(it.spec) : ''}</span><span style="flex:none;color:var(--t3)">${it.qty ? esc(it.qty) + '개' : ''}</span></div>`).join('');
+  const itemLines = items.slice(0, 4).map(it => `<div style="font-size:12px;color:var(--t2);padding:4px 0;border-top:1px solid var(--bd);display:flex;justify-content:space-between;gap:8px"><span><b style="color:var(--t1);font-weight:600">${esc(it.stone || '-')}</b>${it.spec ? ' · ' + esc(it.spec) : ''}${it.orderNo ? ` <span style="color:var(--t3)">· 주문 ${esc(it.orderNo)}</span>` : ''}</span><span style="flex:none;color:var(--t3)">${it.qty ? esc(it.qty) + '개' : ''}</span></div>`).join('');
   const more = items.length > 4 ? `<div style="font-size:11.5px;color:var(--t3);padding-top:4px">외 ${items.length - 4}개 품목</div>` : '';
   let act = '';
   if (idx > 0) act += `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();basinBack('${b.id}')" title="이전 단계"><i class="ti ti-chevron-left"></i></button>`;
@@ -2520,7 +2520,7 @@ function basinCard(b) {
     </div>
     <div class="site-meta">
       <div class="mi"><i class="ti ti-stack-2"></i><span class="k">품목</span><b>${items.length}건 · 총 ${totQty}개</b></div>
-      <div class="mi"><i class="ti ti-hash"></i><span class="k">발주번호</span><b>${esc(b.orderNo || '-')}</b></div>
+      <div class="mi"><i class="ti ti-calendar"></i><span class="k">발주일</span><b>${esc(b.orderDate || '-')}</b></div>
     </div>
     ${itemLines ? `<div style="margin:8px 0 2px">${itemLines}${more}</div>` : ''}
     <div class="date-row">
@@ -2569,7 +2569,10 @@ function basinItemRowHtml(it) {
       <input class="bi-qty" inputmode="numeric" placeholder="수량" value="${esc(it.qty || '')}" style="flex:1;min-width:50px;${inp}">
     </div>
     <div style="display:flex;gap:6px;margin-top:6px">
+      <input class="bi-order" placeholder="주문번호" value="${esc(it.orderNo || '')}" style="flex:1;min-width:0;${inp}">
       <input class="bi-quote" placeholder="견적번호" value="${esc(it.quoteNo || '')}" style="flex:1;min-width:0;${inp}">
+    </div>
+    <div style="display:flex;gap:6px;margin-top:6px">
       <input class="bi-price" placeholder="가격" value="${esc(it.price || '')}" style="flex:1;min-width:0;${inp}">
     </div>
   </div>`;
@@ -2580,7 +2583,7 @@ function collectBasinItems() {
   [...document.querySelectorAll('#basin-items .bi-row')].forEach(r => {
     const g = sel => { const e2 = r.querySelector(sel); return e2 ? (e2.value || '').trim() : ''; };
     const stone = g('.bi-stone'), spec = g('.bi-spec'), qty = g('.bi-qty');
-    if (stone || spec || qty) items.push({ stone, spec, qty, quoteNo: g('.bi-quote'), price: g('.bi-price') });
+    if (stone || spec || qty) items.push({ stone, spec, qty, orderNo: g('.bi-order'), quoteNo: g('.bi-quote'), price: g('.bi-price') });
   });
   return items;
 }
@@ -2593,9 +2596,8 @@ function openBasinForm(id) {
     <div class="sheet-h"><h3><i class="ti ti-bath"></i>${b ? '세면대 발주 수정' : '세면대 발주 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
       <div class="fld full"><label>발주 업체명<span class="req">*</span></label>${searchBox('b-vendor', '업체명 검색·입력', v.vendor, 'companyNames', '')}</div>
-      <div class="fld"><label>발주번호</label><input id="b-orderNo" placeholder="예: 46084" value="${esc(v.orderNo || '')}"></div>
       <div class="fld"><label>발주일</label><input type="date" id="b-orderDate" value="${esc(v.orderDate || todayStr())}"></div>
-      <div class="fld full"><label>품목 (석종·규격·수량)<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(한 업체 여러 품목이면 '품목 추가')</span></label>
+      <div class="fld full"><label>품목 (석종·규격·수량·주문번호)<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(한 업체 여러 세면대면 '품목 추가')</span></label>
         <div id="basin-items">${rowsHtml}</div>
         <div id="b-lenhint" style="display:none;margin:0 0 8px"></div>
         <button type="button" class="btn btn-ghost btn-sm btn-block" onclick="addBasinItemRow()"><i class="ti ti-plus"></i>품목 추가</button>
@@ -2641,12 +2643,11 @@ async function submitBasin(id) {
   if (!history[stage]) history[stage] = todayStr();
   const obj = {
     vendor, items,
-    orderNo: (el('b-orderNo').value || '').trim(),
     orderDate: el('b-orderDate').value || '',
     stage, history,
     address: (el('b-address').value || '').trim(),
     note: (el('b-note').value || '').trim(),
-    stone: '', spec: '', qty: '', quoteNo: '', price: ''   // 구버전 단일필드 정리
+    orderNo: '', stone: '', spec: '', qty: '', quoteNo: '', price: ''   // 구버전 단일필드 정리
   };
   if (stage === '완료') obj.shipDate = (cur && cur.shipDate) ? cur.shipDate : todayStr();
   else obj.shipDate = '';
@@ -2682,7 +2683,7 @@ function printBasinSlip(id) {
   </svg>`;
   const items = basinItems(b);
   const MINROWS = Math.max(8, items.length);
-  let rows = items.map((it, i) => `<tr><td class="c">${i + 1}</td><td class="l">${e(it.stone)}</td><td class="c">개</td><td class="c">${e(it.spec)}</td><td class="r">${e(it.qty)}</td><td class="l">${e(it.quoteNo ? '견적 ' + it.quoteNo : '')}</td></tr>`).join('');
+  let rows = items.map((it, i) => `<tr><td class="c">${i + 1}</td><td class="l">${e(it.stone)}</td><td class="c">개</td><td class="c">${e(it.spec)}</td><td class="r">${e(it.qty)}</td><td class="l">${e([it.orderNo ? '주문 ' + it.orderNo : '', it.quoteNo ? '견적 ' + it.quoteNo : ''].filter(Boolean).join(' / '))}</td></tr>`).join('');
   for (let i = items.length; i < MINROWS; i++) rows += `<tr><td class="c">${i + 1}</td><td></td><td></td><td></td><td></td><td></td></tr>`;
   const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>세면대 출고표 ${e(b.vendor)} ${e(date)}</title>
 <style>
