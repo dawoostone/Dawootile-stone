@@ -2749,6 +2749,20 @@ function openBasinStats() {
     const col = palette[i % palette.length];
     return `<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:13px;align-items:center;gap:8px"><span style="display:flex;align-items:center;gap:7px;min-width:0"><span style="width:11px;height:11px;border-radius:3px;background:${col};flex:none"></span><b style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(k)}</b></span><span style="color:var(--t2);flex:none;white-space:nowrap"><b style="color:var(--t1)">${o.q}개</b> · ${o.c}건 · ${pct(o.q)}%</span></div><div style="height:8px;background:var(--soft);border-radius:5px;overflow:hidden;margin-top:5px"><div style="width:${totQty ? o.q / totQty * 100 : 0}%;height:100%;background:${col}"></div></div></div>`;
   }).join('') : '<div style="color:var(--t3);font-size:13px">데이터 없음</div>';
+  // 월별 (발주일 기준)
+  const byMonth = {};
+  (state.basins || []).forEach(b => {
+    const m = ((b.orderDate || '').slice(0, 7)) || '미상';
+    const its = basinItems(b);
+    (byMonth[m] = byMonth[m] || { o: 0, c: 0, q: 0 });
+    byMonth[m].o++; byMonth[m].c += its.length; its.forEach(it => byMonth[m].q += qOf(it));
+  });
+  const monthRows = Object.entries(byMonth).sort((a, b) => a[0].localeCompare(b[0]));
+  const maxMonthQ = Math.max(1, ...monthRows.map(r => r[1].q));
+  const monthHtml = monthRows.length ? monthRows.map(([m, o]) => {
+    const label = m === '미상' ? '미상' : m.replace('-', '.');
+    return `<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:13px"><b>${esc(label)}</b><span style="color:var(--t2)"><b style="color:var(--t1)">${o.q}개</b> · ${o.o}발주 · ${o.c}품목</span></div><div style="height:8px;background:var(--soft);border-radius:5px;overflow:hidden;margin-top:5px"><div style="width:${Math.round(o.q / maxMonthQ * 100)}%;height:100%;background:#7a44c9"></div></div></div>`;
+  }).join('') : '<div style="color:var(--t3);font-size:13px">데이터 없음</div>';
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-chart-bar"></i>세면대 수주 통계</h3><button class="x" onclick="closeModal()">×</button></div>
     <div style="display:flex;gap:8px;margin-bottom:16px">
@@ -2756,13 +2770,46 @@ function openBasinStats() {
       <div style="flex:1;background:var(--soft);border-radius:10px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--t3)">품목</div><div style="font-size:18px;font-weight:800">${items.length}건</div></div>
       <div style="flex:1;background:var(--soft);border-radius:10px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--t3)">수량</div><div style="font-size:18px;font-weight:800">${totQty}개</div></div>
     </div>
-    <div style="font-weight:700;margin:6px 0 10px"><i class="ti ti-color-swatch"></i> 석종(자재)별 수주 <span style="color:var(--t3);font-weight:500;font-size:12px">(개수·비율)</span></div>
+    <div style="font-weight:700;margin:6px 0 10px"><i class="ti ti-calendar-stats"></i> 월별 수주 <span style="color:var(--t3);font-weight:500;font-size:12px">(발주일 기준)</span></div>
+    ${monthHtml}
+    <div style="font-weight:700;margin:20px 0 10px"><i class="ti ti-color-swatch"></i> 석종(자재)별 수주 <span style="color:var(--t3);font-weight:500;font-size:12px">(개수·비율)</span></div>
     ${stackBar(stoneRows)}
     ${rowHtml(stoneRows)}
     <div style="font-weight:700;margin:20px 0 10px"><i class="ti ti-ruler-2"></i> 사이즈별 수주 <span style="color:var(--t3);font-weight:500;font-size:12px">(최대 치수 기준 · 개수·비율)</span></div>
     ${stackBar(sizeRows)}
     ${rowHtml(sizeRows)}
-    <div class="frm-foot"><button class="btn btn-pri btn-block" onclick="closeModal()">닫기</button></div>`);
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="basinExportExcel()"><i class="ti ti-download"></i> 엑셀 다운로드</button><button class="btn btn-pri" style="flex:1" onclick="closeModal()">닫기</button></div>`);
+}
+/* 세면대 발주 내역 → 엑셀 (품목 1줄씩) */
+function basinExportExcel() {
+  if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후 다시'); return; }
+  const rows = [];
+  (state.basins || []).slice()
+    .sort((a, b) => (a.orderDate || '').localeCompare(b.orderDate || ''))
+    .forEach(b => basinItems(b).forEach(it => {
+      rows.push({
+        '발주일': b.orderDate || '',
+        '월': (b.orderDate || '').slice(0, 7),
+        '업체명': b.vendor || '',
+        '단계': b.stage || '견적',
+        '석종': it.stone || '',
+        '규격': it.spec || '',
+        '수량': it.qty || '',
+        '주문번호': it.orderNo || '',
+        '견적번호': it.quoteNo || '',
+        '위안화원가': it.priceCny || it.price || '',
+        '한화원가(통관포함)': it.priceKrw || '',
+        '현장주소': b.address || '',
+        '출고일': b.shipDate || '',
+        '비고': b.note || ''
+      });
+    }));
+  if (!rows.length) { toast('내보낼 발주 내역이 없습니다'); return; }
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '세면대발주');
+  XLSX.writeFile(wb, `세면대발주내역_${todayStr()}.xlsx`);
+  toast('엑셀 ' + rows.length + '줄 다운로드');
 }
 /* 세면대 출고증 — 회사 양식 재사용 + 현장주소 표시 (단일 발주 건 발행) */
 function printBasinSlip(id) {
