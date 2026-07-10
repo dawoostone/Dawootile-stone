@@ -2407,16 +2407,16 @@ function printShipSlip(key) {
 }
 
 /* ================= 세면대(오더베이스) 발주 · 출고 라인 ================= */
-const BASIN_STAGES = ['견적', '발주', '출항', '입항대기', '국내입고', '완료'];
+const BASIN_STAGES = ['견적', '발주', '출항', '입항', '국내입고', '완료'];
 const BASIN_STAGE_META = {
   '견적': { c: '#5b6472', bg: '#eef1f5' },
   '발주': { c: '#2f6fed', bg: '#eaf1fe' },
   '출항': { c: '#0e9f6e', bg: '#e7f7ef' },
-  '입항대기': { c: '#b5730a', bg: '#fdf3e3' },
+  '입항': { c: '#b5730a', bg: '#fdf3e3' },
   '국내입고': { c: '#7a44c9', bg: '#f2ebfd' },
   '완료': { c: '#0a5b46', bg: '#e6f6ef' }
 };
-function basinStageIndex(b) { return Math.max(0, BASIN_STAGES.indexOf(b.stage || '견적')); }
+function basinStageIndex(b) { let s = b.stage || '견적'; if (s === '입항대기') s = '입항'; return Math.max(0, BASIN_STAGES.indexOf(s)); }
 /* 석종(컬러) — 한국어 / 중국어 / 두께. 팬텀·아스팬·알래스카는 기장 1500mm 제한 */
 const BASIN_STONES = [
   { k: '볼라카스', c: '爵士白', t: '15mm' },
@@ -2441,7 +2441,7 @@ const BASIN_FILTERS = [
   { k: 'all', label: '진행중', match: b => (b.stage || '견적') !== '완료' },
   { k: '견적', label: '견적', match: b => (b.stage || '견적') === '견적' },
   { k: '발주', label: '발주', match: b => b.stage === '발주' },
-  { k: 'transit', label: '출항·입항', match: b => b.stage === '출항' || b.stage === '입항대기' },
+  { k: 'transit', label: '출항·입항', match: b => b.stage === '출항' || b.stage === '입항' || b.stage === '입항대기' },
   { k: '국내입고', label: '국내입고', match: b => b.stage === '국내입고' },
   { k: '완료', label: '완료', match: b => b.stage === '완료' }
 ];
