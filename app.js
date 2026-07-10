@@ -2736,10 +2736,13 @@ function openBasinStats() {
   const stoneRows = Object.entries(byStone).sort((a, b) => b[1].q - a[1].q || b[1].c - a[1].c);
   const sizeOrder = ['~800', '801~1200', '1201~1600', '1601~2200', '2200~', '미상'];
   const sizeRows = sizeOrder.filter(k => bySize[k]).map(k => [k, bySize[k]]);
-  const maxStone = Math.max(1, ...stoneRows.map(r => r[1].q));
-  const maxSize = Math.max(1, ...sizeRows.map(r => r[1].q));
-  const bar = (v, max, color) => `<div style="height:8px;background:var(--soft);border-radius:5px;overflow:hidden;margin-top:4px"><div style="width:${Math.round(v / max * 100)}%;height:100%;background:${color}"></div></div>`;
-  const rowHtml = (rows, max, color) => rows.map(([k, o]) => `<div style="margin-bottom:9px"><div style="display:flex;justify-content:space-between;font-size:13px"><b>${esc(k)}</b><span style="color:var(--t3)">${o.q}개 · ${o.c}건</span></div>${bar(o.q, max, color)}</div>`).join('') || '<div style="color:var(--t3);font-size:13px">데이터 없음</div>';
+  const palette = ['#0e9f6e', '#2f6fed', '#b5730a', '#7a44c9', '#d84b4a', '#0891b2', '#65a30d', '#db2777', '#5b6472', '#ca8a04', '#0a5b46', '#9333ea', '#e11d48', '#0369a1', '#4d7c0f'];
+  const pct = v => totQty ? Math.round(v / totQty * 100) : 0;
+  const stackBar = rows => totQty ? `<div style="display:flex;height:15px;border-radius:7px;overflow:hidden;margin-bottom:12px;background:var(--soft)">${rows.map(([k, o], i) => `<div title="${esc(k)} ${pct(o.q)}%" style="width:${o.q / totQty * 100}%;background:${palette[i % palette.length]}"></div>`).join('')}</div>` : '';
+  const rowHtml = rows => rows.length ? rows.map(([k, o], i) => {
+    const col = palette[i % palette.length];
+    return `<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:13px;align-items:center;gap:8px"><span style="display:flex;align-items:center;gap:7px;min-width:0"><span style="width:11px;height:11px;border-radius:3px;background:${col};flex:none"></span><b style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(k)}</b></span><span style="color:var(--t2);flex:none;white-space:nowrap"><b style="color:var(--t1)">${o.q}개</b> · ${o.c}건 · ${pct(o.q)}%</span></div><div style="height:8px;background:var(--soft);border-radius:5px;overflow:hidden;margin-top:5px"><div style="width:${totQty ? o.q / totQty * 100 : 0}%;height:100%;background:${col}"></div></div></div>`;
+  }).join('') : '<div style="color:var(--t3);font-size:13px">데이터 없음</div>';
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-chart-bar"></i>세면대 수주 통계</h3><button class="x" onclick="closeModal()">×</button></div>
     <div style="display:flex;gap:8px;margin-bottom:16px">
@@ -2747,10 +2750,12 @@ function openBasinStats() {
       <div style="flex:1;background:var(--soft);border-radius:10px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--t3)">품목</div><div style="font-size:18px;font-weight:800">${items.length}건</div></div>
       <div style="flex:1;background:var(--soft);border-radius:10px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--t3)">수량</div><div style="font-size:18px;font-weight:800">${totQty}개</div></div>
     </div>
-    <div style="font-weight:700;margin:6px 0 10px"><i class="ti ti-color-swatch"></i> 석종(자재)별 수주</div>
-    ${rowHtml(stoneRows, maxStone, '#0e9f6e')}
-    <div style="font-weight:700;margin:18px 0 10px"><i class="ti ti-ruler-2"></i> 사이즈별 수주 <span style="color:var(--t3);font-weight:500;font-size:12px">(최대 치수 기준)</span></div>
-    ${rowHtml(sizeRows, maxSize, '#2f6fed')}
+    <div style="font-weight:700;margin:6px 0 10px"><i class="ti ti-color-swatch"></i> 석종(자재)별 수주 <span style="color:var(--t3);font-weight:500;font-size:12px">(개수·비율)</span></div>
+    ${stackBar(stoneRows)}
+    ${rowHtml(stoneRows)}
+    <div style="font-weight:700;margin:20px 0 10px"><i class="ti ti-ruler-2"></i> 사이즈별 수주 <span style="color:var(--t3);font-weight:500;font-size:12px">(최대 치수 기준 · 개수·비율)</span></div>
+    ${stackBar(sizeRows)}
+    ${rowHtml(sizeRows)}
     <div class="frm-foot"><button class="btn btn-pri btn-block" onclick="closeModal()">닫기</button></div>`);
 }
 /* 세면대 출고증 — 회사 양식 재사용 + 현장주소 표시 (단일 발주 건 발행) */
