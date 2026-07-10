@@ -333,6 +333,23 @@ body.cust-mode .wrap{padding-bottom:24px}
 .drawer-i.active i{color:var(--g)}
 .drawer-i.lo{margin-top:auto;color:var(--red-t);border-top:1px solid var(--bd)}
 .drawer-i.lo i{color:var(--red-t)}
+/* ===== 세면대 단계별 보드(칸반) ===== */
+.kb-wrap{display:flex;gap:10px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding:2px 2px 12px;scroll-snap-type:x proximity}
+.kb-col{flex:0 0 84%;max-width:320px;scroll-snap-align:start;background:var(--soft,#f6f8f7);border:1px solid var(--bd);border-radius:13px;display:flex;flex-direction:column;min-height:120px}
+.kb-h{font-weight:800;font-size:13.5px;padding:9px 12px;border-radius:13px 13px 0 0;display:flex;align-items:center;justify-content:space-between}
+.kb-n{font-size:12px;font-weight:700;background:#fff;border-radius:10px;padding:1px 9px;min-width:24px;text-align:center;color:inherit}
+.kb-body{padding:8px;display:flex;flex-direction:column;gap:8px}
+.kb-empty{color:var(--t3);font-size:12.5px;text-align:center;padding:16px 0}
+.kb-card{background:#fff;border:1px solid var(--bd);border-radius:11px;padding:10px 11px;box-shadow:0 1px 2px rgba(16,40,33,.05)}
+.kb-card.done{background:#f4fbf7;border-color:#bfe3d3}
+.kb-top{display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:14.5px}
+.kb-site{font-size:11.5px;color:var(--t2);background:var(--gl2,#eef5f1);border-radius:8px;padding:2px 8px;font-weight:600;white-space:nowrap;flex:none}
+.kb-mat{font-size:13px;color:var(--t1);margin-top:5px;word-break:keep-all;line-height:1.4}
+.kb-sub{font-size:11.5px;color:var(--t3);margin-top:5px;display:flex;align-items:center;gap:4px}
+.kb-addr{font-size:11.5px;color:var(--t2);margin-top:5px;display:flex;align-items:flex-start;gap:4px;word-break:keep-all;line-height:1.4}
+.kb-note{font-size:12px;color:var(--t2);margin-top:6px;background:var(--soft,#f6f8f7);border-radius:8px;padding:5px 8px;word-break:keep-all}
+.kb-btns{display:flex;gap:5px;margin-top:9px;flex-wrap:wrap;align-items:center}
+@media(min-width:720px){.kb-col{flex:0 0 264px}}
 /* 검색형 자동완성 드롭다운 */
 .sb-pop{position:fixed;background:#fff;border:1px solid var(--bd2);border-radius:11px;box-shadow:0 10px 26px rgba(16,40,33,.22);max-height:248px;overflow-y:auto;z-index:120;display:none;-webkit-overflow-scrolling:touch}
 .sb-item{padding:12px 13px;font-size:15px;border-bottom:1px solid var(--bd);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -404,6 +421,7 @@ body.cust-mode .wrap{padding-bottom:24px}
       <button class="drawer-i" data-tab="stock" onclick="goD('stock')"><i class="ti ti-packages"></i>재고 · 입고</button>
       <button class="drawer-i" data-tab="ship" onclick="goD('ship')"><i class="ti ti-truck-delivery"></i>출고</button>
       <button class="drawer-i" data-tab="hold" onclick="goD('hold')"><i class="ti ti-lock"></i>홀딩</button>
+      <button class="drawer-i" data-tab="basin" onclick="goD('basin')"><i class="ti ti-bath"></i>세면대 발주</button>
       <button class="drawer-i" data-tab="settings" onclick="goD('settings')"><i class="ti ti-settings"></i>설정</button>
       <button class="drawer-i lo" onclick="logout()"><i class="ti ti-logout"></i>로그아웃</button>
     </nav>
@@ -415,6 +433,7 @@ body.cust-mode .wrap{padding-bottom:24px}
     <div class="page" id="pg-stock"></div>
     <div class="page" id="pg-ship"></div>
     <div class="page" id="pg-hold"></div>
+    <div class="page" id="pg-basin"></div>
     <div class="page" id="pg-settings"></div>
   </div>
 
@@ -426,6 +445,7 @@ body.cust-mode .wrap{padding-bottom:24px}
     <button class="nav-i" data-tab="stock" onclick="go('stock')"><i class="ti ti-packages"></i>재고·입고</button>
     <button class="nav-i" data-tab="ship" onclick="go('ship')"><i class="ti ti-truck-delivery"></i>출고</button>
     <button class="nav-i" data-tab="hold" onclick="go('hold')"><i class="ti ti-lock-square-rounded"></i>홀딩</button>
+    <button class="nav-i" data-tab="basin" onclick="go('basin')"><i class="ti ti-bath"></i>세면대</button>
     <button class="nav-i" data-tab="settings" onclick="go('settings')"><i class="ti ti-settings"></i>설정</button>
   </nav>
 </div>

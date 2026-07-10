@@ -29,7 +29,7 @@ function prefillEmail() {
 }
 function cref(name) { return db.collection('teams').doc(TEAM).collection(name); }
 
-const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients', 'issues', 'restocks'];
+const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients', 'issues', 'restocks', 'basins'];
 
 // 로컬(미리보기) 모드용 - 같은 기기의 다른 탭끼리 실시간 반영
 const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('dws') : null;
@@ -83,10 +83,10 @@ const Store = {
 if (bc) bc.onmessage = (e) => { const c = e.data; if (Store._watchers[c]) Store._watchers[c](Store.read(c)); };
 
 /* ---------- 1. 전역 상태 ---------- */
-const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [], issues: [], restocks: [] };
+const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [], issues: [], restocks: [], basins: [] };
 let me = null;          // 로그인한 사용자
 let tab = 'home';
-let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all', holdArchive: false, holdDone: false, holdSearch: '', holdGroup: 'none', custSearch: '', shipSearch: '' };
+let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all', holdArchive: false, holdDone: false, holdSearch: '', holdGroup: 'none', custSearch: '', shipSearch: '', basinSearch: '' };
 let _holdLinkSite = null;   // 현장 저장 시 이 홀딩을 현장에 '연결'(소진 아님)
 let _holdConfirm = null;    // 출고 저장 시 이 홀딩을 '확정' 처리
 let _busy = false;          // 등록 버튼 연속 클릭(중복 저장) 방지
@@ -529,7 +529,7 @@ function go(t) {
   document.querySelectorAll('.nav-i').forEach(n => n.classList.toggle('active', n.dataset.tab === t));
   document.querySelectorAll('.drawer-i[data-tab]').forEach(n => n.classList.toggle('active', n.dataset.tab === t));
   el('pg-' + t).classList.add('active');
-  el('fab').style.display = (!isRestrictedRole() && (t === 'sites' || t === 'stock' || t === 'hold')) ? 'flex' : 'none';
+  el('fab').style.display = (!isRestrictedRole() && (t === 'sites' || t === 'stock' || t === 'hold' || t === 'basin')) ? 'flex' : 'none';
   render();
   window.scrollTo(0, 0);
 }
@@ -538,6 +538,7 @@ function fabAction() {
   else if (tab === 'stock') openStockForm();
   else if (tab === 'ship') openShipForm();
   else if (tab === 'hold') openHoldForm();
+  else if (tab === 'basin') openBasinForm();
 }
 function render() {
   if (!me) return;
@@ -548,6 +549,7 @@ function render() {
   else if (tab === 'stock') renderStock();
   else if (tab === 'ship') renderShip();
   else if (tab === 'hold') renderHold();
+  else if (tab === 'basin') renderBasin();
   else if (tab === 'settings') renderSettings();
 }
 /* ---------- 고객(거래처) 재고 조회 전용 화면 (읽기 전용) ---------- */
@@ -2395,6 +2397,242 @@ function printShipSlip(key) {
   </table>
   <div class="bottom">
     <table class="who"><tr><td class="wk">담당자</td><td>${e(g.by)}</td></tr>${(g.note && g.note.trim()) ? `<tr><td class="wk">메모</td><td style="white-space:pre-wrap">${e(g.note)}</td></tr>` : ''}</table>
+    <div class="stamp">${stamp}</div>
+  </div>
+</body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { toast('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요'); return; }
+  w.document.write(html); w.document.close(); w.focus();
+  setTimeout(() => { try { w.print(); } catch (e) { } }, 350);
+}
+
+/* ================= 세면대(오더베이스) 발주 · 출고 라인 ================= */
+const BASIN_STAGES = ['견적', '발주', '출항', '입항대기', '국내입고', '완료'];
+const BASIN_STAGE_META = {
+  '견적': { c: '#5b6472', bg: '#eef1f5' },
+  '발주': { c: '#2f6fed', bg: '#eaf1fe' },
+  '출항': { c: '#0e9f6e', bg: '#e7f7ef' },
+  '입항대기': { c: '#b5730a', bg: '#fdf3e3' },
+  '국내입고': { c: '#7a44c9', bg: '#f2ebfd' },
+  '완료': { c: '#0a5b46', bg: '#e6f6ef' }
+};
+function basinStageIndex(b) { return Math.max(0, BASIN_STAGES.indexOf(b.stage || '견적')); }
+function basinMatNames() {
+  const s = new Set();
+  (state.basins || []).forEach(b => b.material && s.add(b.material));
+  return [...s].sort((a, b) => a.localeCompare(b));
+}
+function basinSpecNames() {
+  const s = new Set();
+  (state.specs || []).forEach(x => x.value && s.add(x.value));
+  (state.basins || []).forEach(b => b.spec && s.add(b.spec));
+  return [...s].sort((a, b) => a.localeCompare(b));
+}
+function basinList() {
+  const q = (filters.basinSearch || '').trim().toLowerCase();
+  let l = (state.basins || []).slice();
+  if (q) l = l.filter(b => [b.vendor, b.material, b.spec, b.siteName, b.address].some(v => (v || '').toLowerCase().includes(q)));
+  return l;
+}
+function basinBoardHtml(all) {
+  const cols = BASIN_STAGES.map(st => {
+    const items = all.filter(b => (b.stage || '견적') === st).sort((a, b) => (b.orderDate || '').localeCompare(a.orderDate || ''));
+    const meta = BASIN_STAGE_META[st];
+    const cards = items.length ? items.map(basinCard).join('') : `<div class="kb-empty">없음</div>`;
+    return `<div class="kb-col">
+      <div class="kb-h" style="color:${meta.c};background:${meta.bg}">${st}<span class="kb-n">${items.length}</span></div>
+      <div class="kb-body">${cards}</div>
+    </div>`;
+  }).join('');
+  return `<div class="kb-wrap">${cols}</div>`;
+}
+function renderBasin() {
+  const all = basinList();
+  el('pg-basin').innerHTML = `
+    <div class="ph"><div><h2><i class="ti ti-bath"></i>세면대 발주·출고</h2><p>오더베이스 · 단계별 진행 · 출고 시 출고증 발행</p></div>
+      <button class="btn btn-pri btn-sm" onclick="openBasinForm()"><i class="ti ti-plus"></i>발주 등록</button></div>
+    <div class="search-box">
+      <i class="ti ti-search"></i>
+      <input id="basin-search" placeholder="업체·자재·규격·현장 검색" value="${esc(filters.basinSearch || '')}" oninput="filterBasin()" autocomplete="off">
+      ${filters.basinSearch ? `<button class="search-x" onclick="el('basin-search').value='';filters.basinSearch='';renderBasin()"><i class="ti ti-x"></i></button>` : ''}
+    </div>
+    <div style="font-size:12px;color:var(--t3);margin:2px 0 8px">← 좌우로 밀어 단계 확인 · 총 <b id="basin-count" style="color:var(--t1)">${all.length}건</b></div>
+    <div id="basin-board">${basinBoardHtml(all)}</div>`;
+}
+function filterBasin() {
+  filters.basinSearch = (el('basin-search') && el('basin-search').value) || '';
+  const all = basinList();
+  if (el('basin-board')) el('basin-board').innerHTML = basinBoardHtml(all);
+  if (el('basin-count')) el('basin-count').textContent = all.length + '건';
+}
+function basinCard(b) {
+  const i = basinStageIndex(b);
+  const done = b.stage === '완료';
+  const addr = b.address ? `<div class="kb-addr"><i class="ti ti-map-pin"></i>${esc(b.address)}</div>` : '';
+  const site = b.siteName ? `<span class="kb-site">${esc(b.siteName)}</span>` : '';
+  let btns = '';
+  if (i > 0) btns += `<button class="btn btn-ghost btn-sm" onclick="basinBack('${b.id}')" title="이전 단계"><i class="ti ti-chevron-left"></i></button>`;
+  if (i <= 3) btns += `<button class="btn btn-ghost btn-sm" onclick="basinAdvance('${b.id}')">다음<i class="ti ti-chevron-right"></i></button>`;
+  else if (i === 4) btns += `<button class="btn btn-sm" style="background:#0a5b46;color:#fff;border-color:#0a5b46" onclick="basinShipOut('${b.id}')"><i class="ti ti-truck-delivery"></i>출고 처리</button>`;
+  else if (done) btns += `<button class="btn btn-sm" onclick="printBasinSlip('${b.id}')"><i class="ti ti-printer"></i>출고증</button>`;
+  return `<div class="kb-card${done ? ' done' : ''}">
+    <div class="kb-top"><b>${esc(b.vendor || '(업체미정)')}</b>${site}</div>
+    <div class="kb-mat">${esc(b.material || '')}${b.spec ? ' · ' + esc(b.spec) : ''}${b.qty ? ' · ' + esc(b.qty) + '개' : ''}</div>
+    ${b.orderDate ? `<div class="kb-sub"><i class="ti ti-calendar"></i>발주 ${esc(b.orderDate)}${done && b.shipDate ? ' · 출고 ' + esc(b.shipDate) : ''}</div>` : (done && b.shipDate ? `<div class="kb-sub"><i class="ti ti-calendar"></i>출고 ${esc(b.shipDate)}</div>` : '')}
+    ${addr}
+    ${b.note ? `<div class="kb-note">${esc(b.note)}</div>` : ''}
+    <div class="kb-btns">${btns}<button class="btn btn-ghost btn-sm" onclick="openBasinForm('${b.id}')" title="수정"><i class="ti ti-edit"></i></button></div>
+  </div>`;
+}
+async function basinAdvance(id) {
+  const b = (state.basins || []).find(x => x.id === id); if (!b) return;
+  const i = basinStageIndex(b); if (i >= BASIN_STAGES.length - 1) return;
+  await Store.update('basins', id, { stage: BASIN_STAGES[i + 1] });
+}
+async function basinBack(id) {
+  const b = (state.basins || []).find(x => x.id === id); if (!b) return;
+  const i = basinStageIndex(b); if (i <= 0) return;
+  const patch = { stage: BASIN_STAGES[i - 1] };
+  if (b.stage === '완료') patch.shipDate = '';   // 완료에서 되돌리면 출고일 해제
+  await Store.update('basins', id, patch);
+}
+async function basinShipOut(id) {
+  const b = (state.basins || []).find(x => x.id === id); if (!b) return;
+  if (!confirm('출고 처리하고 완료로 옮길까요?\n출고증을 발행합니다.')) return;
+  await Store.update('basins', id, { stage: '완료', shipDate: todayStr() });
+  toast('출고 완료 처리되었습니다');
+  setTimeout(() => printBasinSlip(id), 250);
+}
+function openBasinForm(id) {
+  const b = id ? (state.basins || []).find(x => x.id === id) : null;
+  const v = b || {};
+  openModal(`
+    <div class="sheet-h"><h3><i class="ti ti-bath"></i>${b ? '세면대 발주 수정' : '세면대 발주 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="frm">
+      <div class="fld full"><label>발주 업체명<span class="req">*</span></label>${searchBox('b-vendor', '업체명 검색·입력', v.vendor, 'companyNames', '')}</div>
+      <div class="fld"><label>자재명<span class="req">*</span></label>${searchBox('b-material', '자재명 검색·입력', v.material, 'basinMatNames', '')}</div>
+      <div class="fld"><label>규격</label>${searchBox('b-spec', '규격 검색·입력', v.spec, 'basinSpecNames', '')}</div>
+      <div class="fld"><label>수량</label><input id="b-qty" inputmode="numeric" placeholder="개수" value="${esc(v.qty || '')}"></div>
+      <div class="fld"><label>발주일</label><input type="date" id="b-orderDate" value="${esc(v.orderDate || todayStr())}"></div>
+      <div class="fld"><label>진행 단계</label><select id="b-stage">${BASIN_STAGES.map(st => `<option ${(v.stage || '견적') === st ? 'selected' : ''}>${st}</option>`).join('')}</select></div>
+      <div class="fld"><label>현장명</label><input id="b-siteName" lang="ko" placeholder="현장명" value="${esc(v.siteName || '')}"></div>
+      <div class="fld full"><label>현장 주소 <span style="color:var(--t3);font-weight:500">(출고증에 표시)</span></label><input id="b-address" lang="ko" placeholder="현장 주소지" value="${esc(v.address || '')}"></div>
+      <div class="fld full"><label>비고</label><input id="b-note" lang="ko" placeholder="선택" value="${esc(v.note || '')}"></div>
+    </div>
+    <div class="frm-foot">${b ? `<button class="btn" style="color:var(--red-t);border-color:#e6a9a9" onclick="deleteBasin('${b.id}')"><i class="ti ti-trash"></i></button>` : ''}<button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitBasin('${b ? b.id : ''}')"><i class="ti ti-check"></i>${b ? '저장' : '등록'}</button></div>`);
+}
+async function submitBasin(id) {
+  const vendor = (el('b-vendor').value || '').trim();
+  const material = (el('b-material').value || '').trim();
+  if (!vendor) { toast('발주 업체명을 입력하세요'); return; }
+  if (!material) { toast('자재명을 입력하세요'); return; }
+  const stage = el('b-stage').value || '견적';
+  const obj = {
+    vendor, material,
+    spec: (el('b-spec').value || '').trim(),
+    qty: (el('b-qty').value || '').trim(),
+    orderDate: el('b-orderDate').value || '',
+    stage,
+    siteName: (el('b-siteName').value || '').trim(),
+    address: (el('b-address').value || '').trim(),
+    note: (el('b-note').value || '').trim()
+  };
+  const cur = id ? (state.basins || []).find(x => x.id === id) : null;
+  if (stage === '완료') obj.shipDate = (cur && cur.shipDate) ? cur.shipDate : todayStr();
+  else obj.shipDate = '';
+  if (id) await Store.update('basins', id, obj);
+  else await Store.add('basins', obj);
+  closeModal();
+  toast(id ? '수정되었습니다' : '세면대 발주가 등록되었습니다');
+}
+async function deleteBasin(id) {
+  if (!confirm('이 발주 건을 삭제할까요?')) return;
+  await Store.remove('basins', id);
+  closeModal(); toast('삭제되었습니다');
+}
+/* 세면대 출고증 — 회사 양식 재사용 + 현장주소 표시 (단일 발주 건 발행) */
+function printBasinSlip(id) {
+  const b = (state.basins || []).find(x => x.id === id);
+  if (!b) { toast('발주 내역을 찾을 수 없습니다'); return; }
+  const e = s => esc(s == null ? '' : String(s));
+  const date = b.shipDate || todayStr();
+  const sameDay = (state.basins || []).filter(x => x.stage === '완료' && (x.shipDate || '') === date).map(x => x.id).sort();
+  const seq = Math.max(1, sameDay.indexOf(id) + 1);
+  const docNo = date.replace(/-/g, '') + '-B' + seq;
+  const route = b.address ? '다우세라믹 상차 →<br>' + e(b.address) + ' 하차' : (b.siteName ? e(b.siteName) : '');
+  const stamp = `<svg viewBox="0 0 200 200" width="150" height="150" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <defs><path id="arcTop" d="M 30,100 A 70,70 0 0 1 170,100"/></defs>
+    <circle cx="100" cy="100" r="94" fill="none" stroke="#111" stroke-width="4"/>
+    <text font-size="15" font-weight="700" fill="#111" letter-spacing="1"><textPath xlink:href="#arcTop" href="#arcTop" startOffset="50%" text-anchor="middle">주식회사 다우세라믹앤석재</textPath></text>
+    <text x="100" y="68" text-anchor="middle" font-size="30" font-weight="800" fill="#111">출고</text>
+    <line x1="32" y1="84" x2="168" y2="84" stroke="#111" stroke-width="3"/>
+    <text x="100" y="110" text-anchor="middle" font-size="17" font-weight="700" fill="#111">${e(date)}</text>
+    <line x1="32" y1="122" x2="168" y2="122" stroke="#111" stroke-width="3"/>
+    <text x="100" y="152" text-anchor="middle" font-size="30" font-weight="800" fill="#111">확인</text>
+  </svg>`;
+  const MINROWS = 8;
+  let rows = `<tr><td class="c">1</td><td class="l">${e(b.material)}</td><td class="c">개</td><td class="c">${e(b.spec)}</td><td class="r">${e(b.qty)}</td><td class="l">${e(b.note)}</td></tr>`;
+  for (let i = 1; i < MINROWS; i++) rows += `<tr><td class="c">${i + 1}</td><td></td><td></td><td></td><td></td><td></td></tr>`;
+  const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>세면대 출고표 ${e(b.vendor)} ${e(date)}</title>
+<style>
+  *{box-sizing:border-box}
+  body{font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#111;margin:0;padding:22px 26px}
+  table{border-collapse:collapse;width:100%}
+  .top{table-layout:fixed}
+  .top td{border:1px solid #444;padding:8px 10px;vertical-align:middle}
+  .doc{padding:0!important;text-align:center}
+  .doc .dl{border-bottom:1px solid #444;padding:9px 6px;letter-spacing:4px;font-size:13px;font-weight:600}
+  .doc .dv{padding:9px 6px;font-size:13.5px}
+  .title{text-align:center;font-size:30px;font-weight:800;letter-spacing:16px}
+  .issue{text-align:center;font-size:13px}
+  .issue .ik{letter-spacing:3px;font-weight:600}
+  .issue .iv{font-size:14px;font-weight:600;margin-top:5px;white-space:nowrap}
+  .conm{text-align:center;font-size:18px;font-weight:800}
+  .recip{text-align:center;vertical-align:middle}
+  .recip .rn{font-size:24px;font-weight:800}
+  .recip .rt{font-size:15px;font-weight:600;margin-top:22px;word-break:keep-all;line-height:1.55}
+  .ck{text-align:center;font-weight:700;background:#f4f4f4;white-space:nowrap}
+  .cv{font-size:13.5px}
+  .cv .tel{font-size:12px;color:#333}
+  .web{text-align:center;font-weight:800;text-decoration:underline;letter-spacing:1px}
+  .items{table-layout:fixed;margin-top:14px}
+  .items th{border:1px solid #444;background:#eee;padding:8px 6px;font-size:13.5px;font-weight:700}
+  .items td{border:1px solid #444;padding:7px 6px;font-size:13px;height:31px}
+  .items td.c{text-align:center}.items td.r{text-align:right;padding-right:9px}.items td.l{text-align:left;padding-left:9px}
+  .bottom{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-top:12px}
+  .who{table-layout:fixed;flex:1}
+  .who td{border:1px solid #444;padding:10px 10px;font-size:13px}
+  .who .wk{text-align:center;font-weight:700;background:#f4f4f4;width:16%}
+  .stamp{flex:none;width:150px;height:150px}
+  @media print{body{padding:8px 10px}}
+</style></head><body>
+  <table class="top">
+    <colgroup><col style="width:27%"><col style="width:14%"><col style="width:59%"></colgroup>
+    <tr>
+      <td class="doc"><div class="dl">문 서 번 호</div><div class="dv">${docNo}</div></td>
+      <td class="title" colspan="2">출 고 표</td>
+    </tr>
+    <tr>
+      <td class="issue"><div class="ik">발 행 일 자</div><div class="iv">${e(date)}</div></td>
+      <td class="conm" colspan="2">${DAWOO_CO.name}</td>
+    </tr>
+    <tr>
+      <td class="recip" rowspan="6"><div class="rn">${e(b.vendor)}</div><div class="rt">${route}</div></td>
+      <td class="ck">주 소</td><td class="cv">${DAWOO_CO.addr}<br><span class="tel">${DAWOO_CO.tel}</span></td>
+    </tr>
+    <tr><td class="ck">업 태</td><td class="cv">${DAWOO_CO.biztype}</td></tr>
+    <tr><td class="ck">대표이사</td><td class="cv">${DAWOO_CO.ceo}</td></tr>
+    <tr><td class="ck">등록번호</td><td class="cv">${DAWOO_CO.bizno}</td></tr>
+    <tr><td class="ck">E-mail</td><td class="cv">${DAWOO_CO.email}</td></tr>
+    <tr><td class="web" colspan="2">${DAWOO_CO.web}</td></tr>
+  </table>
+  <table class="items">
+    <colgroup><col style="width:6%"><col style="width:32%"><col style="width:10%"><col style="width:22%"><col style="width:12%"><col style="width:18%"></colgroup>
+    <thead><tr><th>NO</th><th>품명</th><th>단위</th><th>규격</th><th>수량</th><th>비고</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="bottom">
+    <table class="who"><tr><td class="wk">담당자</td><td>${e(me ? me.name : '')}</td></tr><tr><td class="wk">현장</td><td>${e([b.siteName, b.address].filter(Boolean).join(' / '))}</td></tr></table>
     <div class="stamp">${stamp}</div>
   </div>
 </body></html>`;
