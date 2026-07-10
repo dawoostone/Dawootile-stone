@@ -2447,7 +2447,8 @@ const BASIN_FILTERS = [
   { k: 'all', label: '진행중', match: b => (b.stage || '견적') !== '완료' },
   { k: '견적', label: '견적', match: b => (b.stage || '견적') === '견적' },
   { k: '발주', label: '발주', match: b => b.stage === '발주' },
-  { k: 'transit', label: '출항·입항', match: b => b.stage === '출항' || b.stage === '입항' || b.stage === '입항대기' },
+  { k: '출항', label: '출항', match: b => b.stage === '출항' },
+  { k: '입항', label: '입항', match: b => b.stage === '입항' || b.stage === '입항대기' },
   { k: '국내입고', label: '국내입고', match: b => b.stage === '국내입고' },
   { k: '완료', label: '완료', match: b => b.stage === '완료' }
 ];
