@@ -2473,7 +2473,10 @@ function renderBasin() {
       <input id="basin-search" placeholder="업체·석종·규격·주문번호 검색" value="${esc(filters.basinSearch || '')}" oninput="filterBasin()" autocomplete="off">
       ${filters.basinSearch ? `<button class="search-x" onclick="el('basin-search').value='';filters.basinSearch='';renderBasin()"><i class="ti ti-x"></i></button>` : ''}
     </div>
-    <button class="btn btn-sm btn-block" onclick="basinPackingUpload()" style="margin-bottom:10px"><i class="ti ti-file-spreadsheet"></i> 인보이스·패킹리스트 업로드 → 출항 처리 <span style="color:var(--t3);font-weight:500">(업체+규격 매칭)</span></button>
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <button class="btn btn-sm" style="flex:2" onclick="basinPackingUpload()"><i class="ti ti-file-spreadsheet"></i> 인보이스 업로드 → 출항</button>
+      <button class="btn btn-sm" style="flex:1" onclick="openBasinStats()"><i class="ti ti-chart-bar"></i> 수주 통계</button>
+    </div>
     <div style="font-size:12px;color:var(--t3);margin:2px 0 8px">검색 결과 <b id="basin-count" style="color:var(--t1)">${list.length}건</b></div>
     <div class="site-grid" id="basin-list">${basinListHtml(list)}</div>`;
 }
@@ -2708,6 +2711,47 @@ async function basinPackingApply(ids) {
   let n = 0;
   for (const id of ids) { try { await basinSetStage(id, '출항'); n++; } catch (e) { } }
   toast(n + '건을 출항 단계로 이동했습니다');
+}
+/* ===== 세면대 수주 통계 (석종별 / 사이즈별) ===== */
+function basinSizeBucket(spec) {
+  const nums = (String(spec || '').match(/\d+/g) || []).map(Number).filter(x => x >= 10);
+  if (!nums.length) return '미상';
+  const max = Math.max(...nums);
+  if (max <= 800) return '~800';
+  if (max <= 1200) return '801~1200';
+  if (max <= 1600) return '1201~1600';
+  if (max <= 2200) return '1601~2200';
+  return '2200~';
+}
+function openBasinStats() {
+  const items = [];
+  (state.basins || []).forEach(b => basinItems(b).forEach(it => items.push(it)));
+  const qOf = it => parseInt(it.qty, 10) || 0;
+  const totQty = items.reduce((a, it) => a + qOf(it), 0);
+  const byStone = {}, bySize = {};
+  items.forEach(it => {
+    const sk = it.stone || '미상'; (byStone[sk] = byStone[sk] || { c: 0, q: 0 }); byStone[sk].c++; byStone[sk].q += qOf(it);
+    const zk = basinSizeBucket(it.spec); (bySize[zk] = bySize[zk] || { c: 0, q: 0 }); bySize[zk].c++; bySize[zk].q += qOf(it);
+  });
+  const stoneRows = Object.entries(byStone).sort((a, b) => b[1].q - a[1].q || b[1].c - a[1].c);
+  const sizeOrder = ['~800', '801~1200', '1201~1600', '1601~2200', '2200~', '미상'];
+  const sizeRows = sizeOrder.filter(k => bySize[k]).map(k => [k, bySize[k]]);
+  const maxStone = Math.max(1, ...stoneRows.map(r => r[1].q));
+  const maxSize = Math.max(1, ...sizeRows.map(r => r[1].q));
+  const bar = (v, max, color) => `<div style="height:8px;background:var(--soft);border-radius:5px;overflow:hidden;margin-top:4px"><div style="width:${Math.round(v / max * 100)}%;height:100%;background:${color}"></div></div>`;
+  const rowHtml = (rows, max, color) => rows.map(([k, o]) => `<div style="margin-bottom:9px"><div style="display:flex;justify-content:space-between;font-size:13px"><b>${esc(k)}</b><span style="color:var(--t3)">${o.q}개 · ${o.c}건</span></div>${bar(o.q, max, color)}</div>`).join('') || '<div style="color:var(--t3);font-size:13px">데이터 없음</div>';
+  openModal(`
+    <div class="sheet-h"><h3><i class="ti ti-chart-bar"></i>세면대 수주 통계</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <div style="flex:1;background:var(--soft);border-radius:10px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--t3)">발주</div><div style="font-size:18px;font-weight:800">${(state.basins || []).length}건</div></div>
+      <div style="flex:1;background:var(--soft);border-radius:10px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--t3)">품목</div><div style="font-size:18px;font-weight:800">${items.length}건</div></div>
+      <div style="flex:1;background:var(--soft);border-radius:10px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--t3)">수량</div><div style="font-size:18px;font-weight:800">${totQty}개</div></div>
+    </div>
+    <div style="font-weight:700;margin:6px 0 10px"><i class="ti ti-color-swatch"></i> 석종(자재)별 수주</div>
+    ${rowHtml(stoneRows, maxStone, '#0e9f6e')}
+    <div style="font-weight:700;margin:18px 0 10px"><i class="ti ti-ruler-2"></i> 사이즈별 수주 <span style="color:var(--t3);font-weight:500;font-size:12px">(최대 치수 기준)</span></div>
+    ${rowHtml(sizeRows, maxSize, '#2f6fed')}
+    <div class="frm-foot"><button class="btn btn-pri btn-block" onclick="closeModal()">닫기</button></div>`);
 }
 /* 세면대 출고증 — 회사 양식 재사용 + 현장주소 표시 (단일 발주 건 발행) */
 function printBasinSlip(id) {
