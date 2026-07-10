@@ -268,10 +268,21 @@ async function syncAllRolesNow() {
   }
   toast('직원 권한 문서 ' + n + '개 동기화 완료' + (skip ? ' (이메일 없는 ' + skip + '명 제외)' : ''));
 }
-/* 관리자용: 기존 현장·공장 마스터의 공장명을 대표명으로 일괄 통일 */
+/* 마스터 컬렉션에서 똑같은 값(앞뒤 공백 정규화)이 여러 개면 하나만 남기고 삭제 */
+async function dedupMasterExact(coll) {
+  const seen = {}; let del = 0;
+  for (const d of (state[coll] || [])) {
+    const v = (d.value || '').trim();
+    if (!v) { try { await Store.remove(coll, d.id); del++; } catch (e) { } continue; }
+    if (seen[v]) { try { await Store.remove(coll, d.id); del++; } catch (e) { } }
+    else seen[v] = true;
+  }
+  return del;
+}
+/* 관리자용: 공장명 대표명 통일 + 시공팀·발주처·규격 중복 정리 */
 async function unifyFactories() {
   if (!isAdmin()) { toast('관리자만 가능합니다'); return; }
-  if (!confirm('공장명을 통일할까요?\n토마스→동양, 동호→동호엠엔지, 거봉→거봉석재, 영진→영진석재')) return;
+  if (!confirm('공장명 통일 + 중복 정리를 실행할까요?\n· 공장명: 토마스→동양, 동호→동호엠엔지, 거봉→거봉석재, 영진→영진석재\n· 시공팀·발주처·규격의 똑같은 이름 중복도 하나로 정리됩니다')) return;
   let sN = 0;
   for (const s of state.sites) { const nf = normFactory(s.factory); if (s.factory && nf !== s.factory) { try { await Store.update('sites', s.id, { factory: nf }); sN++; } catch (e) { } } }
   // 공장 마스터: 대표명 기준으로 묶어서 그룹당 1개만 남기고 중복 삭제
@@ -292,7 +303,11 @@ async function unifyFactories() {
   }
   // 대표명이 아예 없으면 추가
   for (const c of ['동양', '동호엠엔지', '거봉석재', '영진석재']) { if (!groups[c]) { try { await Store.add('factories', { value: c }); } catch (e) { } } }
-  toast('공장명 통일 완료 · 현장 ' + sN + '건, 중복 ' + mDel + '개 정리');
+  // 시공팀·발주처·규격 마스터의 똑같은 값 중복 정리
+  const tDel = await dedupMasterExact('teams');
+  const supDel = await dedupMasterExact('suppliers');
+  const spDel = await dedupMasterExact('specs');
+  toast('마스터 정리 완료 · 현장 ' + sN + '건 · 중복삭제 공장 ' + mDel + ' / 시공팀 ' + tDel + ' / 발주처 ' + supDel + ' / 규격 ' + spDel);
 }
 function findMemberByEmail(email) {
   if (!email) return null;
@@ -312,21 +327,23 @@ async function seedIfEmpty() {
       await Store.add('members', { name: '관리자', role: 'admin', email: 'admin@local' });
     }
     // 규격(언더바 선택용) 기본값 — 비어있으면 한 번만 추가
-    if (state.specs.length === 0) {
+    // ⚠️ 클라우드에서는 시드 금지: 서버 데이터가 늦게 로드되면 '비었다'고 오인해
+    //    기본값을 매번 다시 추가 → 중복 누적됨. 로컬 미리보기(!CLOUD)에서만 시드.
+    if (!CLOUD && state.specs.length === 0) {
       for (const val of ['1600*3200*12', '1600*3200*20', '1200*2700*6', '1200*2700*9', '600*1200*9']) {
         await Store.add('specs', { value: val });
       }
     }
     // 가공 공장 기본값 (시공·발주 매뉴얼 기준)
-    if (state.factories.length === 0) {
+    if (!CLOUD && state.factories.length === 0) {
       for (const val of ['거봉석재', '동호엠엔지', '토마스마블', '영진석재']) await Store.add('factories', { value: val });
     }
     // 시공팀 기본값
-    if (state.teams.length === 0) {
+    if (!CLOUD && state.teams.length === 0) {
       for (const val of ['JS테크', '모든대리석', '록스타일', '프로세라믹', '현대코리안', '아트라인']) await Store.add('teams', { value: val });
     }
     // 입고 발주처(매입처) 기본값 — 다우세라믹앤석재(중국 직발주)가 기본
-    if (state.suppliers.length === 0) {
+    if (!CLOUD && state.suppliers.length === 0) {
       for (const val of ['다우세라믹앤석재', '거봉석재', '토마스마블', '동호엠엔지', '영진석재']) await Store.add('suppliers', { value: val });
     }
     // 미리보기(로컬) 모드에서 비어있으면 샘플 데이터로 채워 '살아있는' 화면 제공
@@ -2840,7 +2857,7 @@ function renderSettings() {
       <div class="card-h"><h3><i class="ti ti-users"></i>직원 관리</h3>${isAdmin() ? `<button class="more" onclick="openMemberForm()"><i class="ti ti-plus"></i>추가</button>` : ''}</div>
       ${state.members.map(m => `<div class="mem"><div class="av">${esc(initial(m.name))}</div><div class="info"><div class="nm">${esc(m.name)}</div>${isAdmin() ? `<div class="rl">${esc(m.email || '이메일 미설정')}</div>` : ''}</div>${isAdmin() ? `<span class="pill ${m.role === 'admin' ? 'p-prog' : (m.role === 'customer' ? 'p-hold' : (m.role === 'crew' ? 'p-wait' : 'p-gray'))}">${m.role === 'admin' ? '관리자' : (m.role === 'customer' ? '고객' : (m.role === 'crew' ? '시공팀' : '직원'))}</span><button class="x" onclick="openMemberForm('${m.id}')"><i class="ti ti-edit" style="font-size:17px"></i></button>` : ''}</div>`).join('')}
       ${isAdmin() && CLOUD ? `<button class="btn btn-block btn-sm" style="margin-top:10px" onclick="syncAllRolesNow()"><i class="ti ti-shield-check"></i>직원 권한 문서 동기화 <span style="color:var(--t3);font-weight:500">(보안규칙 적용 전 1회)</span></button>` : ''}
-      ${isAdmin() && CLOUD ? `<button class="btn btn-block btn-sm" style="margin-top:8px" onclick="unifyFactories()"><i class="ti ti-building-factory-2"></i>공장명 통일 <span style="color:var(--t3);font-weight:500">(토마스→동양 등 기존 데이터 정리)</span></button>` : ''}
+      ${isAdmin() && CLOUD ? `<button class="btn btn-block btn-sm" style="margin-top:8px" onclick="unifyFactories()"><i class="ti ti-building-factory-2"></i>공장명 통일 · 중복 정리 <span style="color:var(--t3);font-weight:500">(공장/시공팀/발주처/규격 중복 삭제)</span></button>` : ''}
     </div>
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-briefcase"></i>거래처 관리</h3>${isAdmin() && (state.clients || []).length ? `<button class="more" style="color:var(--red-t)" onclick="delAllClients()"><i class="ti ti-trash" style="font-size:14px"></i>전체 삭제</button>` : ''}</div>
