@@ -1153,6 +1153,12 @@ function openAlerts() {
 function openModal(html) { el('sheet').innerHTML = html; el('modal').classList.add('open'); document.body.style.overflow = 'hidden'; }
 function closeModal() { el('modal').classList.remove('open'); document.body.style.overflow = ''; _holdLinkSite = null; _holdConfirm = null; }
 el('modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
+// Esc 키: 자동완성 팝업 먼저, 없으면 모달 닫기
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const p = el('sb-pop'); if (p && p.style.display !== 'none') { p.style.display = 'none'; return; }
+  const m = el('modal'); if (m && m.classList.contains('open')) closeModal();
+});
 
 /* 자재명 datalist (입고/출고/홀딩 공통) */
 function itemDatalist(id) {
