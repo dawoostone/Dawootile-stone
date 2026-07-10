@@ -274,10 +274,25 @@ async function unifyFactories() {
   if (!confirm('공장명을 통일할까요?\n토마스→동양, 동호→동호엠엔지, 거봉→거봉석재, 영진→영진석재')) return;
   let sN = 0;
   for (const s of state.sites) { const nf = normFactory(s.factory); if (s.factory && nf !== s.factory) { try { await Store.update('sites', s.id, { factory: nf }); sN++; } catch (e) { } } }
+  // 공장 마스터: 대표명 기준으로 묶어서 그룹당 1개만 남기고 중복 삭제
+  const groups = {};
+  for (const f of (state.factories || [])) {
+    const v = (f.value || '').trim();
+    if (!v) { try { await Store.remove('factories', f.id); } catch (e) { } continue; }
+    const canon = normFactory(v);
+    (groups[canon] = groups[canon] || []).push(f);
+  }
   let mDel = 0;
-  for (const f of (state.factories || [])) { const v = f.value || ''; if (v && normFactory(v) !== v) { try { await Store.remove('factories', f.id); mDel++; } catch (e) { } } }
-  for (const c of ['동양', '동호엠엔지', '거봉석재', '영진석재']) { if (!(state.factories || []).some(f => f.value === c)) { try { await Store.add('factories', { value: c }); } catch (e) { } } }
-  toast('공장명 통일 완료 · 현장 ' + sN + '건 변경, 변형 ' + mDel + '개 정리');
+  for (const canon in groups) {
+    const arr = groups[canon];
+    // 값이 이미 대표명과 같은 문서를 우선 유지, 없으면 첫 번째를 대표로 승격
+    const keep = arr.find(f => (f.value || '').trim() === canon) || arr[0];
+    if ((keep.value || '').trim() !== canon) { try { await Store.update('factories', keep.id, { value: canon }); } catch (e) { } }
+    for (const f of arr) { if (f.id !== keep.id) { try { await Store.remove('factories', f.id); mDel++; } catch (e) { } } }
+  }
+  // 대표명이 아예 없으면 추가
+  for (const c of ['동양', '동호엠엔지', '거봉석재', '영진석재']) { if (!groups[c]) { try { await Store.add('factories', { value: c }); } catch (e) { } } }
+  toast('공장명 통일 완료 · 현장 ' + sN + '건, 중복 ' + mDel + '개 정리');
 }
 function findMemberByEmail(email) {
   if (!email) return null;
