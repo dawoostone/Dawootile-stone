@@ -2473,7 +2473,7 @@ function renderBasin() {
       <input id="basin-search" placeholder="업체·석종·규격·주문번호 검색" value="${esc(filters.basinSearch || '')}" oninput="filterBasin()" autocomplete="off">
       ${filters.basinSearch ? `<button class="search-x" onclick="el('basin-search').value='';filters.basinSearch='';renderBasin()"><i class="ti ti-x"></i></button>` : ''}
     </div>
-    <button class="btn btn-sm btn-block" onclick="basinPackingUpload()" style="margin-bottom:10px"><i class="ti ti-file-spreadsheet"></i> 패킹리스트 업로드 → 출항 처리</button>
+    <button class="btn btn-sm btn-block" onclick="basinPackingUpload()" style="margin-bottom:10px"><i class="ti ti-file-spreadsheet"></i> 인보이스·패킹리스트 업로드 → 출항 처리 <span style="color:var(--t3);font-weight:500">(업체+규격 매칭)</span></button>
     <div style="font-size:12px;color:var(--t3);margin:2px 0 8px">검색 결과 <b id="basin-count" style="color:var(--t1)">${list.length}건</b></div>
     <div class="site-grid" id="basin-list">${basinListHtml(list)}</div>`;
 }
@@ -2661,13 +2661,15 @@ async function deleteBasin(id) {
   await Store.remove('basins', id);
   closeModal(); toast('삭제되었습니다');
 }
-/* ===== 패킹리스트 업로드 → 주문번호 일치 발주를 '출항'으로 ===== */
+/* ===== 인보이스/패킹리스트 업로드 → 업체명+규격 일치 발주를 '출항'으로 ===== */
 function basinPackingUpload() {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = '.xlsx,.xls,.csv';
   inp.onchange = () => basinPackingParse(inp);
   inp.click();
 }
+/* 규격 치수 3개를 순서 무관하게 정규화 (가로*세로*높이 vs 두께*폭*길이 차이 흡수) */
+function _specKey(s) { const n = (String(s || '').match(/\d+/g) || []).map(Number).filter(x => x >= 10).sort((a, b) => a - b); return n.join('x'); }
 function basinPackingParse(input) {
   const f = input.files && input.files[0]; if (!f) return;
   if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후 다시'); return; }
@@ -2675,25 +2677,31 @@ function basinPackingParse(input) {
   reader.onload = e => {
     try {
       const wb = XLSX.read(e.target.result, { type: 'array' });
-      const tokens = new Set();
+      const cells = [];
       wb.SheetNames.forEach(sn => {
         XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: '' })
-          .forEach(row => row.forEach(cell => { const s = String(cell == null ? '' : cell).trim(); if (s) tokens.add(s); }));
+          .forEach(row => row.forEach(c => { const s = String(c == null ? '' : c).trim(); if (s) cells.push(s); }));
       });
-      basinPackingMatch(tokens);
+      basinPackingMatch(cells);
     } catch (err) { toast('파일을 읽지 못했습니다'); }
   };
   reader.readAsArrayBuffer(f);
 }
-function basinPackingMatch(tokens) {
+function basinPackingMatch(cells) {
   const shipIdx = BASIN_STAGES.indexOf('출항');
+  const specKeys = new Set();
+  cells.forEach(s => { if (/\d{2,}\s*[*xX×]\s*\d{2,}\s*[*xX×]\s*\d{2,}/.test(s)) specKeys.add(_specKey(s)); });
+  const lower = cells.map(c => c.toLowerCase());
   const matches = (state.basins || []).filter(b => {
     if ((b.stage || '견적') === '완료' || basinStageIndex(b) >= shipIdx) return false;   // 이미 출항 이후·완료는 제외
-    return basinItems(b).some(it => (it.orderNo && tokens.has(String(it.orderNo).trim())) || (it.quoteNo && tokens.has(String(it.quoteNo).trim())));
+    const vendorHit = b.vendor && lower.some(c => c.includes(b.vendor.toLowerCase()));
+    const specHit = basinItems(b).some(it => it.spec && specKeys.has(_specKey(it.spec)));
+    return specHit && vendorHit;
   });
-  if (!matches.length) { toast('패킹리스트에서 일치하는 주문번호를 찾지 못했습니다'); return; }
-  const list = matches.slice(0, 12).map(b => '· ' + (b.vendor || '') + (basinItems(b)[0] && basinItems(b)[0].orderNo ? ' (주문 ' + basinItems(b)[0].orderNo + ')' : '')).join('\n');
-  if (!confirm(`패킹리스트와 일치하는 발주 ${matches.length}건을 '출항' 단계로 넘길까요?\n\n${list}${matches.length > 12 ? '\n…' : ''}`)) return;
+  if (!specKeys.size) { toast('파일에서 규격(치수)을 찾지 못했습니다'); return; }
+  if (!matches.length) { toast('인보이스와 일치하는 발주(업체+규격)를 찾지 못했습니다'); return; }
+  const list = matches.slice(0, 12).map(b => '· ' + (b.vendor || '') + ' (' + basinItems(b).length + '품목)').join('\n');
+  if (!confirm(`인보이스와 일치하는 발주 ${matches.length}건을 '출항' 단계로 넘길까요?\n(업체명 + 규격 기준)\n\n${list}${matches.length > 12 ? '\n…' : ''}`)) return;
   basinPackingApply(matches.map(b => b.id));
 }
 async function basinPackingApply(ids) {
