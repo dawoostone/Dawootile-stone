@@ -2417,127 +2417,206 @@ const BASIN_STAGE_META = {
   '완료': { c: '#0a5b46', bg: '#e6f6ef' }
 };
 function basinStageIndex(b) { return Math.max(0, BASIN_STAGES.indexOf(b.stage || '견적')); }
-function basinMatNames() {
-  const s = new Set();
-  (state.basins || []).forEach(b => b.material && s.add(b.material));
-  return [...s].sort((a, b) => a.localeCompare(b));
-}
-function basinSpecNames() {
-  const s = new Set();
-  (state.specs || []).forEach(x => x.value && s.add(x.value));
-  (state.basins || []).forEach(b => b.spec && s.add(b.spec));
-  return [...s].sort((a, b) => a.localeCompare(b));
-}
-function basinList() {
+/* 석종(컬러) — 한국어 / 중국어 / 두께. 팬텀·아스팬·알래스카는 기장 1500mm 제한 */
+const BASIN_STONES = [
+  { k: '볼라카스', c: '爵士白', t: '15mm' },
+  { k: '퓨어 화이트', c: '纯白', t: '15mm' },
+  { k: '화이트 트라버티노', c: '罗马印记', t: '15mm' },
+  { k: '피스마우골드', c: '鱼肚金', t: '15mm' },
+  { k: '크레마 나카', c: '象牙米黄', t: '15mm' },
+  { k: '실버 트라버티노', c: '巴洛克灰洞', t: '14.5mm' },
+  { k: '아만베이지', c: '阿曼米黄', t: '15mm' },
+  { k: '베이지 트라버티노', c: '黄洞石', t: '15mm' },
+  { k: '깔라까타 마로네', c: '宝格丽紫', t: '15mm' },
+  { k: '아메리칸 블랙', c: '美洲砂岩', t: '15mm' },
+  { k: '퓨어 블랙', c: '', t: '15mm' },
+  { k: '플래티넘 그레이', c: '', t: '15mm' },
+  { k: '팬텀 화이트', c: '罗马幻影白', t: '12mm', maxLen: 1500 },
+  { k: '아스팬라이트그레이', c: '塞浦路斯', t: '', maxLen: 1500 },
+  { k: '알래스카 화이트', c: '阿拉斯加白', t: '12mm', maxLen: 1500 }
+];
+const BASIN_BOWLS = ['중방볼', '좌방볼', '우방볼', '타원볼', '물방울볼', '기둥볼', '무봉(심리스)', '평판', '기타'];
+function basinStoneMeta(name) { return BASIN_STONES.find(s => s.k === name) || null; }
+const BASIN_FILTERS = [
+  { k: 'all', label: '진행중', match: b => (b.stage || '견적') !== '완료' },
+  { k: '견적', label: '견적', match: b => (b.stage || '견적') === '견적' },
+  { k: '발주', label: '발주', match: b => b.stage === '발주' },
+  { k: 'transit', label: '출항·입항', match: b => b.stage === '출항' || b.stage === '입항대기' },
+  { k: '국내입고', label: '국내입고', match: b => b.stage === '국내입고' },
+  { k: '완료', label: '완료', match: b => b.stage === '완료' }
+];
+function basinFilteredList() {
+  const f = filters.basinTab || 'all';
+  const fdef = BASIN_FILTERS.find(x => x.k === f) || BASIN_FILTERS[0];
+  let l = (state.basins || []).filter(fdef.match);
   const q = (filters.basinSearch || '').trim().toLowerCase();
-  let l = (state.basins || []).slice();
-  if (q) l = l.filter(b => [b.vendor, b.material, b.spec, b.siteName, b.address].some(v => (v || '').toLowerCase().includes(q)));
+  if (q) l = l.filter(b => [b.vendor, b.stone, b.bowl, b.spec, b.siteName, b.address, b.orderNo, b.quoteNo].some(v => (v || '').toLowerCase().includes(q)));
+  l.sort((a, b) => (b.orderDate || '0000').localeCompare(a.orderDate || '0000'));   // 발주일 최신순
   return l;
 }
-function basinBoardHtml(all) {
-  const cols = BASIN_STAGES.map(st => {
-    const items = all.filter(b => (b.stage || '견적') === st).sort((a, b) => (b.orderDate || '').localeCompare(a.orderDate || ''));
-    const meta = BASIN_STAGE_META[st];
-    const cards = items.length ? items.map(basinCard).join('') : `<div class="kb-empty">없음</div>`;
-    return `<div class="kb-col">
-      <div class="kb-h" style="color:${meta.c};background:${meta.bg}">${st}<span class="kb-n">${items.length}</span></div>
-      <div class="kb-body">${cards}</div>
-    </div>`;
-  }).join('');
-  return `<div class="kb-wrap">${cols}</div>`;
-}
 function renderBasin() {
-  const all = basinList();
+  const f = filters.basinTab || 'all';
+  const list = basinFilteredList();
+  const chips = BASIN_FILTERS.map(x => {
+    const n = (state.basins || []).filter(x.match).length;
+    return `<button class="chip ${f === x.k ? 'active' : ''}" onclick="filters.basinTab='${x.k}';renderBasin()">${x.label}${n ? ` <b style="opacity:.7">${n}</b>` : ''}</button>`;
+  }).join('');
   el('pg-basin').innerHTML = `
-    <div class="ph"><div><h2><i class="ti ti-bath"></i>세면대 발주·출고</h2><p>오더베이스 · 단계별 진행 · 출고 시 출고증 발행</p></div>
+    <div class="ph"><div><h2><i class="ti ti-bath"></i>세면대 발주·출고</h2><p>오더베이스 · 탭하면 상세 · 국내입고 후 출고증</p></div>
       <button class="btn btn-pri btn-sm" onclick="openBasinForm()"><i class="ti ti-plus"></i>발주 등록</button></div>
+    <div class="chips">${chips}</div>
     <div class="search-box">
       <i class="ti ti-search"></i>
-      <input id="basin-search" placeholder="업체·자재·규격·현장 검색" value="${esc(filters.basinSearch || '')}" oninput="filterBasin()" autocomplete="off">
+      <input id="basin-search" placeholder="업체·석종·규격·현장·발주번호 검색" value="${esc(filters.basinSearch || '')}" oninput="filterBasin()" autocomplete="off">
       ${filters.basinSearch ? `<button class="search-x" onclick="el('basin-search').value='';filters.basinSearch='';renderBasin()"><i class="ti ti-x"></i></button>` : ''}
     </div>
-    <div style="font-size:12px;color:var(--t3);margin:2px 0 8px">← 좌우로 밀어 단계 확인 · 총 <b id="basin-count" style="color:var(--t1)">${all.length}건</b></div>
-    <div id="basin-board">${basinBoardHtml(all)}</div>`;
+    <div style="font-size:12px;color:var(--t3);margin:2px 0 8px">검색 결과 <b id="basin-count" style="color:var(--t1)">${list.length}건</b></div>
+    <div class="site-grid" id="basin-list">${basinListHtml(list)}</div>`;
+}
+function basinListHtml(list) {
+  if (!list.length) return `<div class="empty"><i class="ti ti-inbox"></i>해당하는 발주가 없습니다</div>`;
+  return list.map(basinCard).join('');
 }
 function filterBasin() {
   filters.basinSearch = (el('basin-search') && el('basin-search').value) || '';
-  const all = basinList();
-  if (el('basin-board')) el('basin-board').innerHTML = basinBoardHtml(all);
-  if (el('basin-count')) el('basin-count').textContent = all.length + '건';
+  const list = basinFilteredList();
+  if (el('basin-list')) el('basin-list').innerHTML = basinListHtml(list);
+  if (el('basin-count')) el('basin-count').textContent = list.length + '건';
+}
+function basinPill(stage) {
+  const m = BASIN_STAGE_META[stage] || BASIN_STAGE_META['견적'];
+  return `<span class="pill" style="background:${m.bg};color:${m.c}">${esc(stage || '견적')}</span>`;
 }
 function basinCard(b) {
-  const i = basinStageIndex(b);
+  const idx = basinStageIndex(b);
   const done = b.stage === '완료';
-  const addr = b.address ? `<div class="kb-addr"><i class="ti ti-map-pin"></i>${esc(b.address)}</div>` : '';
-  const site = b.siteName ? `<span class="kb-site">${esc(b.siteName)}</span>` : '';
-  let btns = '';
-  if (i > 0) btns += `<button class="btn btn-ghost btn-sm" onclick="basinBack('${b.id}')" title="이전 단계"><i class="ti ti-chevron-left"></i></button>`;
-  if (i <= 3) btns += `<button class="btn btn-ghost btn-sm" onclick="basinAdvance('${b.id}')">다음<i class="ti ti-chevron-right"></i></button>`;
-  else if (i === 4) btns += `<button class="btn btn-sm" style="background:#0a5b46;color:#fff;border-color:#0a5b46" onclick="basinShipOut('${b.id}')"><i class="ti ti-truck-delivery"></i>출고 처리</button>`;
-  else if (done) btns += `<button class="btn btn-sm" onclick="printBasinSlip('${b.id}')"><i class="ti ti-printer"></i>출고증</button>`;
-  return `<div class="kb-card${done ? ' done' : ''}">
-    <div class="kb-top"><b>${esc(b.vendor || '(업체미정)')}</b>${site}</div>
-    <div class="kb-mat">${esc(b.material || '')}${b.spec ? ' · ' + esc(b.spec) : ''}${b.qty ? ' · ' + esc(b.qty) + '개' : ''}</div>
-    ${b.orderDate ? `<div class="kb-sub"><i class="ti ti-calendar"></i>발주 ${esc(b.orderDate)}${done && b.shipDate ? ' · 출고 ' + esc(b.shipDate) : ''}</div>` : (done && b.shipDate ? `<div class="kb-sub"><i class="ti ti-calendar"></i>출고 ${esc(b.shipDate)}</div>` : '')}
-    ${addr}
-    ${b.note ? `<div class="kb-note">${esc(b.note)}</div>` : ''}
-    <div class="kb-btns">${btns}<button class="btn btn-ghost btn-sm" onclick="openBasinForm('${b.id}')" title="수정"><i class="ti ti-edit"></i></button></div>
+  const tnodes = BASIN_STAGES.map((st, i) => {
+    const cls = i < idx ? 'done' : (i === idx ? 'cur' : '');
+    const d = (b.history && b.history[st]) ? b.history[st].slice(5) : '';
+    return `<div class="tnode ${cls}"><span class="c">${i < idx ? "<i class='ti ti-check'></i>" : ''}</span><span class="lb">${st}</span><span class="dt">${d}</span></div>`;
+  }).join('');
+  const sm = basinStoneMeta(b.stone);
+  const stoneLine = [b.stone, b.bowl].filter(Boolean).join(' · ') || '-';
+  let act = '';
+  if (idx > 0) act += `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();basinBack('${b.id}')" title="이전 단계"><i class="ti ti-chevron-left"></i></button>`;
+  if (idx <= 3) act += `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();basinAdvance('${b.id}')">다음 단계<i class="ti ti-chevron-right"></i></button>`;
+  else if (idx === 4) act += `<button class="btn btn-sm" style="background:#0a5b46;color:#fff;border-color:#0a5b46" onclick="event.stopPropagation();basinShipOut('${b.id}')"><i class="ti ti-truck-delivery"></i>출고 처리 · 출고증</button>`;
+  else if (done) act += `<button class="btn btn-sm" onclick="event.stopPropagation();printBasinSlip('${b.id}')"><i class="ti ti-printer"></i>출고증 인쇄</button>`;
+  return `<div class="site" onclick="openBasinForm('${b.id}')">
+    <div class="site-top">
+      <div><div class="nm">${esc(b.vendor || '(업체미정)')}</div><div class="ad">${b.siteName || b.address ? `<i class="ti ti-map-pin" style="font-size:13px"></i>${esc(b.siteName || '')} ${esc(b.address || '')}` : `<span style="color:var(--t3)">현장 미지정</span>`}</div></div>
+      <div style="text-align:right;flex:none">${basinPill(b.stage || '견적')}</div>
+    </div>
+    <div class="site-meta">
+      <div class="mi"><i class="ti ti-color-swatch"></i><span class="k">석종</span><b>${esc(stoneLine)}${sm && sm.t ? ` <span style="color:var(--t3);font-weight:600">${sm.t}</span>` : ''}</b></div>
+      <div class="mi"><i class="ti ti-ruler-2"></i><span class="k">규격</span><b>${esc(b.spec || '-')}</b></div>
+      <div class="mi"><i class="ti ti-stack-2"></i><span class="k">수량</span><b>${esc(b.qty || '-')}${b.qty ? '개' : ''}</b></div>
+      <div class="mi"><i class="ti ti-hash"></i><span class="k">발주번호</span><b>${esc(b.orderNo || '-')}</b></div>
+    </div>
+    <div class="date-row">
+      <div class="db"><div class="k">발주일</div><div class="v">${esc(b.orderDate || '미정')}</div></div>
+      <div class="db"><div class="k">예발일</div><div class="v">${esc(b.preShipDate || '미정')}</div></div>
+      <div class="db"><div class="k">${done ? '출고일' : '실발일'}</div><div class="v">${esc((done ? b.shipDate : b.realShipDate) || '미정')}</div></div>
+    </div>
+    <div class="tline">${tnodes}</div>
+    <div style="display:flex;gap:6px;margin-top:11px;flex-wrap:wrap">${act}</div>
   </div>`;
+}
+async function basinSetStage(id, stage, extra) {
+  const b = (state.basins || []).find(x => x.id === id); if (!b) return;
+  const history = Object.assign({}, b.history || {});
+  if (!history[stage]) history[stage] = todayStr();
+  await Store.update('basins', id, Object.assign({ stage, history }, extra || {}));
 }
 async function basinAdvance(id) {
   const b = (state.basins || []).find(x => x.id === id); if (!b) return;
   const i = basinStageIndex(b); if (i >= BASIN_STAGES.length - 1) return;
-  await Store.update('basins', id, { stage: BASIN_STAGES[i + 1] });
+  await basinSetStage(id, BASIN_STAGES[i + 1]);
 }
 async function basinBack(id) {
   const b = (state.basins || []).find(x => x.id === id); if (!b) return;
   const i = basinStageIndex(b); if (i <= 0) return;
-  const patch = { stage: BASIN_STAGES[i - 1] };
-  if (b.stage === '완료') patch.shipDate = '';   // 완료에서 되돌리면 출고일 해제
-  await Store.update('basins', id, patch);
+  const extra = (b.stage === '완료') ? { shipDate: '' } : null;   // 완료에서 되돌리면 출고일 해제
+  await basinSetStage(id, BASIN_STAGES[i - 1], extra);
 }
 async function basinShipOut(id) {
   const b = (state.basins || []).find(x => x.id === id); if (!b) return;
   if (!confirm('출고 처리하고 완료로 옮길까요?\n출고증을 발행합니다.')) return;
-  await Store.update('basins', id, { stage: '완료', shipDate: todayStr() });
+  await basinSetStage(id, '완료', { shipDate: todayStr() });
   toast('출고 완료 처리되었습니다');
   setTimeout(() => printBasinSlip(id), 250);
 }
 function openBasinForm(id) {
   const b = id ? (state.basins || []).find(x => x.id === id) : null;
   const v = b || {};
+  const stoneOpts = `<option value="">— 석종 선택 —</option>` + BASIN_STONES.map(s => `<option value="${esc(s.k)}" ${v.stone === s.k ? 'selected' : ''}>${esc(s.k)}${s.c ? ' (' + esc(s.c) + ')' : ''}${s.t ? ' · ' + s.t : ''}${s.maxLen ? ' · 최대' + s.maxLen : ''}</option>`).join('');
+  const bowlOpts = `<option value="">— 볼 형태 —</option>` + BASIN_BOWLS.map(x => `<option ${v.bowl === x ? 'selected' : ''}>${x}</option>`).join('');
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-bath"></i>${b ? '세면대 발주 수정' : '세면대 발주 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
       <div class="fld full"><label>발주 업체명<span class="req">*</span></label>${searchBox('b-vendor', '업체명 검색·입력', v.vendor, 'companyNames', '')}</div>
-      <div class="fld"><label>자재명<span class="req">*</span></label>${searchBox('b-material', '자재명 검색·입력', v.material, 'basinMatNames', '')}</div>
-      <div class="fld"><label>규격</label>${searchBox('b-spec', '규격 검색·입력', v.spec, 'basinSpecNames', '')}</div>
-      <div class="fld"><label>수량</label><input id="b-qty" inputmode="numeric" placeholder="개수" value="${esc(v.qty || '')}"></div>
+      <div class="fld"><label>발주번호</label><input id="b-orderNo" placeholder="예: 46084" value="${esc(v.orderNo || '')}"></div>
       <div class="fld"><label>발주일</label><input type="date" id="b-orderDate" value="${esc(v.orderDate || todayStr())}"></div>
+      <div class="fld full"><label>석종(컬러)<span class="req">*</span></label><select id="b-stone" onchange="basinLenHint()">${stoneOpts}</select></div>
+      <div class="fld"><label>볼 형태</label><select id="b-bowl">${bowlOpts}</select></div>
+      <div class="fld"><label>수량</label><input id="b-qty" inputmode="numeric" placeholder="개수" value="${esc(v.qty || '')}"></div>
+      <div class="fld full"><label>규격 (가로*세로*높이 mm)</label><input id="b-spec" lang="en" placeholder="예: 1060*473*550" value="${esc(v.spec || '')}" oninput="basinLenHint()"></div>
+      <div id="b-lenhint" style="display:none;grid-column:1/-1;margin:-4px 0 2px"></div>
+      <div class="fld"><label>견적서 번호</label><input id="b-quoteNo" placeholder="예: 20260120-6" value="${esc(v.quoteNo || '')}"></div>
+      <div class="fld"><label>가격</label><input id="b-price" placeholder="예: 1328" value="${esc(v.price || '')}"></div>
+      <div class="fld"><label>예발일 <span style="color:var(--t3);font-weight:500">(예정)</span></label><input type="date" id="b-preShipDate" value="${esc(v.preShipDate || '')}"></div>
+      <div class="fld"><label>실발일 <span style="color:var(--t3);font-weight:500">(출항)</span></label><input type="date" id="b-realShipDate" value="${esc(v.realShipDate || '')}"></div>
       <div class="fld"><label>진행 단계</label><select id="b-stage">${BASIN_STAGES.map(st => `<option ${(v.stage || '견적') === st ? 'selected' : ''}>${st}</option>`).join('')}</select></div>
       <div class="fld"><label>현장명</label><input id="b-siteName" lang="ko" placeholder="현장명" value="${esc(v.siteName || '')}"></div>
       <div class="fld full"><label>현장 주소 <span style="color:var(--t3);font-weight:500">(출고증에 표시)</span></label><input id="b-address" lang="ko" placeholder="현장 주소지" value="${esc(v.address || '')}"></div>
       <div class="fld full"><label>비고</label><input id="b-note" lang="ko" placeholder="선택" value="${esc(v.note || '')}"></div>
+      <div class="fld full" style="font-size:11.5px;color:var(--t3);line-height:1.5;background:var(--soft);border-radius:9px;padding:9px 11px"><i class="ti ti-info-circle"></i> 납기 약 30~33일 · 세면대 1개당 브라켓 1SET 포함(팝업·수전·트랩 별도) · 발주 후 수정 불가</div>
     </div>
     <div class="frm-foot">${b ? `<button class="btn" style="color:var(--red-t);border-color:#e6a9a9" onclick="deleteBasin('${b.id}')"><i class="ti ti-trash"></i></button>` : ''}<button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitBasin('${b ? b.id : ''}')"><i class="ti ti-check"></i>${b ? '저장' : '등록'}</button></div>`);
+  basinLenHint();
+}
+function basinLen(spec) { const m = String(spec || '').match(/\d+/); return m ? +m[0] : 0; }
+function basinLenHint() {
+  const box = el('b-lenhint'); if (!box) return;
+  const stone = el('b-stone') ? el('b-stone').value : '';
+  const sm = basinStoneMeta(stone);
+  const len = basinLen(el('b-spec') ? el('b-spec').value : '');
+  if (sm && sm.maxLen && len > sm.maxLen) {
+    box.style.display = 'block';
+    box.innerHTML = `<div style="font-size:12px;color:#d64545;background:#fdeaea;border:1px solid #e6a9a9;border-radius:9px;padding:8px 10px"><i class="ti ti-alert-triangle"></i> <b>${esc(stone)}</b>는 기장 ${sm.maxLen}mm까지만 제작 가능합니다 (현재 ${len}mm)</div>`;
+  } else { box.style.display = 'none'; box.innerHTML = ''; }
 }
 async function submitBasin(id) {
   const vendor = (el('b-vendor').value || '').trim();
-  const material = (el('b-material').value || '').trim();
+  const stone = (el('b-stone').value || '').trim();
   if (!vendor) { toast('발주 업체명을 입력하세요'); return; }
-  if (!material) { toast('자재명을 입력하세요'); return; }
+  if (!stone) { toast('석종(컬러)을 선택하세요'); return; }
+  const spec = (el('b-spec').value || '').trim();
+  const sm = basinStoneMeta(stone);
+  const len = basinLen(spec);
+  if (sm && sm.maxLen && len > sm.maxLen) {
+    if (!confirm(`${stone}는 기장 ${sm.maxLen}mm까지만 제작 가능합니다.\n현재 ${len}mm — 그래도 저장할까요?`)) return;
+  }
   const stage = el('b-stage').value || '견적';
+  const cur = id ? (state.basins || []).find(x => x.id === id) : null;
+  const history = Object.assign({}, (cur && cur.history) || {});
+  if (!history[stage]) history[stage] = todayStr();
   const obj = {
-    vendor, material,
-    spec: (el('b-spec').value || '').trim(),
+    vendor, stone,
+    bowl: (el('b-bowl').value || '').trim(),
+    spec,
     qty: (el('b-qty').value || '').trim(),
+    orderNo: (el('b-orderNo').value || '').trim(),
     orderDate: el('b-orderDate').value || '',
-    stage,
+    quoteNo: (el('b-quoteNo').value || '').trim(),
+    price: (el('b-price').value || '').trim(),
+    preShipDate: el('b-preShipDate').value || '',
+    realShipDate: el('b-realShipDate').value || '',
+    stage, history,
     siteName: (el('b-siteName').value || '').trim(),
     address: (el('b-address').value || '').trim(),
     note: (el('b-note').value || '').trim()
   };
-  const cur = id ? (state.basins || []).find(x => x.id === id) : null;
   if (stage === '완료') obj.shipDate = (cur && cur.shipDate) ? cur.shipDate : todayStr();
   else obj.shipDate = '';
   if (id) await Store.update('basins', id, obj);
@@ -2571,7 +2650,8 @@ function printBasinSlip(id) {
     <text x="100" y="152" text-anchor="middle" font-size="30" font-weight="800" fill="#111">확인</text>
   </svg>`;
   const MINROWS = 8;
-  let rows = `<tr><td class="c">1</td><td class="l">${e(b.material)}</td><td class="c">개</td><td class="c">${e(b.spec)}</td><td class="r">${e(b.qty)}</td><td class="l">${e(b.note)}</td></tr>`;
+  const pname = [b.stone, b.bowl].filter(Boolean).join(' · ') || (b.material || '');
+  let rows = `<tr><td class="c">1</td><td class="l">${e(pname)}</td><td class="c">개</td><td class="c">${e(b.spec)}</td><td class="r">${e(b.qty)}</td><td class="l">${e([b.orderNo ? '발주 ' + b.orderNo : '', b.note].filter(Boolean).join(' / '))}</td></tr>`;
   for (let i = 1; i < MINROWS; i++) rows += `<tr><td class="c">${i + 1}</td><td></td><td></td><td></td><td></td><td></td></tr>`;
   const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>세면대 출고표 ${e(b.vendor)} ${e(date)}</title>
 <style>
