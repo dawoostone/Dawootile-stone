@@ -1897,7 +1897,8 @@ function openItemForm(id) {
     ${isAdmin() ? `<div class="sec-label"><i class="ti ti-history"></i>재고 조정 내역 <span style="font-weight:500;color:var(--t3)">(관리자)</span></div>
     ${(() => { const adjs = txns.filter(t => t.type === 'adjust').sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0)); return adjs.length ? adjs.map(t => { const d = +t.jang || 0; return `<div class="alert-i b" style="margin-bottom:6px"><div class="ai" style="color:${d >= 0 ? 'var(--gd)' : 'var(--red-t)'}"><i class="ti ti-adjustments"></i></div><div class="at"><b style="color:${d >= 0 ? 'var(--gd)' : 'var(--red-t)'}">${d > 0 ? '+' : ''}${d}장</b><span>${esc(t.date || '')}${t.lot ? ' · 롯트 ' + esc(t.lot) : ''}${t.pattern ? ' · 패턴 ' + esc(t.pattern) : ''} · ${esc(t.note || '')} · ${esc(t.by || '')}</span></div><button class="btn btn-ghost btn-sm" type="button" onclick="event.stopPropagation();delAdjust('${t.id}')" title="되돌리기"><i class="ti ti-arrow-back-up"></i></button></div>`; }).join('') : `<div style="font-size:12.5px;color:var(--t3);padding:2px 0 8px">조정 내역이 없습니다</div>`; })()}` : ''}
     <div class="sec-label"><i class="ti ti-logout"></i>출고 내역 <span style="font-weight:500;color:var(--t3)">· 누적 ${totalOut}장</span></div>
-    ${txnRowsWithMore(outs, 'out-more', t => `<div class="alert-i b" style="margin-bottom:6px"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${+t.jang || 0}장${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}</b><span>${esc(t.date || '')} · ${esc(t.targetName || '-')} · ${esc(t.by || '')}</span></div></div>`, '출고 내역 없음')}
+    <div style="font-size:11.5px;color:var(--t3);margin-bottom:6px"><i class="ti ti-info-circle"></i> 출고를 탭하면 롯트·패턴을 지정해 미지정을 해소할 수 있습니다</div>
+    ${txnRowsWithMore(outs, 'out-more', t => `<div class="alert-i b" style="margin-bottom:6px;cursor:pointer" onclick="openOutEdit('${t.id}')" title="탭하면 롯트·패턴 지정"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${+t.jang || 0}장${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}</b><span>${esc(t.date || '')} · ${esc(t.targetName || '-')}${t.lot ? ' · 롯트 ' + esc(t.lot) : ' · <span style="color:var(--red-t)">롯트 미지정</span>'}</span></div><i class="ti ti-edit" style="color:var(--t3);align-self:center"></i></div>`, '출고 내역 없음')}
     <div class="sec-label" style="margin-top:14px"><i class="ti ti-login"></i>입고 내역</div>
     <div style="font-size:11.5px;color:var(--t3);margin-bottom:6px"><i class="ti ti-info-circle"></i> 입고 내역을 탭하면 롯트·패턴을 수정할 수 있습니다</div>
     ${txnRowsWithMore(ins, 'in-more', t => `<div class="alert-i b" style="background:var(--gl2);border-color:var(--gbd);margin-bottom:6px;cursor:pointer" onclick="openInEdit('${t.id}')" title="탭하면 롯트·패턴 수정"><div class="ai" style="color:var(--gd)"><i class="ti ti-login"></i></div><div class="at"><b>+${+t.jang || 0}장${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}</b><span>${esc(t.date || '')} · 롯트 ${esc(t.lot || '-')} · ${esc(t.by || '')}</span></div><i class="ti ti-edit" style="color:var(--t3);align-self:center"></i></div>`, '입고 내역 없음')}
@@ -2507,14 +2508,17 @@ ${body}
 /* 출고 내역 수정 — 롯트·패턴 재배정(재고 자동 재계산) + 장수 보정 */
 function openOutEdit(id) {
   const t = state.transactions.find(x => x.id === id && x.type === 'out'); if (!t) return;
+  const mine = state.transactions.filter(x => _normName(x.itemName) === _normName(t.itemName));
+  const lotOpts = [...new Set(mine.map(x => (x.lot || '').trim()).filter(l => l && l !== '(미지정)'))].sort();
+  const patOpts = [...new Set(mine.flatMap(x => x.type === 'in' ? (x.patterns || []).map(p => (p.pattern || '').trim()) : [(x.pattern || '').trim()]).filter(p => p && p !== '-'))].sort();
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-edit"></i>출고 내역 수정</h3><button class="x" onclick="closeModal()">×</button></div>
     <div style="font-size:13px;color:var(--t2);margin-bottom:12px"><b style="color:var(--t1)">${esc(t.itemName || '')}</b>${t.spec ? ' · ' + esc(t.spec) : ''}</div>
     <div class="frm">
       <div class="fld"><label>출고일</label><input type="date" id="oe-date" value="${esc(t.date || '')}"></div>
       <div class="fld"><label>장수</label><input id="oe-jang" inputmode="numeric" value="${esc(t.jang || 0)}"></div>
-      <div class="fld full"><label>롯트 <span style="color:var(--t3);font-weight:500">(실제 출고된 롯트로 지정)</span></label><select id="oe-lot">${lotSelectHtml(t.itemName, t.lot || '')}</select></div>
-      <div class="fld full"><label>패턴 <span style="color:var(--t3);font-weight:500">(실제 출고된 패턴으로 지정)</span></label><select id="oe-pat">${patternSelectHtml(t.itemName, t.pattern || '')}</select></div>
+      <div class="fld full"><label>롯트 넘버 <span style="color:var(--t3);font-weight:500">(실제 출고된 롯트로 지정 · 미지정 해소)</span></label><input id="oe-lot" list="oe-lot-list" value="${esc(t.lot || '')}" placeholder="롯트 넘버 입력/선택"><datalist id="oe-lot-list">${lotOpts.map(l => `<option value="${esc(l)}">`).join('')}</datalist></div>
+      <div class="fld full"><label>패턴 <span style="color:var(--t3);font-weight:500">(실제 출고된 패턴으로 지정)</span></label><input id="oe-pat" list="oe-pat-list" lang="ko" value="${esc(t.pattern || '')}" placeholder="패턴 입력/선택"><datalist id="oe-pat-list">${patOpts.map(p => `<option value="${esc(p)}">`).join('')}</datalist></div>
       <div class="fld"><label>거래처</label><input id="oe-target" lang="ko" value="${esc(t.targetName || '')}"></div>
       <div class="fld"><label>출고지</label><input id="oe-dest" lang="ko" value="${esc(t.dest || t.factory || '')}"></div>
       <div class="fld full"><label>메모</label><input id="oe-note" lang="ko" value="${esc(t.note || '')}"></div>
