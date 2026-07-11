@@ -1555,7 +1555,8 @@ function siteCard(s) {
   }).join('');
   const dM = daysFromNow(s.measureDate), dC = daysFromNow(s.constructDate);
   const openIss = siteOpenIssues(s.id);
-  return `<div class="site" onclick="openSiteDetail('${s.id}')">
+  const tc = calTeamColor(s.team);   // 시공팀 색상 (자체시공=그레이)
+  return `<div class="site" onclick="openSiteDetail('${s.id}')" style="border-top:3px solid ${tc}"${s.team ? ` title="시공팀: ${esc(s.team)}"` : ''}>
     <div class="site-top">
       <div><div class="nm">${esc(s.name)}</div><div class="ad"><i class="ti ti-map-pin" style="font-size:13px"></i>${esc(s.region || '')} ${esc(s.address || '')}</div></div>
       <div style="text-align:right;flex:none">${pill(s.stage || '접수')}${openIss.length ? `<div style="margin-top:5px"><span class="pill p-issue"><i class="ti ti-alert-triangle"></i> 이슈 ${openIss.length}</span></div>` : ''}</div>
