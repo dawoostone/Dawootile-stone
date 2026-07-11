@@ -2400,6 +2400,7 @@ function filterShipSlips() {
   const x = el('slip-search-x'); if (x) x.style.display = (filters.slipSearch || '').trim() ? '' : 'none';
 }
 function renderShip() {
+  const _shipSY = window.scrollY, _shipTW = el('r-wrap') ? el('r-wrap').scrollTop : 0;   // 재렌더 후 스크롤 위치 유지
   const outs = state.transactions.filter(t => t.type === 'out').sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   const now = new Date(); const ym = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
   const monthOut = outs.filter(t => (t.date || '').startsWith(ym));
@@ -2444,9 +2445,9 @@ function renderShip() {
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0 8px;gap:8px;flex-wrap:wrap">
         <div style="font-size:13px;color:var(--t2)" id="r-sum">전체 기간</div>
-        <button class="btn btn-sm btn-pri" onclick="downloadShipXls()"><i class="ti ti-file-spreadsheet"></i>엑셀 다운로드</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${isAdmin() ? `<button class="btn btn-sm" onclick="autoLinkSoleLots()"><i class="ti ti-link"></i>미지정 롯트 자동연결</button>` : ''}<button class="btn btn-sm btn-pri" onclick="downloadShipXls()"><i class="ti ti-file-spreadsheet"></i>엑셀 다운로드</button></div>
       </div>
-      <div class="tbl-wrap" style="max-height:340px;overflow:auto">
+      <div class="tbl-wrap" id="r-wrap" style="max-height:340px;overflow:auto">
         <table class="tbl"><thead><tr><th>날짜</th><th>거래처</th><th>자재</th><th>장수</th><th>헤베</th><th>출고지</th></tr></thead><tbody id="r-body"></tbody></table>
       </div>
     </div>
@@ -2460,6 +2461,23 @@ function renderShip() {
     </div>
     `;
   shipReport();
+  requestAnimationFrame(() => { window.scrollTo(0, _shipSY); if (el('r-wrap')) el('r-wrap').scrollTop = _shipTW; });   // 저장 후 자리 유지
+}
+/* 자재의 롯트가 (입고 기준) 딱 하나면 그 롯트 반환 */
+function theOnlyLot(name) {
+  const lots = [...new Set(state.transactions.filter(x => _normName(x.itemName) === _normName(name) && x.type === 'in').map(x => (x.lot || '').trim()).filter(l => l && l !== '(미지정)'))];
+  return lots.length === 1 ? lots[0] : '';
+}
+/* 기출고 중 롯트 미지정건 — 자재에 롯트가 하나뿐이면 자동 연결 */
+async function autoLinkSoleLots() {
+  if (!isAdmin()) { toast('관리자만 가능합니다'); return; }
+  const targets = state.transactions.filter(t => t.type === 'out' && !((t.lot || '').trim()));
+  const doable = targets.filter(t => theOnlyLot(t.itemName));
+  if (!doable.length) { toast('자동연결할 미지정 출고가 없습니다 (롯트가 하나뿐인 자재만 대상)'); return; }
+  if (!confirm(`롯트 미지정 출고 ${doable.length}건을, 해당 자재의 단일 롯트로 자동 연결할까요?`)) return;
+  let n = 0;
+  for (const t of doable) { const l = theOnlyLot(t.itemName); if (l) { try { await Store.update('transactions', t.id, { lot: l }); n++; } catch (e) { } } }
+  toast(`${n}건 롯트 자동연결 완료`);
 }
 /* 출고 내역 조회·추출 (거래처/자재/기간별) */
 function shipReportList() {
