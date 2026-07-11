@@ -2556,6 +2556,8 @@ function renderShip() {
   // 상위 제품
   const byItem = {}; outs.forEach(t => { byItem[t.itemName] = (byItem[t.itemName] || 0) + (+t.hebe || 0); });
   const top = Object.entries(byItem).sort((a, b) => b[1] - a[1]).slice(0, 6); const maxT = Math.max(1, ...top.map(t => t[1]));
+  const byClient = {}; outs.forEach(t => { const k = t.targetName || '-'; byClient[k] = (byClient[k] || 0) + (+t.hebe || 0); });
+  const topC = Object.entries(byClient).sort((a, b) => b[1] - a[1]).slice(0, 6); const maxC = Math.max(1, ...topC.map(t => t[1]));
   const outClients = [...new Set(outs.map(t => t.targetName).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const outMats = [...new Set(outs.map(t => t.itemName).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const shipTab = filters.shipTab || 'slip';   // slip=출고증 / list=내역조회 / stats=월별·분석
@@ -2608,12 +2610,59 @@ function renderShip() {
       <div class="mchart">${monthly.map((v, i) => `<div class="mcol"><div class="val">${v ? v.toFixed(0) : ''}</div><div class="bb ${i === now.getMonth() ? 'cur' : ''}" style="height:${Math.max(2, v / maxM * 100)}%"></div><div class="lb">${i + 1}월</div></div>`).join('')}</div>
     </div>
     <div class="card ship-sec" data-tab="stats" style="${shd('stats')}">
-      <div class="card-h"><h3><i class="ti ti-trophy"></i>출고 상위 제품</h3></div>
+      <div class="card-h"><h3><i class="ti ti-trophy"></i>출고 상위 제품</h3>${top.length ? `<span class="more tap" onclick="openTopProducts()" style="cursor:pointer">더보기 <i class="ti ti-chevron-right"></i></span>` : ''}</div>
       ${top.length ? top.map(([nm, v], i) => `<div class="abar"><span class="rk">${i + 1}</span><span class="nm">${esc(nm)}</span><span class="tr"><i style="width:${v / maxT * 100}%"></i></span><span class="vv">${v.toFixed(0)}㎡</span></div>`).join('') : `<div class="empty"><i class="ti ti-chart-dots"></i>출고 데이터가 쌓이면 표시됩니다</div>`}
     </div>
+    ${isAdmin() ? `<div class="card ship-sec" data-tab="stats" style="${shd('stats')}">
+      <div class="card-h"><h3><i class="ti ti-building-store"></i>거래량 많은 업체 <span style="font-size:11px;font-weight:500;color:var(--t3)">(관리자)</span></h3>${topC.length ? `<span class="more tap" onclick="openTopClients()" style="cursor:pointer">더보기 <i class="ti ti-chevron-right"></i></span>` : ''}</div>
+      ${topC.length ? topC.map(([nm, v], i) => `<div class="abar"><span class="rk">${i + 1}</span><span class="nm">${esc(nm)}</span><span class="tr"><i style="width:${v / maxC * 100}%"></i></span><span class="vv">${v.toFixed(0)}㎡</span></div>`).join('') : `<div class="empty"><i class="ti ti-chart-dots"></i>출고 데이터가 쌓이면 표시됩니다</div>`}
+    </div>` : ''}
     `;
   shipReport();
   requestAnimationFrame(() => { window.scrollTo(0, _shipSY); if (el('r-wrap')) el('r-wrap').scrollTop = _shipTW; });   // 저장 후 자리 유지
+}
+/* 출고 상위 제품 집계 (규격·건수·장수·헤베) — 헤베 기준 정렬 */
+function shipTopProducts() {
+  const m = {};
+  state.transactions.filter(t => t.type === 'out').forEach(t => {
+    const k = t.itemName || '-';
+    if (!m[k]) m[k] = { name: k, spec: t.spec || '', jang: 0, hebe: 0, cnt: 0 };
+    m[k].jang += (+t.jang || 0); m[k].hebe += (+t.hebe || 0); m[k].cnt++;
+    if (!m[k].spec && t.spec) m[k].spec = t.spec;
+  });
+  Object.values(m).forEach(x => { if (!x.spec) { const it = state.inventory.find(i => _normName(i.name) === _normName(x.name)); if (it) x.spec = it.spec || ''; } });
+  return Object.values(m).sort((a, b) => b.hebe - a.hebe);
+}
+/* 출고 상위 업체 집계 (건수·장수·헤베) — 헤베 기준 정렬 */
+function shipTopClients() {
+  const m = {};
+  state.transactions.filter(t => t.type === 'out').forEach(t => {
+    const k = t.targetName || '-';
+    if (!m[k]) m[k] = { name: k, jang: 0, hebe: 0, cnt: 0 };
+    m[k].jang += (+t.jang || 0); m[k].hebe += (+t.hebe || 0); m[k].cnt++;
+  });
+  return Object.values(m).sort((a, b) => b.hebe - a.hebe);
+}
+function openTopProducts() {
+  const list = shipTopProducts();
+  openModal(`
+    <div class="sheet-h"><h3><i class="ti ti-trophy"></i>출고 상위 제품 전체</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:12px;color:var(--t3);margin-bottom:8px">전체 기간 · 총 ${list.length}개 품목 · 헤베 기준 정렬</div>
+    <div class="tbl-wrap" style="max-height:62vh;overflow:auto"><table class="tbl"><thead><tr><th>#</th><th>자재</th><th>규격</th><th>건수</th><th>장수</th><th>헤베</th></tr></thead><tbody>
+    ${list.length ? list.map((x, i) => `<tr><td>${i + 1}</td><td><b>${esc(x.name)}</b></td><td style="font-size:11px;color:var(--t3);white-space:nowrap">${esc(x.spec || '-')}</td><td>${x.cnt}</td><td>${x.jang}장</td><td><b style="color:var(--gd)">${x.hebe.toFixed(1)}㎡</b></td></tr>`).join('') : `<tr><td colspan="6"><div class="empty" style="padding:16px">출고 내역이 없습니다</div></td></tr>`}
+    </tbody></table></div>
+    <div class="frm-foot"><button class="btn btn-pri" style="flex:1" onclick="closeModal()">닫기</button></div>`);
+}
+function openTopClients() {
+  if (!isAdmin()) { toast('관리자만 볼 수 있습니다'); return; }
+  const list = shipTopClients();
+  openModal(`
+    <div class="sheet-h"><h3><i class="ti ti-building-store"></i>거래량 많은 업체 순위</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:12px;color:var(--t3);margin-bottom:8px">전체 기간 · 총 ${list.length}개 업체 · 헤베 기준 정렬</div>
+    <div class="tbl-wrap" style="max-height:62vh;overflow:auto"><table class="tbl"><thead><tr><th>#</th><th>거래처</th><th>건수</th><th>장수</th><th>헤베</th></tr></thead><tbody>
+    ${list.length ? list.map((x, i) => `<tr><td>${i + 1}</td><td><b>${esc(x.name)}</b></td><td>${x.cnt}</td><td>${x.jang}장</td><td><b style="color:var(--gd)">${x.hebe.toFixed(1)}㎡</b></td></tr>`).join('') : `<tr><td colspan="5"><div class="empty" style="padding:16px">출고 내역이 없습니다</div></td></tr>`}
+    </tbody></table></div>
+    <div class="frm-foot"><button class="btn btn-pri" style="flex:1" onclick="closeModal()">닫기</button></div>`);
 }
 /* 출고 화면 탭 전환 — 재렌더 없이 섹션만 표시/숨김 (검색·필터·스크롤 유지) */
 function goShipTab(v) {
