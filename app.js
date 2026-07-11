@@ -2535,6 +2535,8 @@ function renderShip() {
   const top = Object.entries(byItem).sort((a, b) => b[1] - a[1]).slice(0, 6); const maxT = Math.max(1, ...top.map(t => t[1]));
   const outClients = [...new Set(outs.map(t => t.targetName).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const outMats = [...new Set(outs.map(t => t.itemName).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const shipTab = filters.shipTab || 'slip';   // slip=출고증 / list=내역조회 / stats=월별·분석
+  const shd = t => shipTab === t ? '' : 'display:none';   // 탭별 표시/숨김
 
   el('pg-ship').innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-truck-delivery"></i>출고 현황</h2><p>현장·공장·거래처 출고 + 월별 분석</p></div>
@@ -2543,7 +2545,12 @@ function renderShip() {
       <div class="stat"><div class="ic b"><i class="ti ti-calendar-stats"></i></div><div class="v">${monthHebe.toFixed(0)}<span style="font-size:14px">㎡</span></div><div class="l">이번 달 출고</div><div class="s">${monthOut.length}건</div></div>
       <div class="stat"><div class="ic g"><i class="ti ti-package-export"></i></div><div class="v">${outs.length}</div><div class="l">총 출고 건수</div><div class="s">전체 누적</div></div>
     </div>
-    <div class="card">
+    <div class="seg" id="ship-seg" style="margin:2px 0 12px">
+      <button type="button" data-t="slip" class="${shipTab === 'slip' ? 'on' : ''}" onclick="goShipTab('slip')"><i class="ti ti-printer" style="font-size:14px"></i> 출고증</button>
+      <button type="button" data-t="list" class="${shipTab === 'list' ? 'on' : ''}" onclick="goShipTab('list')"><i class="ti ti-table" style="font-size:14px"></i> 내역 조회</button>
+      <button type="button" data-t="stats" class="${shipTab === 'stats' ? 'on' : ''}" onclick="goShipTab('stats')"><i class="ti ti-chart-bar" style="font-size:14px"></i> 월별·분석</button>
+    </div>
+    <div class="card ship-sec" data-tab="slip" style="${shd('slip')}">
       <div class="card-h"><h3><i class="ti ti-printer"></i>출고증 인쇄</h3></div>
       <div class="search-box" style="margin-bottom:10px">
         <i class="ti ti-search"></i>
@@ -2552,7 +2559,7 @@ function renderShip() {
       </div>
       <div id="slip-list">${shipSlipListHtml()}</div>
     </div>
-    <div class="card">
+    <div class="card ship-sec" data-tab="list" style="${shd('list')}">
       <div class="card-h"><h3><i class="ti ti-table"></i>출고 내역 조회·추출</h3></div>
       <div class="search-box" style="margin-bottom:10px">
         <i class="ti ti-search"></i>
@@ -2573,17 +2580,24 @@ function renderShip() {
         <table class="tbl"><thead><tr><th>날짜</th><th>거래처</th><th>자재</th><th>장수</th><th>헤베</th><th>출고지</th></tr></thead><tbody id="r-body"></tbody></table>
       </div>
     </div>
-    <div class="card">
+    <div class="card ship-sec" data-tab="stats" style="${shd('stats')}">
       <div class="card-h"><h3><i class="ti ti-chart-bar"></i>월별 출고 현황</h3><span class="more">${year}년</span></div>
       <div class="mchart">${monthly.map((v, i) => `<div class="mcol"><div class="val">${v ? v.toFixed(0) : ''}</div><div class="bb ${i === now.getMonth() ? 'cur' : ''}" style="height:${Math.max(2, v / maxM * 100)}%"></div><div class="lb">${i + 1}월</div></div>`).join('')}</div>
     </div>
-    <div class="card">
+    <div class="card ship-sec" data-tab="stats" style="${shd('stats')}">
       <div class="card-h"><h3><i class="ti ti-trophy"></i>출고 상위 제품</h3></div>
       ${top.length ? top.map(([nm, v], i) => `<div class="abar"><span class="rk">${i + 1}</span><span class="nm">${esc(nm)}</span><span class="tr"><i style="width:${v / maxT * 100}%"></i></span><span class="vv">${v.toFixed(0)}㎡</span></div>`).join('') : `<div class="empty"><i class="ti ti-chart-dots"></i>출고 데이터가 쌓이면 표시됩니다</div>`}
     </div>
     `;
   shipReport();
   requestAnimationFrame(() => { window.scrollTo(0, _shipSY); if (el('r-wrap')) el('r-wrap').scrollTop = _shipTW; });   // 저장 후 자리 유지
+}
+/* 출고 화면 탭 전환 — 재렌더 없이 섹션만 표시/숨김 (검색·필터·스크롤 유지) */
+function goShipTab(v) {
+  filters.shipTab = v;
+  document.querySelectorAll('#pg-ship .ship-sec').forEach(s => { s.style.display = (s.dataset.tab === v) ? '' : 'none'; });
+  document.querySelectorAll('#ship-seg button').forEach(b => b.classList.toggle('on', b.dataset.t === v));
+  const pg = el('pg-ship'); if (pg) pg.scrollIntoView({ block: 'start' }); else window.scrollTo(0, 0);
 }
 /* 자재의 롯트가 (입고 기준) 딱 하나면 그 롯트 반환 */
 function theOnlyLot(name) {
