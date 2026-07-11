@@ -737,8 +737,8 @@ function crewCalendarHtml() {
       <b style="font-size:16px">${Y}년 ${M}월</b>
       <button class="btn btn-sm" onclick="crewMonthShift(1)" aria-label="다음달"><i class="ti ti-chevron-right"></i></button>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:4px">${dow.map((w, i) => `<div style="text-align:center;font-size:11px;font-weight:600;color:${i === 0 ? '#d64545' : (i === 6 ? '#2f6fed' : 'var(--t3)')}">${w}</div>`).join('')}</div>
-    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px">${cells}</div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:6px">${dow.map((w, i) => `<div style="text-align:center;font-size:12px;font-weight:600;color:${i === 0 ? '#d64545' : (i === 6 ? '#2f6fed' : 'var(--t3)')}">${w}</div>`).join('')}</div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px">${cells}</div>
   </div>
   <div style="margin-top:10px">${below}</div>`;
 }
@@ -1471,14 +1471,18 @@ function chip(v, label, cur) { return `<button class="chip ${cur === v ? 'active
 /* 직원용 현장 캘린더 (전체 현장 · 공휴일 빨강 · 탭하면 상세) */
 function staffMonthShift(delta) { const ym = filters.siteMonth || todayStr().slice(0, 7); let [Y, M] = ym.split('-').map(Number); M += delta; if (M < 1) { M = 12; Y--; } else if (M > 12) { M = 1; Y++; } filters.siteMonth = `${Y}-${String(M).padStart(2, '0')}`; renderSites(); }
 function staffPickDay(ds) { filters.siteDay = (filters.siteDay === ds ? '' : ds); renderSites(); }
-/* 시공팀별 색상 — 마스터+현장의 팀명을 정렬해 팔레트를 안정적으로 매핑 */
-const TEAM_PALETTE = ['#2f6fed', '#e0783b', '#7b5cd6', '#12a594', '#d6497b', '#c9a227', '#3aa5d9', '#7a8a2f', '#b0562f', '#5a5fd0', '#0f8a8a', '#a04a9b'];
+/* 시공팀별 색상 — 자체시공은 그레이톤, 나머지 팀은 대비 강한 색으로 눈에 확 띄게 */
+const TEAM_PALETTE = ['#1e5eff', '#ff5a1f', '#12b76a', '#a03cff', '#e11d48', '#0891b2', '#ca8a04', '#7c3aed'];   // 강한 대비 색
+const TEAM_GRAY = '#8a8f98';   // 자체시공 등 자체팀
+function isSelfTeam(team) { return /자체/.test(String(team || '')); }
 function calTeamList() {
   return [...new Set([...(state.teams || []).map(t => t.value || t), ...state.sites.map(s => s.team)].filter(Boolean).map(String))].sort((a, b) => a.localeCompare(b));
 }
 function calTeamColor(team) {
-  if (!team) return '#8a8f98';
-  const list = calTeamList(); const i = list.findIndex(t => _normName(t) === _normName(team));
+  if (!team) return TEAM_GRAY;
+  if (isSelfTeam(team)) return TEAM_GRAY;   // 자체시공: 그레이톤
+  const list = calTeamList().filter(t => !isSelfTeam(t));   // 자체팀 제외하고 순서 매핑 → 나머지 팀이 강한 색 앞순위
+  const i = list.findIndex(t => _normName(t) === _normName(team));
   return TEAM_PALETTE[(i < 0 ? 0 : i) % TEAM_PALETTE.length];
 }
 /* 캘린더에서 시공팀 색상 범례 클릭 → 해당 팀만 보기(토글) */
@@ -1505,10 +1509,10 @@ function staffCalendarHtml(list) {
     const dowIdx = (startDow + dd - 1) % 7;
     const hol = HOLIDAYS[ds];
     const col = (dowIdx === 0 || hol) ? '#d64545' : (dowIdx === 6 ? '#2f6fed' : 'var(--t1)');
-    const chips = (has || []).map(s => { const tc = calTeamColor(s.team); return `<span style="font-size:9.5px;line-height:1.25;background:${isSel ? 'rgba(255,255,255,.22)' : tc + '22'};color:${isSel ? '#fff' : tc};border-radius:4px;padding:1px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;display:block;margin-top:2px" title="${esc(s.team || '')}">${esc(s.name || s.client || '현장')}</span>`; }).join('');
-    cells += `<button onclick="staffPickDay('${ds}')" style="min-height:52px;border:${isSel ? '0' : '0.5px solid var(--bd)'};background:${isSel ? 'var(--g)' : (isToday ? 'var(--gl2,#e8f7f0)' : '#fff')};border-radius:9px;display:flex;flex-direction:column;align-items:stretch;cursor:pointer;padding:4px 3px;overflow:hidden">
-      <span style="font-size:12px;font-weight:${has ? '700' : '500'};color:${isSel ? '#fff' : col};text-align:left;line-height:1">${dd}</span>
-      ${hol ? `<span style="font-size:8.5px;color:${isSel ? '#fff' : '#d64545'};font-weight:600;line-height:1.1;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${hol}</span>` : ''}
+    const chips = (has || []).map(s => { const tc = calTeamColor(s.team); const slf = isSelfTeam(s.team); return `<span style="font-size:11px;line-height:1.3;background:${isSel ? 'rgba(255,255,255,.22)' : (slf ? tc + '1c' : tc + '26')};color:${isSel ? '#fff' : tc};border-radius:5px;padding:2px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:${slf ? '600' : '700'};display:block;margin-top:3px;border-left:3px solid ${isSel ? 'rgba(255,255,255,.6)' : tc}" title="${esc(s.team || '')}">${esc(s.name || s.client || '현장')}</span>`; }).join('');
+    cells += `<button onclick="staffPickDay('${ds}')" style="min-height:76px;border:${isSel ? '0' : '0.5px solid var(--bd)'};background:${isSel ? 'var(--g)' : (isToday ? 'var(--gl2,#e8f7f0)' : '#fff')};border-radius:10px;display:flex;flex-direction:column;align-items:stretch;cursor:pointer;padding:6px 5px;overflow:hidden">
+      <span style="font-size:14px;font-weight:${has ? '700' : '500'};color:${isSel ? '#fff' : col};text-align:left;line-height:1.05">${dd}</span>
+      ${hol ? `<span style="font-size:9.5px;color:${isSel ? '#fff' : '#d64545'};font-weight:600;line-height:1.15;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${hol}</span>` : ''}
       ${chips}
     </button>`;
   }
@@ -1533,8 +1537,8 @@ function staffCalendarHtml(list) {
       <button class="btn btn-sm" onclick="staffMonthShift(1)" aria-label="다음달"><i class="ti ti-chevron-right"></i></button>
     </div>
     ${legend}
-    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:4px">${dow.map((w, i) => `<div style="text-align:center;font-size:11px;font-weight:600;color:${i === 0 ? '#d64545' : (i === 6 ? '#2f6fed' : 'var(--t3)')}">${w}</div>`).join('')}</div>
-    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px">${cells}</div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:6px">${dow.map((w, i) => `<div style="text-align:center;font-size:12px;font-weight:600;color:${i === 0 ? '#d64545' : (i === 6 ? '#2f6fed' : 'var(--t3)')}">${w}</div>`).join('')}</div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px">${cells}</div>
   </div>
   <div style="margin-top:10px">${below}</div>`;
 }
