@@ -1248,6 +1248,25 @@ function companyNames() {
   (state.clients || []).forEach(c => c.value && s.add(c.value));
   return [...s].sort((a, b) => a.localeCompare(b));
 }
+/* 입고 자재 검색 후보: 재고에 등록된 품목명만 */
+function invNames() {
+  return [...new Set(state.inventory.map(i => i.name).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+/* 자재별 '고정 패턴' 정의 — 품목에 저장된 patterns 우선, 없으면 기존 입고 이력에서 자동 도출 */
+function matPatternDefs(name) {
+  const it = state.inventory.find(i => _normName(i.name) === _normName(name));
+  if (it && Array.isArray(it.patterns) && it.patterns.length) return it.patterns.slice();
+  return patternList(name).map(p => p.pattern);
+}
+/* 품목 수정 화면의 패턴 정의 편집 행 */
+function ipatDefRow(name) {
+  const inp = 'font-size:14px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px';
+  return `<div class="ipat-row" style="display:flex;gap:8px;margin-bottom:6px">
+    <input class="ipat-name" lang="ko" placeholder="예: 1번(좌상)" value="${esc(name || '')}" style="flex:1;min-width:0;${inp}">
+    <button type="button" class="btn btn-ghost btn-sm" onclick="this.closest('.ipat-row').remove()" aria-label="삭제"><i class="ti ti-x"></i></button>
+  </div>`;
+}
+function addIpatDef() { const c = el('ipat-defs'); if (c) c.insertAdjacentHTML('beforeend', ipatDefRow('')); }
 /* searchBox: 입력하면 부분일치 후보가 아래에 뜨고 클릭 선택. id는 그대로 유지(폼 제출 시 사용). */
 function searchBox(id, placeholder, value, listFn, pickFn) {
   return `<input id="${id}" class="sb-in" lang="ko" autocomplete="off" placeholder="${esc(placeholder)}" value="${esc(value || '')}" oninput="sbFilter('${id}','${listFn}','${pickFn || ''}')" onfocus="sbFilter('${id}','${listFn}','${pickFn || ''}')" onkeydown="sbKey(event,'${id}','${pickFn || ''}')" onblur="setTimeout(sbHide,180)">`;
@@ -1923,6 +1942,10 @@ function openItemForm(id) {
       <div class="fld"><label>안전재고(장) — 미만이면 '부족'</label><input id="i-safe" value="${esc(v.safeJang || 0)}" inputmode="numeric" placeholder="안전재고 장수"></div>
       <div class="fld full"><div class="reco" id="i-hebe-info" style="margin-top:0"><div class="reco-h"><i class="ti ti-ruler-2"></i>자동 환산</div><div class="row"><span class="rl">장당 헤베</span><span class="rv"><b id="i-perjang">${(parseSpec(v.spec).hebePerJang || 0).toFixed(3)}</b> ㎡/장</span></div><div class="row"><span class="rl">현재 재고 헤베</span><span class="rv"><b id="i-tothebe">${itemHebe(v).toFixed(2)}</b> ㎡</span></div></div></div>
     </div>
+    <div class="sec-label"><i class="ti ti-layout-grid"></i>패턴 정의(고정) <span style="font-weight:500;color:var(--t3)">— 입고 때 자동 표시</span></div>
+    <div style="font-size:11.5px;color:var(--t3);margin-bottom:6px;background:var(--soft);border-radius:9px;padding:9px 11px;line-height:1.5"><i class="ti ti-info-circle"></i> 이 자재의 패턴을 배치 순서대로 적어두면(예: 1번(좌상), 2번(우상)) 입고 등록 때 그대로 자동 표시돼 매번 입력할 필요가 없습니다. 공정이 바뀌면 언제든 여기서 수정하세요.</div>
+    <div id="ipat-defs">${(() => { const defs = it ? matPatternDefs(it.name) : []; return defs.length ? defs.map(ipatDefRow).join('') : ipatDefRow(''); })()}</div>
+    <button class="btn btn-ghost btn-sm" type="button" onclick="addIpatDef()" style="margin-bottom:8px"><i class="ti ti-plus"></i>패턴 추가</button>
     ${it ? `
     <div class="sec-label" style="display:flex;justify-content:space-between;align-items:center"><span><i class="ti ti-list-details"></i>롯트별 재고</span>${isAdmin() ? `<button class="btn btn-ghost btn-sm" type="button" onclick="openAdjustForm('${it.id}')"><i class="ti ti-adjustments"></i>재고 조정</button>` : ''}</div>
     ${(() => { const ls = lotStock(it.name); return ls.length ? `<div class="tbl-wrap" style="margin-bottom:6px"><table class="tbl"><thead><tr><th>롯트</th><th>입고</th><th>출고</th><th>잔여</th></tr></thead><tbody>${ls.map(l => `<tr><td><b>${esc(l.lot)}</b></td><td>${l.inQty}장</td><td>${l.outQty}장</td><td><b style="color:${l.remain <= 0 ? 'var(--t3)' : 'var(--gd)'}">${l.remain}장</b></td></tr>`).join('')}</tbody></table></div>` : `<div style="font-size:12.5px;color:var(--t3);padding:2px 0 8px">롯트 정보가 없습니다 (입고 시 롯트를 입력하면 표시됩니다)</div>`; })()}
@@ -2147,7 +2170,9 @@ async function submitItem(id) {
   const ps = parseSpec(spec);
   const jang = parseFloat(el('i-jang').value) || 0;
   let vendor = el('i-vendor').value; if (vendor === '__add') vendor = ''; vendor = vendor.trim();
-  const obj = { name, spec, vendor, depot: el('i-depot').value.trim() || '본사', jang, hebePerJang: ps.hebePerJang, safeJang: parseFloat(el('i-safe').value) || 0 };
+  const patterns = [];
+  document.querySelectorAll('#ipat-defs .ipat-name').forEach(i => { const val = (i.value || '').trim(); if (val && !patterns.includes(val)) patterns.push(val); });
+  const obj = { name, spec, vendor, depot: el('i-depot').value.trim() || '본사', jang, hebePerJang: ps.hebePerJang, safeJang: parseFloat(el('i-safe').value) || 0, patterns };
   if (id) { await Store.update('inventory', id, obj); toast('저장됨'); }
   else { obj.lastInDate = todayStr(); await Store.add('inventory', obj); toast('품목 추가됨'); }
   closeModal();
@@ -2160,8 +2185,8 @@ function openStockForm() {
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-login"></i>입고 등록</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
-      <div class="fld full"><label>자재 선택<span class="req">*</span></label>
-        <select id="in-item" onchange="onInItemChange()">${itemOptions('')}</select>
+      <div class="fld full"><label>자재 선택<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(자재명 입력 → ↑↓ 방향키로 선택)</span></label>
+        ${searchBox('in-item', '자재명 검색·입력', '', 'invNames', 'onInItemChange')}
       </div>
       <div class="fld"><label>규격</label><input id="in-spec" readonly placeholder="자재 선택 시 자동" style="background:var(--soft)"></div>
       <div class="fld"><label>롯트 넘버<span class="req">*</span></label><input id="in-lot" placeholder="롯트 넘버 입력"></div>
@@ -2181,21 +2206,38 @@ function openStockForm() {
       <div class="row"><span class="rl">환산 헤베</span><span class="rv"><b id="in-tot-hebe">0</b> ㎡</span></div>
     </div>
     <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitStock()"><i class="ti ti-check"></i>입고 등록</button></div>`);
+  _inLastMat = '';
   addPatternRow();
   onInItemChange();
 }
+let _inLastMat = '';   // 입고 폼에서 마지막으로 선택된 자재 (패턴 재채움 판단용)
+function inSelItem() {   // 입고 폼에서 검색창에 입력된 자재명 → 재고 품목
+  const nm = (el('in-item') && el('in-item').value || '').trim();
+  return state.inventory.find(i => _normName(i.name) === _normName(nm));
+}
 function onInItemChange() {
-  const it = state.inventory.find(i => i.id === el('in-item').value);
+  const it = inSelItem();
   el('in-spec').value = it ? (it.spec || '-') : '';
   if (el('in-depot')) el('in-depot').value = it ? (it.depot || '') : '';   // 선택 자재의 기본 창고
+  if (it && it.name !== _inLastMat) { _inLastMat = it.name; fillInPatterns(it.name); }   // 자재가 바뀔 때만 고정 패턴 새로 채움(입력 중 장수 유지)
+  else if (!it) _inLastMat = '';
   computeInTotal();
 }
-function addPatternRow() {
+/* 선택 자재의 고정 패턴대로 입고 패턴칸 자동 구성 (없으면 빈 칸 1개) */
+function fillInPatterns(matName) {
+  const box = el('in-patterns'); if (!box) return;
+  box.innerHTML = '';
+  const defs = matPatternDefs(matName);
+  if (defs.length) defs.forEach(p => addPatternRow(p));
+  else addPatternRow();
+  computeInTotal();
+}
+function addPatternRow(name) {
   const box = el('in-patterns'); if (!box) return;
   const row = document.createElement('div');
   row.className = 'pat-row';
   row.style.cssText = 'display:flex;gap:8px;margin-bottom:8px';
-  row.innerHTML = `<input class="in-pat-name" placeholder="패턴(선택)" style="flex:1.2;font-size:14px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px">
+  row.innerHTML = `<input class="in-pat-name" lang="ko" placeholder="패턴(선택)" value="${esc(name || '')}" style="flex:1.2;font-size:14px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px">
     <input class="in-pat-jang" inputmode="numeric" placeholder="장수" oninput="computeInTotal()" style="flex:1;font-size:14px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px">
     <button class="btn btn-ghost btn-sm" type="button" onclick="this.parentElement.remove();computeInTotal()"><i class="ti ti-x"></i></button>`;
   box.appendChild(row);
@@ -2203,14 +2245,14 @@ function addPatternRow() {
 function computeInTotal() {
   let tot = 0;
   document.querySelectorAll('#in-patterns .in-pat-jang').forEach(i => tot += parseFloat(i.value) || 0);
-  const it = state.inventory.find(i => i.id === (el('in-item') && el('in-item').value));
+  const it = inSelItem();
   const per = it ? (+it.hebePerJang || 0) : 0;
   if (el('in-tot-jang')) el('in-tot-jang').textContent = tot;
   if (el('in-tot-hebe')) el('in-tot-hebe').textContent = (tot * per).toFixed(2);
 }
 async function submitStock() {
-  const it = state.inventory.find(i => i.id === el('in-item').value);
-  if (!it) { toast('자재를 선택하세요'); return; }
+  const it = inSelItem();
+  if (!it) { toast('자재를 선택하세요 (자재명 입력 후 목록에서 선택)'); return; }
   const lot = el('in-lot').value.trim();
   if (!lot) { toast('롯트 넘버를 입력하세요 (세라믹 필수)'); return; }
   const patterns = []; let jang = 0;
