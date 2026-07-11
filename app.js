@@ -1126,6 +1126,17 @@ function renderHome() {
 
   el('pg-home').innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-layout-dashboard"></i>주요 현황</h2><p>${new Date().toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })} 기준 · 실시간 공유</p></div></div>
+
+    <div class="card">
+      <div class="card-h"><h3><i class="ti ti-bolt"></i>빠른 작업</h3></div>
+      <div class="qa-grid">
+        <button class="qa" onclick="go('stock');setTimeout(openStockForm,50)"><span class="qi ic g"><i class="ti ti-login"></i></span><span><b>입고 등록</b><small>자재 입고</small></span></button>
+        <button class="qa" onclick="go('ship');setTimeout(openShipForm,50)"><span class="qi ic b"><i class="ti ti-logout"></i></span><span><b>출고 등록</b><small>현장·공장</small></span></button>
+        <button class="qa" onclick="go('sites');setTimeout(openSiteForm,50)"><span class="qi ic a"><i class="ti ti-building-community"></i></span><span><b>현장 등록</b><small>신규 현장</small></span></button>
+        <button class="qa" onclick="go('hold');setTimeout(openHoldForm,50)"><span class="qi ic r"><i class="ti ti-lock-plus"></i></span><span><b>홀딩 등록</b><small>자재 홀딩</small></span></button>
+      </div>
+    </div>
+
     <div class="stat-grid">
       <button class="stat tap" onclick="openStockTab('all')"><div class="ic g"><i class="ti ti-packages"></i></div><div class="v">${state.inventory.length}</div><div class="l">재고 품종 <i class="ti ti-chevron-right tap-arrow"></i></div><div class="s">실재고 ${state.inventory.reduce((a, b) => a + (+b.jang || 0), 0)}장 · 가용 ${state.inventory.reduce((a, b) => a + availJang(b), 0)}장</div></button>
       <button class="stat tap" onclick="openStockTab('low')"><div class="ic r"><i class="ti ti-alert-triangle"></i></div><div class="v" style="color:${lowItems.length ? 'var(--red-t)' : 'inherit'}">${lowItems.length}</div><div class="l">재고 부족 <i class="ti ti-chevron-right tap-arrow"></i></div><div class="s">${lowItems.length ? '입고 필요' : '정상 운영'}</div></button>
@@ -1140,16 +1151,6 @@ function renderHome() {
       </div>
       ${visible.length > 8 ? `<button class="btn btn-ghost btn-block" style="margin-top:8px" onclick="openAlerts()"><i class="ti ti-list"></i>전체 ${visible.length}건 보기</button>` : ''}
       ${_adism.length ? `<button class="btn btn-ghost btn-sm btn-block" style="margin-top:6px;color:var(--t3)" onclick="clearAlertDismiss()"><i class="ti ti-rotate"></i>확인한 알림 다시 보기 (${_adism.length})</button>` : ''}
-    </div>
-
-    <div class="card">
-      <div class="card-h"><h3><i class="ti ti-bolt"></i>빠른 작업</h3></div>
-      <div class="qa-grid">
-        <button class="qa" onclick="go('stock');setTimeout(openStockForm,50)"><span class="qi ic g"><i class="ti ti-login"></i></span><span><b>입고 등록</b><small>자재 입고</small></span></button>
-        <button class="qa" onclick="go('ship');setTimeout(openShipForm,50)"><span class="qi ic b"><i class="ti ti-logout"></i></span><span><b>출고 등록</b><small>현장·공장</small></span></button>
-        <button class="qa" onclick="go('sites');setTimeout(openSiteForm,50)"><span class="qi ic a"><i class="ti ti-building-community"></i></span><span><b>현장 등록</b><small>신규 현장</small></span></button>
-        <button class="qa" onclick="go('hold');setTimeout(openHoldForm,50)"><span class="qi ic r"><i class="ti ti-lock-plus"></i></span><span><b>홀딩 등록</b><small>자재 홀딩</small></span></button>
-      </div>
     </div>`;
 }
 /* ---------- 긴급 알림: 생성 + 기기별 '확인(숨김)' ---------- */
