@@ -2033,16 +2033,18 @@ function openAdjustForm(id) {
   const it = state.inventory.find(x => x.id === id); if (!it) return;
   const lots = lotStock(it.name).map(l => l.lot).filter(l => l && l !== '(미지정)');
   const pats = patternStock(it.name).map(p => p.pattern).filter(Boolean);
+  const depots = depotStock(it.name).map(d => d.depot);
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-adjustments"></i>재고 조정 (실사 보정)</h3><button class="x" onclick="closeModal()">×</button></div>
     <div style="font-size:13px;color:var(--t2);margin-bottom:12px"><b style="color:var(--t1)">${esc(it.name)}</b> · 실재고 ${+it.jang || 0}장</div>
     <div class="frm">
       <div class="fld"><label>구분</label><select id="aj-dir"><option value="1">증가 (＋ 재고 늘리기)</option><option value="-1">감소 (－ 재고 줄이기)</option></select></div>
       <div class="fld"><label>장수</label><input id="aj-jang" inputmode="numeric" value="1"></div>
+      <div class="fld full"><label>창고 <span style="color:var(--t3);font-weight:500">(선택 · 창고별 보정 시)</span></label><input id="aj-depot" list="aj-depot-list" placeholder="창고"><datalist id="aj-depot-list">${depots.map(d => `<option value="${esc(d)}">`).join('')}</datalist></div>
       <div class="fld full"><label>롯트 <span style="color:var(--t3);font-weight:500">(선택 · 비우면 총량만 보정)</span></label><input id="aj-lot" list="aj-lot-list" placeholder="롯트"><datalist id="aj-lot-list">${lots.map(l => `<option value="${esc(l)}">`).join('')}</datalist></div>
       <div class="fld full"><label>패턴 <span style="color:var(--t3);font-weight:500">(선택)</span></label><input id="aj-pat" list="aj-pat-list" lang="ko" placeholder="패턴"><datalist id="aj-pat-list">${pats.map(p => `<option value="${esc(p)}">`).join('')}</datalist></div>
-      <div class="fld full"><label>사유</label><input id="aj-note" lang="ko" placeholder="예: 실사 보정 · 롯트 정정 등"></div>
-      <div class="fld full" style="font-size:11.5px;color:var(--t3);background:var(--soft);border-radius:9px;padding:9px 11px;line-height:1.5"><i class="ti ti-info-circle"></i> 롯트·패턴을 지정하면 그 롯트별/패턴별 재고와 실재고가 <b>함께</b> 보정됩니다(중복 계산 없음). 롯트·패턴을 비우면 실재고 총량만 보정합니다.</div>
+      <div class="fld full"><label>사유</label><input id="aj-note" lang="ko" placeholder="예: 실사 보정 · 잘못 출고 후 보관 등"></div>
+      <div class="fld full" style="font-size:11.5px;color:var(--t3);background:var(--soft);border-radius:9px;padding:9px 11px;line-height:1.5"><i class="ti ti-info-circle"></i> 창고·롯트·패턴을 지정하면 그 창고별/롯트별/패턴별 재고와 실재고가 <b>함께</b> 보정됩니다(중복 계산 없음). 비우면 실재고 총량만 보정합니다.</div>
     </div>
     <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitAdjust('${it.id}')"><i class="ti ti-check"></i>조정</button></div>`);
 }
@@ -2056,6 +2058,7 @@ async function submitAdjust(id) {
   await Store.add('transactions', {
     type: 'adjust', itemId: it.id, itemName: it.name, spec: it.spec || '',
     jang: delta, lot: (el('aj-lot').value || '').trim(), pattern: (el('aj-pat').value || '').trim(),
+    depot: (el('aj-depot').value || '').trim(),
     note: (el('aj-note').value || '').trim() || '재고 조정', date: todayStr(), by: me.name
   });
   await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) + delta) });
