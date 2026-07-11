@@ -832,7 +832,7 @@ function heldJangFor(name) {
   return s;
 }
 /* 가용재고 = 실재고 − 활성홀딩 */
-function availJang(it) { return (+it.jang || 0) - heldJangFor(it.name); }
+function availJang(it) { return (+it.jang || 0) - heldJangFor(it.name) - Math.max(0, damagedStock(it.name)); }
 /* 롯트별 재고: 입고(+) − 출고(−). 자재명 기준(띄어쓰기 무시). 롯트 미입력은 '(미지정)' */
 function lotStock(name) {
   if (!name) return [];
@@ -945,7 +945,7 @@ async function activatePlannedHolds(name, physJang) {
     if (name && _normName(mat) === _normName(name) && physJang != null) return physJang;
     const it = state.inventory.find(i => _normName(i.name) === _normName(mat)); return it ? +it.jang || 0 : 0;
   }
-  function availOf(mat) { return physOf(mat) - heldJangFor(mat) - (extra[_normName(mat)] || 0); }
+  function availOf(mat) { return physOf(mat) - heldJangFor(mat) - (extra[_normName(mat)] || 0) - Math.max(0, damagedStock(mat)); }
   let count = 0;
   for (const h of planned) {
     const items = holdItems(h);
