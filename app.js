@@ -603,6 +603,7 @@ function custHoldsBody() {
         <div style="font-size:12.5px;color:var(--t3)"><i class="ti ti-calendar" style="font-size:12px"></i> ${h.useDate ? '사용예정 ' + esc(h.useDate) : '예정일 미정'}</div>
         <span class="pill ${cls}" style="flex:none">${esc(st)}</span></div>
       <div style="margin-top:6px">${items}</div>
+      ${h.note ? `<div style="margin-top:7px;padding-top:7px;border-top:1px dashed var(--bd2);font-size:12.5px;color:var(--t2);word-break:break-all"><i class="ti ti-note" style="font-size:12px;color:var(--t3)"></i> ${esc(h.note)}</div>` : ''}
     </div>`;
   }).join('');
 }
