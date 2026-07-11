@@ -1880,7 +1880,8 @@ function openItemForm(id) {
     <div class="sec-label"><i class="ti ti-logout"></i>출고 내역 <span style="font-weight:500;color:var(--t3)">· 누적 ${totalOut}장</span></div>
     ${txnRowsWithMore(outs, 'out-more', t => `<div class="alert-i b" style="margin-bottom:6px"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${+t.jang || 0}장${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}</b><span>${esc(t.date || '')} · ${esc(t.targetName || '-')} · ${esc(t.by || '')}</span></div></div>`, '출고 내역 없음')}
     <div class="sec-label" style="margin-top:14px"><i class="ti ti-login"></i>입고 내역</div>
-    ${txnRowsWithMore(ins, 'in-more', t => `<div class="alert-i b" style="background:var(--gl2);border-color:var(--gbd);margin-bottom:6px"><div class="ai" style="color:var(--gd)"><i class="ti ti-login"></i></div><div class="at"><b>+${+t.jang || 0}장${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}</b><span>${esc(t.date || '')} · 롯트 ${esc(t.lot || '-')} · ${esc(t.by || '')}</span></div></div>`, '입고 내역 없음')}
+    <div style="font-size:11.5px;color:var(--t3);margin-bottom:6px"><i class="ti ti-info-circle"></i> 입고 내역을 탭하면 롯트·패턴을 수정할 수 있습니다</div>
+    ${txnRowsWithMore(ins, 'in-more', t => `<div class="alert-i b" style="background:var(--gl2);border-color:var(--gbd);margin-bottom:6px;cursor:pointer" onclick="openInEdit('${t.id}')" title="탭하면 롯트·패턴 수정"><div class="ai" style="color:var(--gd)"><i class="ti ti-login"></i></div><div class="at"><b>+${+t.jang || 0}장${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}</b><span>${esc(t.date || '')} · 롯트 ${esc(t.lot || '-')} · ${esc(t.by || '')}</span></div><i class="ti ti-edit" style="color:var(--t3);align-self:center"></i></div>`, '입고 내역 없음')}
     ` : ''}
     <div class="frm-foot">
       ${it && isAdmin() ? `<button class="btn btn-danger" onclick="delItem('${id}')"><i class="ti ti-trash"></i></button>` : ''}
@@ -1918,6 +1919,38 @@ async function submitDamage(id) {
   });
   closeModal();
   toast(dir > 0 ? `파손 ${n}장 처리됨` : `파손 ${n}장 복구됨`);
+}
+/* 입고 내역 수정 — 롯트·패턴 재배정(롯트별/패턴별 재고 자동 재계산). 장수는 변경하지 않음 */
+function openInEdit(id) {
+  const t = state.transactions.find(x => x.id === id && x.type === 'in'); if (!t) return;
+  const pats = t.patterns || [];
+  const single = pats.length <= 1;
+  const patVal = pats.length === 1 ? (pats[0].pattern || '') : '';
+  openModal(`
+    <div class="sheet-h"><h3><i class="ti ti-edit"></i>입고 내역 수정</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:13px;color:var(--t2);margin-bottom:12px"><b style="color:var(--t1)">${esc(t.itemName || '')}</b>${t.spec ? ' · ' + esc(t.spec) : ''} · ${+t.jang || 0}장</div>
+    <div class="frm">
+      <div class="fld"><label>입고일</label><input type="date" id="ie-date" value="${esc(t.date || '')}"></div>
+      <div class="fld"><label>공급처</label><input id="ie-vendor" lang="ko" value="${esc(t.vendor || '')}"></div>
+      <div class="fld full"><label>롯트<span class="req">*</span></label><input id="ie-lot" value="${esc(t.lot || '')}" placeholder="롯트 넘버"></div>
+      ${single ? `<div class="fld full"><label>패턴 <span style="color:var(--t3);font-weight:500">(없으면 비움)</span></label><input id="ie-pat" lang="ko" value="${esc(patVal)}" placeholder="패턴"></div>` : `<div class="fld full"><label>패턴</label><div style="font-size:12.5px;color:var(--t3);padding:6px 0">패턴이 여러 개라 여기서 수정 불가 (${pats.map(p => esc(p.pattern || '-') + ' ' + (+p.jang || 0) + '장').join(', ')}) — 필요 시 삭제 후 재등록</div></div>`}
+      <div class="fld full"><label>비고</label><input id="ie-note" lang="ko" value="${esc(t.note || '')}"></div>
+      <div class="fld full" style="font-size:11.5px;color:var(--t3);background:var(--soft);border-radius:9px;padding:9px 11px;line-height:1.5"><i class="ti ti-info-circle"></i> 롯트·패턴을 바꾸면 롯트별/패턴별 재고가 자동으로 다시 계산됩니다. 장수는 여기서 변경되지 않습니다.</div>
+    </div>
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitInEdit('${t.id}')"><i class="ti ti-check"></i>저장</button></div>`);
+}
+async function submitInEdit(id) {
+  const t = state.transactions.find(x => x.id === id && x.type === 'in'); if (!t) return;
+  const lot = (el('ie-lot').value || '').trim();
+  if (!lot) { toast('롯트를 입력하세요'); return; }
+  const patch = { lot, date: el('ie-date').value || t.date || '', vendor: (el('ie-vendor').value || '').trim(), note: (el('ie-note').value || '').trim() };
+  const pats = t.patterns || [];
+  if (pats.length <= 1 && el('ie-pat')) {
+    const pv = (el('ie-pat').value || '').trim();
+    patch.patterns = pv ? [{ pattern: pv, jang: (pats[0] && +pats[0].jang) || (+t.jang || 0) }] : [];
+  }
+  await Store.update('transactions', id, patch);
+  closeModal(); toast('입고 내역이 수정되었습니다');
 }
 /* 규격 select에서 "새 규격 추가" 선택 시 입력란 표시 */
 function onSpecChange(prefix) {
