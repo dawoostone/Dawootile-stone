@@ -2038,41 +2038,70 @@ function openAdjustForm(id) {
     <div class="sheet-h"><h3><i class="ti ti-adjustments"></i>재고 조정 (실사 보정)</h3><button class="x" onclick="closeModal()">×</button></div>
     <div style="font-size:13px;color:var(--t2);margin-bottom:12px"><b style="color:var(--t1)">${esc(it.name)}</b> · 실재고 ${+it.jang || 0}장</div>
     <div class="frm">
-      <div class="fld"><label>구분</label><select id="aj-dir"><option value="1">증가 (＋ 재고 늘리기)</option><option value="-1">감소 (－ 재고 줄이기)</option></select></div>
+      <div class="fld"><label>구분</label><select id="aj-dir" onchange="ajDirChange()"><option value="1">증가 (＋ 총재고)</option><option value="-1">감소 (－ 총재고)</option><option value="move">창고 이동 (총량 불변)</option></select></div>
       <div class="fld"><label>장수</label><input id="aj-jang" inputmode="numeric" value="1"></div>
-      <div class="fld full"><label>창고 <span style="color:var(--t3);font-weight:500">(선택 · 창고별 보정 시)</span></label><input id="aj-depot" list="aj-depot-list" placeholder="창고"><datalist id="aj-depot-list">${depots.map(d => `<option value="${esc(d)}">`).join('')}</datalist></div>
+      <div class="fld full" id="aj-depot-fld"><label>창고 <span style="color:var(--t3);font-weight:500">(선택 · 창고별 총재고 보정 시)</span></label><input id="aj-depot" list="aj-depot-list" placeholder="창고"><datalist id="aj-depot-list">${depots.map(d => `<option value="${esc(d)}">`).join('')}</datalist></div>
+      <div class="fld full hidden" id="aj-move-fld"><label>창고 이동 (출발 → 도착) <span style="color:var(--t3);font-weight:500">(총재고는 그대로, 창고별만 이동)</span></label><div style="display:flex;gap:6px;align-items:center"><input id="aj-from" list="aj-dep2" placeholder="출발 창고" style="flex:1"><span style="flex:none;color:var(--t3)">→</span><input id="aj-to" list="aj-dep2" placeholder="도착 창고" style="flex:1"></div><datalist id="aj-dep2">${depotOptions().map(d => `<option value="${esc(d)}">`).join('')}</datalist></div>
       <div class="fld full"><label>롯트 <span style="color:var(--t3);font-weight:500">(선택 · 비우면 총량만 보정)</span></label><input id="aj-lot" list="aj-lot-list" placeholder="롯트"><datalist id="aj-lot-list">${lots.map(l => `<option value="${esc(l)}">`).join('')}</datalist></div>
       <div class="fld full"><label>패턴 <span style="color:var(--t3);font-weight:500">(선택)</span></label><input id="aj-pat" list="aj-pat-list" lang="ko" placeholder="패턴"><datalist id="aj-pat-list">${pats.map(p => `<option value="${esc(p)}">`).join('')}</datalist></div>
       <div class="fld full"><label>사유</label><input id="aj-note" lang="ko" placeholder="예: 실사 보정 · 잘못 출고 후 보관 등"></div>
-      <div class="fld full" style="font-size:11.5px;color:var(--t3);background:var(--soft);border-radius:9px;padding:9px 11px;line-height:1.5"><i class="ti ti-info-circle"></i> 창고·롯트·패턴을 지정하면 그 창고별/롯트별/패턴별 재고와 실재고가 <b>함께</b> 보정됩니다(중복 계산 없음). 비우면 실재고 총량만 보정합니다.</div>
+      <div class="fld full" style="font-size:11.5px;color:var(--t3);background:var(--soft);border-radius:9px;padding:9px 11px;line-height:1.5"><i class="ti ti-info-circle"></i> <b>증가/감소</b>는 총재고를 바꿉니다(창고 지정 시 그 창고에 반영). <b>창고 이동</b>은 총재고는 그대로 두고 출발→도착 창고로만 옮깁니다(오출고 보관 등).</div>
     </div>
     <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitAdjust('${it.id}')"><i class="ti ti-check"></i>조정</button></div>`);
+  ajDirChange();
+}
+function ajDirChange() {
+  const move = el('aj-dir') && el('aj-dir').value === 'move';
+  if (el('aj-depot-fld')) el('aj-depot-fld').classList.toggle('hidden', move);
+  if (el('aj-move-fld')) el('aj-move-fld').classList.toggle('hidden', !move);
 }
 async function submitAdjust(id) {
   if (!isAdmin()) { toast('재고 조정은 관리자만 가능합니다'); return; }
   const it = state.inventory.find(x => x.id === id); if (!it) return;
-  const dir = parseInt(el('aj-dir').value, 10) || 1;
+  const mode = el('aj-dir').value;
   const n = Math.abs(parseFloat(el('aj-jang').value) || 0);
   if (n <= 0) { toast('장수를 입력하세요'); return; }
+  const lot = (el('aj-lot').value || '').trim(), pattern = (el('aj-pat').value || '').trim();
+  const note = (el('aj-note').value || '').trim() || '재고 조정';
+  if (mode === 'move') {
+    const from = (el('aj-from').value || '').trim(), to = (el('aj-to').value || '').trim();
+    if (!from || !to) { toast('출발·도착 창고를 입력하세요'); return; }
+    if (from === to) { toast('출발과 도착 창고가 같습니다'); return; }
+    const moveId = 'M' + Date.now();
+    const base = { type: 'adjust', moveId, itemId: it.id, itemName: it.name, spec: it.spec || '', lot, pattern, date: todayStr(), by: me.name };
+    await Store.add('transactions', Object.assign({}, base, { jang: -n, depot: from, note: `${note} (창고이동 ${from}→${to})` }));
+    await Store.add('transactions', Object.assign({}, base, { jang: n, depot: to, note: `${note} (창고이동 ${from}→${to})` }));
+    // 총재고(실재고)는 변경하지 않음 — 창고별만 이동
+    closeModal(); toast(`창고 이동 완료 · ${from}→${to} ${n}장`);
+    setTimeout(() => { if (state.inventory.find(x => x.id === id)) openItemForm(id); }, 350);
+    return;
+  }
+  const dir = parseInt(mode, 10) || 1;
   const delta = dir * n;
   await Store.add('transactions', {
     type: 'adjust', itemId: it.id, itemName: it.name, spec: it.spec || '',
-    jang: delta, lot: (el('aj-lot').value || '').trim(), pattern: (el('aj-pat').value || '').trim(),
-    depot: (el('aj-depot').value || '').trim(),
-    note: (el('aj-note').value || '').trim() || '재고 조정', date: todayStr(), by: me.name
+    jang: delta, lot, pattern, depot: (el('aj-depot').value || '').trim(),
+    note, date: todayStr(), by: me.name
   });
   await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) + delta) });
   closeModal(); toast(`재고 조정 완료 (${delta > 0 ? '+' : ''}${delta}장)`);
+  setTimeout(() => { if (state.inventory.find(x => x.id === id)) openItemForm(id); }, 350);
 }
-/* 조정 되돌리기 (관리자) — 실재고·롯트·패턴 조정 전 상태로 복구 */
+/* 조정 되돌리기 (관리자) — 조정 전 상태로 복구. 창고이동(net0)은 총재고 불변으로 그룹 삭제 */
 async function delAdjust(id) {
   if (!isAdmin()) { toast('관리자만 가능합니다'); return; }
   const t = state.transactions.find(x => x.id === id && x.type === 'adjust'); if (!t) return;
-  if (!confirm(`이 조정(${(+t.jang || 0) > 0 ? '+' : ''}${+t.jang || 0}장)을 되돌릴까요?\n실재고·롯트·패턴 재고가 조정 전으로 복구됩니다.`)) return;
   const it = state.inventory.find(i => i.id === t.itemId || i.name === t.itemName);
-  if (it) await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) - (+t.jang || 0)) });
-  await Store.remove('transactions', id);
-  toast('조정 되돌림 (재고 복구)');
+  if (t.moveId) {
+    if (!confirm('이 창고 이동을 되돌릴까요? (총재고는 그대로)')) return;
+    for (const g of state.transactions.filter(x => x.moveId === t.moveId)) { try { await Store.remove('transactions', g.id); } catch (e) { } }
+  } else {
+    if (!confirm(`이 조정(${(+t.jang || 0) > 0 ? '+' : ''}${+t.jang || 0}장)을 되돌릴까요?\n실재고·롯트·패턴 재고가 조정 전으로 복구됩니다.`)) return;
+    if (it) await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) - (+t.jang || 0)) });
+    await Store.remove('transactions', id);
+  }
+  toast('조정 되돌림');
+  if (it) setTimeout(() => { if (state.inventory.find(x => x.id === it.id)) openItemForm(it.id); }, 350);
 }
 /* 규격 select에서 "새 규격 추가" 선택 시 입력란 표시 */
 function onSpecChange(prefix) {
