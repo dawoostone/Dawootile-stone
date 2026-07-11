@@ -2295,7 +2295,7 @@ function shipReportList() {
 function shipReport() {
   const list = shipReportList();
   const tj = list.reduce((a, b) => a + (+b.jang || 0), 0), th = list.reduce((a, b) => a + (+b.hebe || 0), 0);
-  if (el('r-body')) el('r-body').innerHTML = list.length ? list.map(t => `<tr><td>${esc(t.date || '')}</td><td><b>${esc(t.targetName || '')}</b></td><td>${esc(t.itemName || '')}</td><td>${+t.jang || 0}장</td><td>${(+t.hebe || 0).toFixed(1)}㎡</td><td>${esc(t.dest || t.factory || '')}</td></tr>`).join('') : `<tr><td colspan="6"><div class="empty" style="padding:18px"><i class="ti ti-search-off"></i>해당 출고 내역이 없습니다</div></td></tr>`;
+  if (el('r-body')) el('r-body').innerHTML = list.length ? list.map(t => `<tr style="cursor:pointer" onclick="openOutEdit('${t.id}')" title="탭하면 롯트·패턴·장수 수정"><td>${esc(t.date || '')}</td><td><b>${esc(t.targetName || '')}</b></td><td>${esc(t.itemName || '')}${t.lot || t.pattern ? `<div style="font-size:10.5px;color:var(--t3)">${[t.lot ? '롯트 ' + esc(t.lot) : '', t.pattern ? '패턴 ' + esc(t.pattern) : ''].filter(Boolean).join(' · ')}</div>` : ''}</td><td>${+t.jang || 0}장</td><td>${(+t.hebe || 0).toFixed(1)}㎡</td><td>${esc(t.dest || t.factory || '')}</td></tr>`).join('') : `<tr><td colspan="6"><div class="empty" style="padding:18px"><i class="ti ti-search-off"></i>해당 출고 내역이 없습니다</div></td></tr>`;
   if (el('r-sum')) el('r-sum').innerHTML = `${list.length}건 · 합계 <b style="color:var(--t1)">${tj}장 · ${th.toFixed(1)}㎡</b>`;
 }
 function downloadShipXls() {
@@ -2325,6 +2325,48 @@ ${body}
   a.download = '출고내역_' + todayStr() + '.xls'; document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
   toast('엑셀 다운로드 (' + list.length + '건)');
+}
+/* 출고 내역 수정 — 롯트·패턴 재배정(재고 자동 재계산) + 장수 보정 */
+function openOutEdit(id) {
+  const t = state.transactions.find(x => x.id === id && x.type === 'out'); if (!t) return;
+  openModal(`
+    <div class="sheet-h"><h3><i class="ti ti-edit"></i>출고 내역 수정</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:13px;color:var(--t2);margin-bottom:12px"><b style="color:var(--t1)">${esc(t.itemName || '')}</b>${t.spec ? ' · ' + esc(t.spec) : ''}</div>
+    <div class="frm">
+      <div class="fld"><label>출고일</label><input type="date" id="oe-date" value="${esc(t.date || '')}"></div>
+      <div class="fld"><label>장수</label><input id="oe-jang" inputmode="numeric" value="${esc(t.jang || 0)}"></div>
+      <div class="fld full"><label>롯트 <span style="color:var(--t3);font-weight:500">(실제 출고된 롯트로 지정)</span></label><select id="oe-lot">${lotSelectHtml(t.itemName, t.lot || '')}</select></div>
+      <div class="fld full"><label>패턴 <span style="color:var(--t3);font-weight:500">(실제 출고된 패턴으로 지정)</span></label><select id="oe-pat">${patternSelectHtml(t.itemName, t.pattern || '')}</select></div>
+      <div class="fld"><label>거래처</label><input id="oe-target" lang="ko" value="${esc(t.targetName || '')}"></div>
+      <div class="fld"><label>출고지</label><input id="oe-dest" lang="ko" value="${esc(t.dest || t.factory || '')}"></div>
+      <div class="fld full"><label>메모</label><input id="oe-note" lang="ko" value="${esc(t.note || '')}"></div>
+      <div class="fld full" style="font-size:11.5px;color:var(--t3);background:var(--soft);border-radius:9px;padding:9px 11px;line-height:1.5"><i class="ti ti-info-circle"></i> 롯트·패턴을 바꾸면 롯트별/패턴별 재고가 자동으로 다시 계산됩니다. 장수를 바꾸면 실재고도 함께 보정됩니다.</div>
+    </div>
+    <div class="frm-foot">${isAdmin() ? `<button class="btn" style="color:var(--red-t);border-color:#e6a9a9" onclick="delShip('${t.id}');closeModal()"><i class="ti ti-trash"></i></button>` : ''}<button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitOutEdit('${t.id}')"><i class="ti ti-check"></i>저장</button></div>`);
+}
+async function submitOutEdit(id) {
+  const t = state.transactions.find(x => x.id === id && x.type === 'out'); if (!t) return;
+  const oldJang = +t.jang || 0;
+  const newJang = Math.max(0, parseFloat(el('oe-jang').value) || 0);
+  const it = state.inventory.find(i => i.id === t.itemId || i.name === t.itemName);
+  const per = it ? (+it.hebePerJang || 0) : 0;
+  const patch = {
+    jang: newJang,
+    lot: (el('oe-lot').value || '').trim(),
+    pattern: (el('oe-pat').value || '').trim(),
+    hebe: +(newJang * per).toFixed(2),
+    date: el('oe-date').value || t.date || '',
+    targetName: (el('oe-target').value || '').trim(),
+    dest: (el('oe-dest').value || '').trim(),
+    note: (el('oe-note').value || '').trim()
+  };
+  patch.factory = patch.dest;
+  await Store.update('transactions', id, patch);
+  // 장수 변경 시 실재고 보정: 출고 줄이면 +재고, 늘리면 -재고
+  if (it && newJang !== oldJang) {
+    await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) + (oldJang - newJang)) });
+  }
+  closeModal(); toast('출고 내역이 수정되었습니다');
 }
 /* 출고표(출고증) 인쇄 — 회사 양식 기준. 출고 묶음(shipId) 단위로 발행 */
 const DAWOO_CO = {
