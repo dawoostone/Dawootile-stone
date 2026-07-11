@@ -840,12 +840,13 @@ function lotStock(name) {
   state.transactions.forEach(t => {
     if (_normName(t.itemName) !== key) return;
     const lot = (t.lot || '').trim() || '(미지정)';
-    if (!m[lot]) m[lot] = { lot, inQty: 0, outQty: 0 };
+    if (!m[lot]) m[lot] = { lot, inQty: 0, outQty: 0, adjQty: 0 };
     if (t.type === 'in') m[lot].inQty += (+t.jang || 0);
     else if (t.type === 'out') m[lot].outQty += (+t.jang || 0);
+    else if (t.type === 'adjust') m[lot].adjQty += (+t.jang || 0);   // 재고 조정(±)
   });
-  return Object.values(m).map(x => ({ lot: x.lot, inQty: x.inQty, outQty: x.outQty, remain: x.inQty - x.outQty }))
-    .filter(x => x.inQty > 0 || x.remain !== 0)
+  return Object.values(m).map(x => ({ lot: x.lot, inQty: x.inQty, outQty: x.outQty, remain: x.inQty - x.outQty + x.adjQty }))
+    .filter(x => x.inQty > 0 || x.adjQty !== 0 || x.remain !== 0)
     .sort((a, b) => b.remain - a.remain);
 }
 /* 폼용 롯트 select 옵션(잔여 있는 실제 롯트만) */
@@ -877,6 +878,7 @@ function patternStock(name) {
     if (_normName(t.itemName) !== key) return;
     if (t.type === 'in') { (t.patterns || []).forEach(p => { const nm = (p.pattern || '').trim(); if (!nm || nm === '-') return; m[nm] = (m[nm] || 0) + (+p.jang || 0); }); }
     else if (t.type === 'out') { const nm = (t.pattern || '').trim(); if (!nm || nm === '-') return; m[nm] = (m[nm] || 0) - (+t.jang || 0); }
+    else if (t.type === 'adjust') { const nm = (t.pattern || '').trim(); if (!nm || nm === '-') return; m[nm] = (m[nm] || 0) + (+t.jang || 0); }   // 재고 조정(±)
   });
   return Object.keys(m).map(k => ({ pattern: k, remain: m[k] })).filter(x => x.remain !== 0).sort((a, b) => b.remain - a.remain);
 }
@@ -1874,7 +1876,7 @@ function openItemForm(id) {
       <div class="fld full"><div class="reco" id="i-hebe-info" style="margin-top:0"><div class="reco-h"><i class="ti ti-ruler-2"></i>자동 환산</div><div class="row"><span class="rl">장당 헤베</span><span class="rv"><b id="i-perjang">${(parseSpec(v.spec).hebePerJang || 0).toFixed(3)}</b> ㎡/장</span></div><div class="row"><span class="rl">현재 재고 헤베</span><span class="rv"><b id="i-tothebe">${itemHebe(v).toFixed(2)}</b> ㎡</span></div></div></div>
     </div>
     ${it ? `
-    <div class="sec-label"><i class="ti ti-list-details"></i>롯트별 재고</div>
+    <div class="sec-label" style="display:flex;justify-content:space-between;align-items:center"><span><i class="ti ti-list-details"></i>롯트별 재고</span><button class="btn btn-ghost btn-sm" type="button" onclick="openAdjustForm('${it.id}')"><i class="ti ti-adjustments"></i>재고 조정</button></div>
     ${(() => { const ls = lotStock(it.name); return ls.length ? `<div class="tbl-wrap" style="margin-bottom:6px"><table class="tbl"><thead><tr><th>롯트</th><th>입고</th><th>출고</th><th>잔여</th></tr></thead><tbody>${ls.map(l => `<tr><td><b>${esc(l.lot)}</b></td><td>${l.inQty}장</td><td>${l.outQty}장</td><td><b style="color:${l.remain <= 0 ? 'var(--t3)' : 'var(--gd)'}">${l.remain}장</b></td></tr>`).join('')}</tbody></table></div>` : `<div style="font-size:12.5px;color:var(--t3);padding:2px 0 8px">롯트 정보가 없습니다 (입고 시 롯트를 입력하면 표시됩니다)</div>`; })()}
     <div class="sec-label" style="display:flex;justify-content:space-between;align-items:center"><span><i class="ti ti-alert-square-rounded" style="color:#d64545"></i> 파손 재고 <b style="color:#b42318">${damagedStock(it.name)}장</b></span><button class="btn btn-ghost btn-sm" type="button" onclick="openDamageForm('${it.id}')"><i class="ti ti-arrow-right-bar"></i>파손 처리</button></div>
     <div class="sec-label"><i class="ti ti-logout"></i>출고 내역 <span style="font-weight:500;color:var(--t3)">· 누적 ${totalOut}장</span></div>
@@ -1951,6 +1953,38 @@ async function submitInEdit(id) {
   }
   await Store.update('transactions', id, patch);
   closeModal(); toast('입고 내역이 수정되었습니다');
+}
+/* 재고 조정(실사 보정) — 롯트+패턴+실재고를 한 번에 ± 보정 */
+function openAdjustForm(id) {
+  const it = state.inventory.find(x => x.id === id); if (!it) return;
+  const lots = lotStock(it.name).map(l => l.lot).filter(l => l && l !== '(미지정)');
+  const pats = patternStock(it.name).map(p => p.pattern).filter(Boolean);
+  openModal(`
+    <div class="sheet-h"><h3><i class="ti ti-adjustments"></i>재고 조정 (실사 보정)</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:13px;color:var(--t2);margin-bottom:12px"><b style="color:var(--t1)">${esc(it.name)}</b> · 실재고 ${+it.jang || 0}장</div>
+    <div class="frm">
+      <div class="fld"><label>구분</label><select id="aj-dir"><option value="1">증가 (＋ 재고 늘리기)</option><option value="-1">감소 (－ 재고 줄이기)</option></select></div>
+      <div class="fld"><label>장수</label><input id="aj-jang" inputmode="numeric" value="1"></div>
+      <div class="fld full"><label>롯트 <span style="color:var(--t3);font-weight:500">(선택 · 비우면 총량만 보정)</span></label><input id="aj-lot" list="aj-lot-list" placeholder="롯트"><datalist id="aj-lot-list">${lots.map(l => `<option value="${esc(l)}">`).join('')}</datalist></div>
+      <div class="fld full"><label>패턴 <span style="color:var(--t3);font-weight:500">(선택)</span></label><input id="aj-pat" list="aj-pat-list" lang="ko" placeholder="패턴"><datalist id="aj-pat-list">${pats.map(p => `<option value="${esc(p)}">`).join('')}</datalist></div>
+      <div class="fld full"><label>사유</label><input id="aj-note" lang="ko" placeholder="예: 실사 보정 · 롯트 정정 등"></div>
+      <div class="fld full" style="font-size:11.5px;color:var(--t3);background:var(--soft);border-radius:9px;padding:9px 11px;line-height:1.5"><i class="ti ti-info-circle"></i> 롯트·패턴을 지정하면 그 롯트별/패턴별 재고와 실재고가 <b>함께</b> 보정됩니다(중복 계산 없음). 롯트·패턴을 비우면 실재고 총량만 보정합니다.</div>
+    </div>
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitAdjust('${it.id}')"><i class="ti ti-check"></i>조정</button></div>`);
+}
+async function submitAdjust(id) {
+  const it = state.inventory.find(x => x.id === id); if (!it) return;
+  const dir = parseInt(el('aj-dir').value, 10) || 1;
+  const n = Math.abs(parseFloat(el('aj-jang').value) || 0);
+  if (n <= 0) { toast('장수를 입력하세요'); return; }
+  const delta = dir * n;
+  await Store.add('transactions', {
+    type: 'adjust', itemId: it.id, itemName: it.name, spec: it.spec || '',
+    jang: delta, lot: (el('aj-lot').value || '').trim(), pattern: (el('aj-pat').value || '').trim(),
+    note: (el('aj-note').value || '').trim() || '재고 조정', date: todayStr(), by: me.name
+  });
+  await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) + delta) });
+  closeModal(); toast(`재고 조정 완료 (${delta > 0 ? '+' : ''}${delta}장)`);
 }
 /* 규격 select에서 "새 규격 추가" 선택 시 입력란 표시 */
 function onSpecChange(prefix) {
