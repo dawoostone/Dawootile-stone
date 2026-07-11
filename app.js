@@ -849,12 +849,17 @@ function lotStock(name) {
     .filter(x => x.inQty > 0 || x.adjQty !== 0 || x.remain !== 0)
     .sort((a, b) => b.remain - a.remain);
 }
-/* 폼용 롯트 select 옵션(잔여 있는 실제 롯트만) */
+/* 폼용 롯트 select 옵션(잔여 있는 실제 롯트만). 롯트가 하나만 남으면 자동 선택 */
+function soleLot(name) {
+  const ls = lotStock(name).filter(l => l.lot !== '(미지정)' && l.remain > 0);
+  return ls.length === 1 ? ls[0].lot : '';
+}
 function lotSelectHtml(name, current) {
   const lots = lotStock(name).filter(l => l.lot !== '(미지정)' && l.remain > 0);
+  const sel = current || (lots.length === 1 ? lots[0].lot : '');   // 롯트 하나면 자동 선택
   let html = '<option value="">롯트 선택 (선택사항)</option>';
-  lots.forEach(l => { html += `<option value="${esc(l.lot)}" ${current === l.lot ? 'selected' : ''}>${esc(l.lot)} · 잔여 ${l.remain}장</option>`; });
-  if (current && !lots.some(l => l.lot === current)) html += `<option value="${esc(current)}" selected>${esc(current)}</option>`;
+  lots.forEach(l => { html += `<option value="${esc(l.lot)}" ${sel === l.lot ? 'selected' : ''}>${esc(l.lot)} · 잔여 ${l.remain}장</option>`; });
+  if (sel && !lots.some(l => l.lot === sel)) html += `<option value="${esc(sel)}" selected>${esc(sel)}</option>`;
   return html;
 }
 function lotBreakdownText(name) {
@@ -3224,8 +3229,9 @@ async function submitShip() {
       const oldJang = it ? (+it.jang || 0) : 0;
       const newJang = Math.max(0, oldJang - jang);
       const hebe = it ? +(jang * (+it.hebePerJang || 0)).toFixed(2) : 0;
+      const lot = (r.lot && r.lot.trim()) ? r.lot.trim() : soleLot(material);   // 롯트 미지정인데 남은 롯트가 하나면 자동 연동
       if (it) await Store.update('inventory', it.id, { jang: newJang });
-      await Store.add('transactions', { type: 'out', shipId, itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot: r.lot, pattern: r.pattern, dest, factory: dest, target: '', targetName, date, note, by: me.name });
+      await Store.add('transactions', { type: 'out', shipId, itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot, pattern: r.pattern, dest, factory: dest, target: '', targetName, date, note, by: me.name });
       totalJang += jang;
       if (it && oldJang > 0 && newJang <= 0) zeroed.push(material);
     }
