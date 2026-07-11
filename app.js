@@ -1876,9 +1876,11 @@ function openItemForm(id) {
       <div class="fld full"><div class="reco" id="i-hebe-info" style="margin-top:0"><div class="reco-h"><i class="ti ti-ruler-2"></i>자동 환산</div><div class="row"><span class="rl">장당 헤베</span><span class="rv"><b id="i-perjang">${(parseSpec(v.spec).hebePerJang || 0).toFixed(3)}</b> ㎡/장</span></div><div class="row"><span class="rl">현재 재고 헤베</span><span class="rv"><b id="i-tothebe">${itemHebe(v).toFixed(2)}</b> ㎡</span></div></div></div>
     </div>
     ${it ? `
-    <div class="sec-label" style="display:flex;justify-content:space-between;align-items:center"><span><i class="ti ti-list-details"></i>롯트별 재고</span><button class="btn btn-ghost btn-sm" type="button" onclick="openAdjustForm('${it.id}')"><i class="ti ti-adjustments"></i>재고 조정</button></div>
+    <div class="sec-label" style="display:flex;justify-content:space-between;align-items:center"><span><i class="ti ti-list-details"></i>롯트별 재고</span>${isAdmin() ? `<button class="btn btn-ghost btn-sm" type="button" onclick="openAdjustForm('${it.id}')"><i class="ti ti-adjustments"></i>재고 조정</button>` : ''}</div>
     ${(() => { const ls = lotStock(it.name); return ls.length ? `<div class="tbl-wrap" style="margin-bottom:6px"><table class="tbl"><thead><tr><th>롯트</th><th>입고</th><th>출고</th><th>잔여</th></tr></thead><tbody>${ls.map(l => `<tr><td><b>${esc(l.lot)}</b></td><td>${l.inQty}장</td><td>${l.outQty}장</td><td><b style="color:${l.remain <= 0 ? 'var(--t3)' : 'var(--gd)'}">${l.remain}장</b></td></tr>`).join('')}</tbody></table></div>` : `<div style="font-size:12.5px;color:var(--t3);padding:2px 0 8px">롯트 정보가 없습니다 (입고 시 롯트를 입력하면 표시됩니다)</div>`; })()}
     <div class="sec-label" style="display:flex;justify-content:space-between;align-items:center"><span><i class="ti ti-alert-square-rounded" style="color:#d64545"></i> 파손 재고 <b style="color:#b42318">${damagedStock(it.name)}장</b></span><button class="btn btn-ghost btn-sm" type="button" onclick="openDamageForm('${it.id}')"><i class="ti ti-arrow-right-bar"></i>파손 처리</button></div>
+    ${isAdmin() ? `<div class="sec-label"><i class="ti ti-history"></i>재고 조정 내역 <span style="font-weight:500;color:var(--t3)">(관리자)</span></div>
+    ${(() => { const adjs = txns.filter(t => t.type === 'adjust').sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0)); return adjs.length ? adjs.map(t => { const d = +t.jang || 0; return `<div class="alert-i b" style="margin-bottom:6px"><div class="ai" style="color:${d >= 0 ? 'var(--gd)' : 'var(--red-t)'}"><i class="ti ti-adjustments"></i></div><div class="at"><b style="color:${d >= 0 ? 'var(--gd)' : 'var(--red-t)'}">${d > 0 ? '+' : ''}${d}장</b><span>${esc(t.date || '')}${t.lot ? ' · 롯트 ' + esc(t.lot) : ''}${t.pattern ? ' · 패턴 ' + esc(t.pattern) : ''} · ${esc(t.note || '')} · ${esc(t.by || '')}</span></div><button class="btn btn-ghost btn-sm" type="button" onclick="event.stopPropagation();delAdjust('${t.id}')" title="되돌리기"><i class="ti ti-arrow-back-up"></i></button></div>`; }).join('') : `<div style="font-size:12.5px;color:var(--t3);padding:2px 0 8px">조정 내역이 없습니다</div>`; })()}` : ''}
     <div class="sec-label"><i class="ti ti-logout"></i>출고 내역 <span style="font-weight:500;color:var(--t3)">· 누적 ${totalOut}장</span></div>
     ${txnRowsWithMore(outs, 'out-more', t => `<div class="alert-i b" style="margin-bottom:6px"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${+t.jang || 0}장${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}</b><span>${esc(t.date || '')} · ${esc(t.targetName || '-')} · ${esc(t.by || '')}</span></div></div>`, '출고 내역 없음')}
     <div class="sec-label" style="margin-top:14px"><i class="ti ti-login"></i>입고 내역</div>
@@ -1956,6 +1958,7 @@ async function submitInEdit(id) {
 }
 /* 재고 조정(실사 보정) — 롯트+패턴+실재고를 한 번에 ± 보정 */
 function openAdjustForm(id) {
+  if (!isAdmin()) { toast('재고 조정은 관리자만 가능합니다'); return; }
   const it = state.inventory.find(x => x.id === id); if (!it) return;
   const lots = lotStock(it.name).map(l => l.lot).filter(l => l && l !== '(미지정)');
   const pats = patternStock(it.name).map(p => p.pattern).filter(Boolean);
@@ -1973,6 +1976,7 @@ function openAdjustForm(id) {
     <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitAdjust('${it.id}')"><i class="ti ti-check"></i>조정</button></div>`);
 }
 async function submitAdjust(id) {
+  if (!isAdmin()) { toast('재고 조정은 관리자만 가능합니다'); return; }
   const it = state.inventory.find(x => x.id === id); if (!it) return;
   const dir = parseInt(el('aj-dir').value, 10) || 1;
   const n = Math.abs(parseFloat(el('aj-jang').value) || 0);
@@ -1985,6 +1989,16 @@ async function submitAdjust(id) {
   });
   await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) + delta) });
   closeModal(); toast(`재고 조정 완료 (${delta > 0 ? '+' : ''}${delta}장)`);
+}
+/* 조정 되돌리기 (관리자) — 실재고·롯트·패턴 조정 전 상태로 복구 */
+async function delAdjust(id) {
+  if (!isAdmin()) { toast('관리자만 가능합니다'); return; }
+  const t = state.transactions.find(x => x.id === id && x.type === 'adjust'); if (!t) return;
+  if (!confirm(`이 조정(${(+t.jang || 0) > 0 ? '+' : ''}${+t.jang || 0}장)을 되돌릴까요?\n실재고·롯트·패턴 재고가 조정 전으로 복구됩니다.`)) return;
+  const it = state.inventory.find(i => i.id === t.itemId || i.name === t.itemName);
+  if (it) await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) - (+t.jang || 0)) });
+  await Store.remove('transactions', id);
+  toast('조정 되돌림 (재고 복구)');
 }
 /* 규격 select에서 "새 규격 추가" 선택 시 입력란 표시 */
 function onSpecChange(prefix) {
