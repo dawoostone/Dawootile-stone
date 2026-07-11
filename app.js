@@ -1768,7 +1768,7 @@ function renderStock() {
     </div>
     <div class="chips">${chipS('all', '전체', f)}${chipS('none', '없음', f)}${chipS('short', '부족', f)}${chipS('ok', '정상', f)}</div>
     ${f === 'low' ? `<div class="banner warn"><i class="ti ti-alert-triangle"></i><span><b>입고가 필요한 자재</b>만 모았습니다. 자재명과 현재 장수를 확인하세요.</span></div>` : ''}
-    <div style="font-size:12px;color:var(--t3);margin-bottom:8px">검색 결과 <b id="stock-count" style="color:var(--t1)">${list.length}종</b></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:12px;color:var(--t3)">검색 결과 <b id="stock-count" style="color:var(--t1)">${list.length}종</b></span><button class="btn btn-sm" onclick="stockExportExcel()"><i class="ti ti-download"></i>재고 엑셀(롯트별)</button></div>
     <div class="tbl-wrap" style="max-height:calc(100vh - 360px);min-height:220px;overflow:auto">
       <table class="tbl">
         <thead><tr><th>자재명</th><th>규격</th><th>패턴별</th><th>실재고</th><th>가용</th><th>헤베(㎡)</th><th>상태</th><th>창고</th></tr></thead>
@@ -1787,6 +1787,35 @@ function renderStock() {
     </div>`;
 }
 function chipS(v, l, c) { return `<button class="chip ${c === v ? 'active' : ''}" onclick="filters.stock='${v}';renderStock()">${l}</button>`; }
+/* 현재 재고 리스트 → 엑셀 (롯트별 잔여 수량) */
+function stockExportExcel() {
+  if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후 다시'); return; }
+  const rows = [];
+  state.inventory.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '')).forEach(it => {
+    const per = +it.hebePerJang || 0;
+    const lots = lotStock(it.name).filter(l => l.remain > 0);
+    if (lots.length) {
+      lots.forEach(l => rows.push({
+        '자재명': it.name || '', '규격': it.spec || '', '롯트': l.lot,
+        '수량(장)': l.remain, '헤베(㎡)': +(l.remain * per).toFixed(2),
+        '창고': it.depot || '', '공급처': it.vendor || ''
+      }));
+    } else {
+      const jang = +it.jang || 0;
+      if (jang !== 0) rows.push({
+        '자재명': it.name || '', '규격': it.spec || '', '롯트': '(미지정)',
+        '수량(장)': jang, '헤베(㎡)': +(jang * per).toFixed(2),
+        '창고': it.depot || '', '공급처': it.vendor || ''
+      });
+    }
+  });
+  if (!rows.length) { toast('재고가 없습니다'); return; }
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '재고');
+  XLSX.writeFile(wb, `재고리스트_${todayStr()}.xlsx`);
+  toast('재고 ' + rows.length + '줄 다운로드');
+}
 
 /* 품목 추가/수정 */
 /* 내역 리스트: 10건만 보이고 나머지는 "더 보기"로 펼침 */
