@@ -190,8 +190,7 @@ function init() {
   // 클라우드 모드: Firebase 인증으로 보호 — 로그인해야만 데이터에 접근 가능
   auth.onAuthStateChanged(async (user) => {
     if (user) {
-      startSubscriptions();
-      await afterAuth(user);
+      await afterAuth(user);   // 역할 판별 후 역할별로 구독(고객은 재고+본인홀딩만)
     } else {
       me = null;
       document.body.classList.remove('cust-mode');
@@ -217,12 +216,13 @@ async function afterAuth(user) {
         el('me-av').textContent = initial(me.name);
         el('me-nm').textContent = me.name;
         document.body.classList.add('cust-mode');
-        if (_r === 'customer') startCustomerHoldings(); else startCrewSites();
+        if (_r === 'customer') startCustomerSubs(); else startCrewSites();
         go('stock');
         return;
       }
     } catch (e) { /* 역할 문서 읽기 실패 → 일반(직원) 흐름으로 진행 */ }
   }
+  startSubscriptions();          // 직원/관리자: 전체 컬렉션 구독
   seedIfEmpty();                 // 규격/공장/팀 등 기본값(백그라운드)
   await whenMembersReady();       // 직원 목록 첫 로딩 대기
   let member = findMemberByEmail(user.email);
@@ -607,13 +607,23 @@ function custHoldsBody() {
   }).join('');
 }
 function goCustTab(v) { filters.custTab = v; renderCustomerStock(); }
-/* 고객 로그인 시: 본인 업체 홀딩만 필터 구독(서버 규칙과 일치) */
+/* 고객 로그인 시: 재고(읽기 허용) + 본인 업체 홀딩만 구독. 나머지 컬렉션은 구독하지 않음(권한 없음·충돌 방지) */
+function startCustomerSubs() {
+  if (!CLOUD || !me || me.role !== 'customer') return;
+  try {
+    cref('inventory').onSnapshot(snap => {
+      state.inventory = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+      if (me && me.role === 'customer' && (filters.custTab || 'stock') === 'stock') renderCustomerStock();
+    }, err => console.warn('cust inv', err));
+  } catch (e) { console.warn(e); }
+  startCustomerHoldings();
+}
 function startCustomerHoldings() {
   if (!CLOUD || !me || me.role !== 'customer' || !me.name) return;
   try {
     cref('holdings').where('vendor', '==', me.name).onSnapshot(snap => {
       state.holdings = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
-      if (me && me.role === 'customer' && (filters.custTab || 'stock') === 'holds') renderCustomerStock();
+      if (me && me.role === 'customer') renderCustomerStock();   // 홀딩 로드되면 탭 상관없이 갱신(배지 반영)
     }, err => console.warn('cust holds', err));
   } catch (e) { console.warn(e); }
 }
