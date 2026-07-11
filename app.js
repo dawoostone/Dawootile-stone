@@ -891,7 +891,9 @@ function damagedStock(name) {
   if (!name) return 0;
   const key = _normName(name); let n = 0;
   state.transactions.forEach(t => {
-    if (_normName(t.itemName) !== key || !/파손/.test(t.note || '')) return;
+    if (_normName(t.itemName) !== key) return;
+    if (t.type === 'damage') { n += (+t.jang || 0); return; }   // 파손 처리(+)/복구(−)
+    if (!/파손/.test(t.note || '')) return;
     if (t.type === 'in') n += (+t.jang || 0);
     else if (t.type === 'out') n -= (+t.jang || 0);
   });
@@ -1874,6 +1876,7 @@ function openItemForm(id) {
     ${it ? `
     <div class="sec-label"><i class="ti ti-list-details"></i>롯트별 재고</div>
     ${(() => { const ls = lotStock(it.name); return ls.length ? `<div class="tbl-wrap" style="margin-bottom:6px"><table class="tbl"><thead><tr><th>롯트</th><th>입고</th><th>출고</th><th>잔여</th></tr></thead><tbody>${ls.map(l => `<tr><td><b>${esc(l.lot)}</b></td><td>${l.inQty}장</td><td>${l.outQty}장</td><td><b style="color:${l.remain <= 0 ? 'var(--t3)' : 'var(--gd)'}">${l.remain}장</b></td></tr>`).join('')}</tbody></table></div>` : `<div style="font-size:12.5px;color:var(--t3);padding:2px 0 8px">롯트 정보가 없습니다 (입고 시 롯트를 입력하면 표시됩니다)</div>`; })()}
+    <div class="sec-label" style="display:flex;justify-content:space-between;align-items:center"><span><i class="ti ti-alert-square-rounded" style="color:#d64545"></i> 파손 재고 <b style="color:#b42318">${damagedStock(it.name)}장</b></span><button class="btn btn-ghost btn-sm" type="button" onclick="openDamageForm('${it.id}')"><i class="ti ti-arrow-right-bar"></i>파손 처리</button></div>
     <div class="sec-label"><i class="ti ti-logout"></i>출고 내역 <span style="font-weight:500;color:var(--t3)">· 누적 ${totalOut}장</span></div>
     ${txnRowsWithMore(outs, 'out-more', t => `<div class="alert-i b" style="margin-bottom:6px"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${+t.jang || 0}장${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}</b><span>${esc(t.date || '')} · ${esc(t.targetName || '-')} · ${esc(t.by || '')}</span></div></div>`, '출고 내역 없음')}
     <div class="sec-label" style="margin-top:14px"><i class="ti ti-login"></i>입고 내역</div>
@@ -1884,6 +1887,37 @@ function openItemForm(id) {
       <button class="btn btn-pri" style="flex:1" onclick="submitItem('${id || ''}')"><i class="ti ti-check"></i>저장</button>
     </div>`);
   setSelectValue('i-vendor', 'suppliers', v.vendor);
+}
+/* 현재고 → 파손 처리(정상↔파손). 실재고는 그대로, '파손' 수량만 변동 */
+function openDamageForm(id) {
+  const it = state.inventory.find(x => x.id === id); if (!it) return;
+  const cur = damagedStock(it.name);
+  openModal(`
+    <div class="sheet-h"><h3><i class="ti ti-alert-square-rounded" style="color:#d64545"></i>파손 처리</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:13px;color:var(--t2);margin-bottom:12px"><b style="color:var(--t1)">${esc(it.name)}</b> · 실재고 ${+it.jang || 0}장 · 현재 파손 <b style="color:#b42318">${cur}장</b></div>
+    <div class="frm">
+      <div class="fld"><label>구분</label><select id="dm-dir"><option value="1">파손 처리 (정상 → 파손)</option><option value="-1">파손 복구 (파손 → 정상)</option></select></div>
+      <div class="fld"><label>장수</label><input id="dm-jang" inputmode="numeric" value="1"></div>
+      <div class="fld full"><label>롯트 <span style="color:var(--t3);font-weight:500">(선택)</span></label><select id="dm-lot">${lotSelectHtml(it.name, '')}</select></div>
+      <div class="fld full"><label>패턴 <span style="color:var(--t3);font-weight:500">(선택)</span></label><select id="dm-pat">${patternSelectHtml(it.name, '')}</select></div>
+      <div class="fld full"><label>사유</label><input id="dm-note" lang="ko" value="모서리 파손" placeholder="파손 사유"></div>
+      <div class="fld full" style="font-size:11.5px;color:var(--t3);background:var(--soft);border-radius:9px;padding:9px 11px;line-height:1.5"><i class="ti ti-info-circle"></i> 파손 처리해도 실재고(장수)는 그대로이고 '파손' 수량으로만 표시됩니다. 폐기·반품으로 실재고에서 빼려면 출고로 처리하세요.</div>
+    </div>
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitDamage('${it.id}')"><i class="ti ti-check"></i>적용</button></div>`);
+}
+async function submitDamage(id) {
+  const it = state.inventory.find(x => x.id === id); if (!it) return;
+  const dir = parseInt(el('dm-dir').value, 10) || 1;
+  const n = Math.abs(parseFloat(el('dm-jang').value) || 0);
+  if (n <= 0) { toast('장수를 입력하세요'); return; }
+  if (dir < 0 && n > damagedStock(it.name)) { toast('복구 수량이 현재 파손 수량보다 많습니다'); return; }
+  await Store.add('transactions', {
+    type: 'damage', itemId: it.id, itemName: it.name, spec: it.spec || '',
+    jang: dir * n, lot: (el('dm-lot').value || '').trim(), pattern: (el('dm-pat').value || '').trim(),
+    note: (el('dm-note').value || '').trim() || '파손', date: todayStr(), by: me.name
+  });
+  closeModal();
+  toast(dir > 0 ? `파손 ${n}장 처리됨` : `파손 ${n}장 복구됨`);
 }
 /* 규격 select에서 "새 규격 추가" 선택 시 입력란 표시 */
 function onSpecChange(prefix) {
