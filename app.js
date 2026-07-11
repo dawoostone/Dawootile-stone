@@ -1464,6 +1464,7 @@ function renderSites() {
     <div class="chips" style="margin-bottom:8px">
       <button class="chip ${view === 'cal' ? '' : 'active'}" onclick="filters.siteView='list';renderSites()"><i class="ti ti-list"></i> 목록</button>
       <button class="chip ${view === 'cal' ? 'active' : ''}" onclick="filters.siteView='cal';renderSites()"><i class="ti ti-calendar"></i> 캘린더</button>
+      <button class="chip" style="margin-left:auto" onclick="downloadSiteStatsXls()"><i class="ti ti-file-spreadsheet"></i> 통계 엑셀</button>
     </div>
     ${view === 'cal' ? staffCalendarHtml(list) : `<div style="font-size:12px;color:var(--t3);margin:2px 0 8px">검색 결과 <b id="sites-count" style="color:var(--t1)">${list.length}건</b></div><div class="site-grid" id="sites-grid">${siteGridHtml(list)}</div>`}`;
 }
@@ -2734,6 +2735,39 @@ ${body}
   a.download = '출고내역_' + todayStr() + '.xls'; document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
   toast('엑셀 다운로드 (' + list.length + '건)');
+}
+/* 시공 통계 엑셀 — 시공팀별/업체별 현장 수 + 비율 + 현장 많은 업체 순위 */
+function downloadSiteStatsXls() {
+  const sites = state.sites || [];
+  const total = sites.length;
+  if (!total) { toast('현장 데이터가 없습니다'); return; }
+  const group = (keyFn) => { const m = {}; sites.forEach(s => { const k = (keyFn(s) || '').trim() || '(미지정)'; m[k] = (m[k] || 0) + 1; }); return Object.entries(m).sort((a, b) => b[1] - a[1]); };
+  const teamRows = group(s => s.team);
+  const clientRows = group(s => s.client);
+  const pct = n => (n / total * 100).toFixed(1) + '%';
+  const TH = (t, w) => `<th style="background:#0F6E56;color:#ffffff;font-weight:bold;border:0.5pt solid #0a4f3e;padding:7px 10px;text-align:center"${w ? ' width="' + w + '"' : ''}>${t}</th>`;
+  const TD = (t, st) => `<td style="border:0.5pt solid #cfd8d4;padding:5px 10px;${st || ''}">${t}</td>`;
+  const sumStyle = 'border:0.5pt solid #cfd8d4;background:#e1f5ee;color:#0a4f3e;font-weight:bold;padding:7px 10px';
+  const section = (title, rows, label) => {
+    const body = rows.map(([nm, n], i) => { const bg = i % 2 ? 'background:#f3f6f4;' : ''; return `<tr>${TD(i + 1, bg + 'text-align:center')}${TD('<b>' + esc(nm) + '</b>', bg)}${TD(n, bg + 'text-align:right')}${TD(pct(n), bg + 'text-align:right')}</tr>`; }).join('');
+    return `<tr><td colspan="4" style="font-size:12pt;font-weight:bold;color:#0F6E56;padding:12px 4px 4px">${title}</td></tr>
+      <tr>${TH('순위', 50)}${TH(label, 200)}${TH('현장 수', 80)}${TH('비율', 80)}</tr>
+      ${body}
+      <tr><td colspan="2" style="${sumStyle};text-align:right">합계</td>${TD(total, sumStyle + ';text-align:right')}${TD('100%', sumStyle + ';text-align:right')}</tr>`;
+  };
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body>
+<table style="border-collapse:collapse;font-family:'맑은 고딕','Malgun Gothic',sans-serif;font-size:10.5pt">
+<tr><td colspan="4" style="font-size:16pt;font-weight:bold;color:#0F6E56;padding:8px 4px 2px">다우세라믹앤석재 · 시공 통계</td></tr>
+<tr><td colspan="4" style="font-size:9pt;color:#777;padding:0 4px 6px">생성일 ${todayStr()}  ·  전체 현장 ${total}건</td></tr>
+${section('■ 시공팀별 현장 수', teamRows, '시공팀')}
+<tr><td colspan="4" style="padding:6px"></td></tr>
+${section('■ 업체별 현장 수 (현장 많은 업체 순)', clientRows, '업체')}
+</table></body></html>`;
+  const blob = new Blob(['﻿' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = '시공통계_' + todayStr() + '.xls'; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
+  toast('시공 통계 엑셀 다운로드');
 }
 /* 출고 내역 수정 — 롯트·패턴 재배정(재고 자동 재계산) + 장수 보정 */
 function openOutEdit(id) {
