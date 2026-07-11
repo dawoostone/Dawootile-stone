@@ -886,6 +886,17 @@ function patternStockCell(name) {
   if (!ps.length) return '<span style="color:var(--t3)">-</span>';
   return ps.map(p => `<div style="white-space:nowrap">${esc(p.pattern)} <b style="color:${p.remain <= 0 ? 'var(--t3)' : 'var(--gd)'}">${p.remain}</b>장</div>`).join('');
 }
+/* 파손 재고: 입고 비고에 '파손' 포함(+) − 출고 비고에 '파손' 포함(−). 자재명 기준 */
+function damagedStock(name) {
+  if (!name) return 0;
+  const key = _normName(name); let n = 0;
+  state.transactions.forEach(t => {
+    if (_normName(t.itemName) !== key || !/파손/.test(t.note || '')) return;
+    if (t.type === 'in') n += (+t.jang || 0);
+    else if (t.type === 'out') n -= (+t.jang || 0);
+  });
+  return n;
+}
 function patternSelectHtml(name, current) {
   const ps = patternList(name);
   let html = '<option value="">패턴 선택 (선택)</option>';
@@ -1671,6 +1682,7 @@ function stockBaseList() {
   else if (f === 'short') list = list.filter(i => ['부족', '임박'].includes(stockState(i).k));
   else if (f === 'low') list = list.filter(i => ['부족', '없음'].includes(stockState(i).k));
   else if (f === 'ok') list = list.filter(i => stockState(i).k === '정상');
+  else if (f === 'dmg') list = list.filter(i => damagedStock(i.name) > 0);
   const q = (filters.stockSearch || '').trim().toLowerCase();
   if (q) list = list.filter(i => (i.name || '').toLowerCase().includes(q) || (i.spec || '').toLowerCase().includes(q) || (i.vendor || '').toLowerCase().includes(q));
   return list;
@@ -1680,8 +1692,9 @@ function stockRowsHtml(list) {
   return list.map(i => {
     const s = stockState(i);
     const held = heldJangFor(i.name), avail = (+i.jang || 0) - held;
+    const dmg = damagedStock(i.name);
     return `<tr onclick="openItemForm('${i.id}')">
-      <td><b>${esc(i.name)}</b><div style="font-size:11px;color:var(--t3)">${esc(i.vendor || '')}</div></td>
+      <td><b>${esc(i.name)}</b>${dmg > 0 ? ` <span style="display:inline-block;font-size:10px;font-weight:700;color:#b42318;background:#fef3f2;border:1px solid #fecdca;border-radius:8px;padding:1px 6px">파손 ${dmg}</span>` : ''}<div style="font-size:11px;color:var(--t3)">${esc(i.vendor || '')}</div></td>
       <td>${esc(i.spec || '-')}</td>
       <td style="font-size:11px">${patternStockCell(i.name)}</td>
       <td><b>${(+i.jang || 0)}</b>장${i.safeJang ? `<div style="font-size:10px;color:var(--t3)">안전 ${i.safeJang}</div>` : ''}</td>
@@ -1766,7 +1779,7 @@ function renderStock() {
       <input id="stock-search" placeholder="품명·규격·공급처 검색" value="${esc(filters.stockSearch || '')}" oninput="filterStockTable()" autocomplete="off">
       ${filters.stockSearch ? `<button class="search-x" onclick="el('stock-search').value='';filterStockTable()"><i class="ti ti-x"></i></button>` : ''}
     </div>
-    <div class="chips">${chipS('all', '전체', f)}${chipS('none', '없음', f)}${chipS('short', '부족', f)}${chipS('ok', '정상', f)}</div>
+    <div class="chips">${chipS('all', '전체', f)}${chipS('none', '없음', f)}${chipS('short', '부족', f)}${chipS('ok', '정상', f)}${chipS('dmg', '파손', f)}</div>
     ${f === 'low' ? `<div class="banner warn"><i class="ti ti-alert-triangle"></i><span><b>입고가 필요한 자재</b>만 모았습니다. 자재명과 현재 장수를 확인하세요.</span></div>` : ''}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:12px;color:var(--t3)">검색 결과 <b id="stock-count" style="color:var(--t1)">${list.length}종</b></span><button class="btn btn-sm" onclick="stockExportExcel()"><i class="ti ti-download"></i>재고 엑셀</button></div>
     <div class="tbl-wrap" style="max-height:calc(100vh - 360px);min-height:220px;overflow:auto">
@@ -1804,6 +1817,7 @@ function stockExportExcel() {
       '규격': it.spec || '',
       '실재고(장)': jang,
       '가용(장)': availJang(it),
+      '파손(장)': (function () { const d = damagedStock(it.name); return d > 0 ? d : ''; })(),
       '헤베(㎡)': +(jang * per).toFixed(2),
       '패턴별(참고)': patText,
       '롯트별(참고)': lotText,
