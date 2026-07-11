@@ -1248,6 +1248,13 @@ function companyNames() {
   (state.clients || []).forEach(c => c.value && s.add(c.value));
   return [...s].sort((a, b) => a.localeCompare(b));
 }
+/* 폼에서 입력한 거래처명이 목록에 없으면 '거래처 관리'에 자동 등록 (현장·출고·홀딩·세면대 공용) */
+async function ensureClient(name) {
+  const v = (name || '').trim();
+  if (!v) return;
+  if ((state.clients || []).some(c => _normName(c.value) === _normName(v))) return;   // 이미 있으면 통과
+  try { await Store.add('clients', { value: v }); } catch (e) { }
+}
 /* 입고 자재 검색 후보: 재고에 등록된 품목명만 */
 function invNames() {
   return [...new Set(state.inventory.map(i => i.name).filter(Boolean))].sort((a, b) => a.localeCompare(b));
@@ -1714,6 +1721,7 @@ async function submitSite(id) {
     factory, team,
     matPending, note: el('s-note').value.trim(), crewNote: (el('s-crewnote') && el('s-crewnote').value || '').trim(), updatedBy: me.name
   };
+  await ensureClient(client);   // 신규 거래처 자동 등록
   if (id) {
     const s = state.sites.find(x => x.id === id);
     const hist = Object.assign({}, s.history || {}); if (!hist[obj.stage]) hist[obj.stage] = todayStr();
@@ -3047,6 +3055,7 @@ async function submitBasin(id) {
   };
   if (stage === '완료') obj.shipDate = (cur && cur.shipDate) ? cur.shipDate : todayStr();
   else obj.shipDate = '';
+  await ensureClient(vendor);   // 신규 거래처 자동 등록
   if (id) await Store.update('basins', id, obj);
   else await Store.add('basins', obj);
   closeModal();
@@ -3366,6 +3375,7 @@ async function submitShip() {
   if (!dest) { toast('출고지(공장/현장)를 입력하세요'); return; }
   if (_busy) return; _busy = true;
   try {
+    await ensureClient(targetName);   // 신규 거래처 자동 등록
     const shipId = 'S' + Date.now();
     const note = el('o-note').value.trim();
     let totalJang = 0; const zeroed = [];
@@ -3699,6 +3709,7 @@ async function submitHold(id) {
   const fits = items.every(it => availExcl(it.materialName) >= it.jang);
   const status = fits ? '홀딩' : '예정';
   const obj = { vendor, items, materialName: items[0].materialName, jang: items[0].jang, hebe: items[0].hebe, lot: items[0].lot, useDate: el('h-useDate').value, note: el('h-note').value.trim(), status, forSiteId: siteId, forSiteName: siteName, by: me.name };
+  await ensureClient(vendor);   // 신규 거래처 자동 등록
   if (id) await Store.update('holdings', id, obj); else await Store.add('holdings', obj);
   toast(status === '예정' ? '예정홀딩으로 등록 — 입고되면 자동 전환' : (id ? '저장됨' : '홀딩 등록 완료')); closeModal();
 }
