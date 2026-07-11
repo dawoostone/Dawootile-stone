@@ -921,6 +921,16 @@ function depotStock(name) {
     .sort((a, b) => b.remain - a.remain);
 }
 function depotOptions() { return [...new Set((state.inventory || []).map(i => i.depot).filter(Boolean).concat((state.transactions || []).map(t => (t.depot || '').trim()).filter(Boolean)))].sort(); }
+/* 자재행 창고 선택칸 옵션 — 창고 2곳 이상(창고별 재고 있는 자재)만 목록 표시, 아니면 빈 문자열 반환(칸 숨김) */
+function depotSelectHtml(name, current) {
+  const ds = depotStock(name).filter(d => d.remain > 0);
+  if (ds.length <= 1) return '';   // 창고 한 곳뿐 → 선택 불필요
+  const cur = (current || '').trim();
+  let html = '<option value="">창고 선택 (창고별 재고)</option>';
+  ds.forEach(d => { html += `<option value="${esc(d.depot)}" ${cur === d.depot ? 'selected' : ''}>${esc(d.depot)} · 잔여 ${d.remain}장</option>`; });
+  if (cur && !ds.some(d => d.depot === cur)) html += `<option value="${esc(cur)}" selected>${esc(cur)}</option>`;
+  return html;
+}
 /* 파손 재고: 입고 비고에 '파손' 포함(+) − 출고 비고에 '파손' 포함(−). 자재명 기준 */
 function damagedStock(name) {
   if (!name) return 0;
@@ -994,7 +1004,7 @@ async function activatePlannedHolds(name, physJang) {
   return count;
 }
 /* ===== 자재 여러 줄 입력 컴포넌트 (현장/홀딩 공용) ===== */
-let _mrowN = 0, _mrowPattern = false;   // _mrowPattern: 홀딩 폼에서 true → 패턴 선택칸 표시
+let _mrowN = 0, _mrowPattern = false, _mrowDepot = false;   // _mrowPattern: 패턴 선택칸 표시 / _mrowDepot: 출고 폼에서 true → 창고별 재고 선택칸 표시
 function matRowHtml(d, qtyPh) {
   d = d || {}; const i = _mrowN++; const nm = d.name || d.materialName || '';
   const selStyle = 'width:100%;margin-top:6px;font-size:14px;padding:8px;border:1.5px solid var(--bd2);border-radius:9px';
@@ -1006,6 +1016,7 @@ function matRowHtml(d, qtyPh) {
     </div>
     <select class="m-lot" style="${selStyle}">${lotSelectHtml(nm, d.lot || '')}</select>
     ${_mrowPattern ? `<select class="m-pattern" style="${selStyle}">${patternSelectHtml(nm, d.pattern || '')}</select>` : ''}
+    ${_mrowDepot ? `<select class="m-depot" style="${selStyle};display:none"></select>` : ''}
     <div class="m-info" style="font-size:11px;color:var(--t3);margin-top:4px"></div>
   </div>`;
 }
@@ -1026,6 +1037,8 @@ function mrowLotRefresh() {
     if (lotSel) { const cur = lotSel.value; lotSel.innerHTML = lotSelectHtml(mat, cur); }
     const patSel = row.querySelector('select.m-pattern');
     if (patSel) { const cur = patSel.value; patSel.innerHTML = patternSelectHtml(mat, cur); }
+    const depSel = row.querySelector('select.m-depot');
+    if (depSel) { const cur = depSel.value; const h = depotSelectHtml(mat, cur); depSel.innerHTML = h; depSel.style.display = h ? '' : 'none'; }
     const info = row.querySelector('.m-info');
     if (info) {
       const it = state.inventory.find(x => x.name === mat); const q = parseFloat(row.querySelector('.m-qty').value) || 0;
@@ -1041,7 +1054,9 @@ function collectMaterialRows() {
     const lot = (row.querySelector('select.m-lot').value || '').trim();
     const patSel = row.querySelector('select.m-pattern');
     const pattern = patSel ? (patSel.value || '').trim() : '';
-    if (name && qty > 0) rows.push({ name: name, qty: qty, lot: lot, pattern: pattern });
+    const depSel = row.querySelector('select.m-depot');
+    const depot = depSel ? (depSel.value || '').trim() : '';
+    if (name && qty > 0) rows.push({ name: name, qty: qty, lot: lot, pattern: pattern, depot: depot });
   });
   return rows;
 }
@@ -1577,7 +1592,7 @@ async function delSite(id) {
 function openSiteForm(id, pre) {
   const s = id ? state.sites.find(x => x.id === id) : null;
   const v = s || Object.assign({ manager: me.name, orderType: '실측', stage: '접수', measureNeeded: true }, pre || {});
-  _mrowPattern = false;
+  _mrowPattern = false; _mrowDepot = false;
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-building-community"></i>${s ? '현장 수정' : '현장 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
@@ -3234,7 +3249,7 @@ function printBasinSlip(id) {
   setTimeout(() => { try { w.print(); } catch (e) { } }, 350);
 }
 function openShipForm(pre) {
-  _mrowPattern = true;
+  _mrowPattern = true; _mrowDepot = true;
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-logout"></i>출고 등록</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
@@ -3319,7 +3334,7 @@ async function submitShip() {
       const newJang = Math.max(0, oldJang - jang);
       const hebe = it ? +(jang * (+it.hebePerJang || 0)).toFixed(2) : 0;
       const lot = (r.lot && r.lot.trim()) ? r.lot.trim() : soleLot(material);   // 롯트 미지정인데 남은 롯트가 하나면 자동 연동
-      const oDepot = (el('o-depot') && el('o-depot').value || '').trim();   // 창고 여러 곳인 자재만 지정
+      const oDepot = (r.depot && r.depot.trim()) ? r.depot.trim() : (el('o-depot') && el('o-depot').value || '').trim();   // 행별 창고 우선(창고별 재고), 없으면 폼 상단 창고
       if (it) await Store.update('inventory', it.id, { jang: newJang });
       await Store.add('transactions', { type: 'out', shipId, itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot, pattern: r.pattern, depot: oDepot, dest, factory: dest, target: '', targetName, date, note, by: me.name });
       totalJang += jang;
@@ -3572,7 +3587,7 @@ function renderHold() {
 }
 function openHoldForm(id, pre) {
   const h = id ? state.holdings.find(x => x.id === id) : null; const v = h || Object.assign({}, pre || {});
-  _mrowPattern = true;
+  _mrowPattern = true; _mrowDepot = false;
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-lock-plus"></i>${h ? '홀딩 수정' : '홀딩 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
