@@ -1795,15 +1795,17 @@ function stockExportExcel() {
     const jang = +it.jang || 0;
     if (jang === 0) return;   // 재고 0 제외
     const per = +it.hebePerJang || 0;
-    // 롯트별 입고 잔여(참고). 출고에 롯트 미기입분은 '(미지정)'으로 집계됨
+    // 롯트별·패턴별 잔여(참고). 출고에 미기입분은 '(미지정)'으로 집계됨
     const lotText = lotStock(it.name).filter(l => l.remain !== 0)
       .map(l => `${l.lot} ${l.remain}장`).join(' · ');
+    const patText = patternStock(it.name).map(p => `${p.pattern} ${p.remain}장`).join(' · ');
     rows.push({
       '자재명': it.name || '',
       '규격': it.spec || '',
       '실재고(장)': jang,
       '가용(장)': availJang(it),
       '헤베(㎡)': +(jang * per).toFixed(2),
+      '패턴별(참고)': patText,
       '롯트별(참고)': lotText,
       '창고': it.depot || '',
       '공급처': it.vendor || ''
