@@ -568,7 +568,7 @@ function custStockBody(list) {
     const dot = inStock ? 'background:#1D9E75;--pc:rgba(29,158,117,.6)' : 'background:#E23B3B;--pc:rgba(226,59,59,.75)';
     const lbl = inStock ? '<span style="font-size:11.5px;font-weight:600;color:#0F6E56">있음</span>' : '<span style="font-size:11.5px;font-weight:600;color:#A32D2D">품절</span>';
     let restock = '';
-    if (!inStock && i.restockDate) { const p = String(i.restockDate).split('-'); if (p.length === 3) restock = `<div style="font-size:11px;color:var(--amber-t);margin-top:4px;font-weight:600"><i class="ti ti-truck-delivery" style="font-size:12px;vertical-align:-1px"></i> 재입고 예정 ${+p[1]}/${+p[2]}</div>`; }
+    if (i.restockDate) { const p = String(i.restockDate).split('-'); if (p.length === 3) { const rcol = inStock ? '#2f6fed' : 'var(--amber-t)'; restock = `<div style="font-size:11px;color:${rcol};margin-top:3px;font-weight:600"><i class="ti ti-truck-delivery" style="font-size:12px;vertical-align:-1px"></i> 재입고 예정 ${+p[1]}/${+p[2]}</div>`; } }
     return `<tr>
       <td><div style="font-weight:600;color:var(--t1);word-break:keep-all">${esc(i.name)}</div>${i.spec ? `<div style="color:var(--t3);font-size:11px;margin-top:2px">${esc(i.spec)}</div>` : ''}${restock}</td>
       <td style="text-align:right;white-space:nowrap"><div style="font-weight:700;color:${inStock ? 'var(--t1)' : 'var(--t3)'}">${jang}장</div><div style="color:var(--t3);font-size:11px">${hebe.toFixed(1)}㎡</div></td>
@@ -641,16 +641,19 @@ function renderCustomerStock() {
       <input id="cust-search" placeholder="자재명·규격 검색" value="${esc(filters.custSearch || '')}" oninput="filterCustStock()" autocomplete="off" lang="ko">
       <button class="search-x" id="cust-search-x" style="${(filters.custSearch || '').trim() ? '' : 'display:none'}" onclick="clearCustStock()"><i class="ti ti-x"></i></button>
     </div>
-    <div id="cust-body">${custStockBody(list)}</div>`;
+    <div id="cust-body">${custStockBody(list)}</div>
+    ${state.inventory.some(i => i.restockDate) ? `<div style="font-size:11px;color:var(--t3);margin-top:8px;line-height:1.5;background:var(--soft);border-radius:9px;padding:9px 11px"><i class="ti ti-info-circle" style="font-size:12px;vertical-align:-1px"></i> 재입고 일정은 통관사·선사 스케줄에 따라 변동될 수 있습니다.</div>` : ''}`;
   const holdsSec = `<div style="font-size:12px;color:var(--t3);margin:2px 0 8px">우리 업체 홀딩 내역 · 총 ${myHolds.length}건</div>${custHoldsBody()}`;
   el('pg-stock').innerHTML = `
+    <div style="max-width:680px;margin:0 auto">
     <div class="ph"><div><h2><i class="ti ti-packages"></i>${esc(me.name)}</h2><p><span class="live-dot" style="background:#1D9E75;--pc:rgba(29,158,117,.6);width:7px;height:7px;display:inline-block;vertical-align:middle;margin-right:5px"></span>실시간 조회</p></div>
       <button class="btn btn-sm" onclick="logout()"><i class="ti ti-logout"></i>로그아웃</button></div>
     <div class="chips" style="margin-bottom:10px">
       <button class="chip ${tab === 'stock' ? 'active' : ''}" onclick="goCustTab('stock')"><i class="ti ti-packages"></i> 재고 조회</button>
       <button class="chip ${tab === 'holds' ? 'active' : ''}" onclick="goCustTab('holds')"><i class="ti ti-lock"></i> 내 홀딩${myHolds.length ? ` (${myHolds.length})` : ''}</button>
     </div>
-    ${tab === 'stock' ? stockSec : holdsSec}`;
+    ${tab === 'stock' ? stockSec : holdsSec}
+    </div>`;
 }
 
 /* ---------- 시공팀(crew) 시공 스케줄 전용 화면 (읽기 전용 · 자기 팀 현장만) ---------- */
