@@ -603,21 +603,34 @@ function custMyHolds() {
   return (state.holdings || []).filter(h => h.status !== '해제' && _normName(h.vendor) === _normName(me.name))
     .sort((a, b) => (a.useDate || '9999-99-99').localeCompare(b.useDate || '9999-99-99'));
 }
-function custHoldsBody() {
-  const list = custMyHolds();
-  if (!list.length) return `<div class="empty"><i class="ti ti-lock-off"></i>등록된 홀딩이 없습니다</div>`;
-  return list.map(h => {
-    const st = holdStatusText(h);
-    const cls = st === '출고완료' ? 'p-done' : (st === '예정' ? 'p-wait' : 'p-hold');
-    const items = holdItems(h).map(it => `<div style="color:var(--t2);font-size:12.5px;margin-top:2px;word-break:keep-all">· <b style="color:var(--t1)">${esc(it.materialName || '-')}</b> ${+it.jang || 0}장${it.hebe ? ` (${(+it.hebe).toFixed(1)}㎡)` : ''}${it.lot ? ` · 롯트 ${esc(it.lot)}` : ''}</div>`).join('');
-    return `<div class="card" style="margin-bottom:9px;padding:12px 14px">
+/* 고객 지난 홀딩 — 기간 경과 등으로 해제된 것 */
+function custMyPastHolds() {
+  return (state.holdings || []).filter(h => h.status === '해제' && _normName(h.vendor) === _normName(me.name))
+    .sort((a, b) => (b.useDate || '0000-00-00').localeCompare(a.useDate || '0000-00-00'));
+}
+function custHoldCard(h, isPast) {
+  const st = isPast ? '지난 · 해제' : holdStatusText(h);
+  const cls = holdStatusText(h) === '출고완료' ? 'p-done' : (holdStatusText(h) === '예정' ? 'p-wait' : 'p-hold');
+  const items = holdItems(h).map(it => `<div style="color:var(--t2);font-size:12.5px;margin-top:2px;word-break:keep-all">· <b style="color:${isPast ? 'var(--t2)' : 'var(--t1)'}">${esc(it.materialName || '-')}</b> ${+it.jang || 0}장${it.hebe ? ` (${(+it.hebe).toFixed(1)}㎡)` : ''}${it.lot ? ` · 롯트 ${esc(it.lot)}` : ''}</div>`).join('');
+  return `<div class="card" style="margin-bottom:9px;padding:12px 14px${isPast ? ';opacity:.85;background:var(--soft)' : ''}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
         <div style="font-size:12.5px;color:var(--t3)"><i class="ti ti-calendar" style="font-size:12px"></i> ${h.useDate ? '사용예정 ' + esc(h.useDate) : '예정일 미정'}</div>
-        <span class="pill ${cls}" style="flex:none">${esc(st)}</span></div>
+        ${isPast ? `<span class="pill" style="flex:none;background:var(--bd2);color:var(--t3)">${esc(st)}</span>` : `<span class="pill ${cls}" style="flex:none">${esc(st)}</span>`}</div>
       <div style="margin-top:6px">${items}</div>
       ${h.note ? `<div style="margin-top:7px;padding-top:7px;border-top:1px dashed var(--bd2);font-size:12.5px;color:var(--t2);word-break:break-all"><i class="ti ti-note" style="font-size:12px;color:var(--t3)"></i> ${esc(h.note)}</div>` : ''}
     </div>`;
-  }).join('');
+}
+function custHoldsBody() {
+  const list = custMyHolds();
+  const past = custMyPastHolds();
+  const note = `<div style="font-size:12px;color:var(--t2);margin-top:10px;line-height:1.55;background:var(--soft);border-radius:10px;padding:11px 13px"><i class="ti ti-info-circle" style="font-size:13px;color:var(--blue)"></i> 지난 홀딩의 <b>활성화(재홀딩)·기간 연장</b>이 필요하시면 담당자에게 <b>직접 문의</b>해 주세요.</div>`;
+  if (!list.length && !past.length) return `<div class="empty"><i class="ti ti-lock-off"></i>등록된 홀딩이 없습니다</div>${note}`;
+  let html = '';
+  if (list.length) html += list.map(h => custHoldCard(h, false)).join('');
+  else html += `<div style="font-size:12.5px;color:var(--t3);padding:6px 2px 8px">진행 중인 홀딩이 없습니다</div>`;
+  if (past.length) html += `<div style="font-size:12px;font-weight:600;color:var(--t3);margin:12px 2px 8px;padding-top:10px;border-top:0.5px solid var(--bd)"><i class="ti ti-history" style="font-size:13px"></i> 지난 내역 (${past.length}) <span style="font-weight:400">· 기간 경과로 해제됨</span></div>` + past.map(h => custHoldCard(h, true)).join('');
+  html += note;
+  return html;
 }
 function goCustTab(v) { filters.custTab = v; renderCustomerStock(); }
 /* 고객 로그인 시: 재고(읽기 허용) + 본인 업체 홀딩만 구독. 나머지 컬렉션은 구독하지 않음(권한 없음·충돌 방지) */
