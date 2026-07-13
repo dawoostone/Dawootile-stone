@@ -4062,11 +4062,39 @@ function openMemberForm(id) {
       <div class="fld"><label>권한</label><select id="m-role"><option value="staff" ${v.role === 'staff' ? 'selected' : ''}>직원</option><option value="admin" ${v.role === 'admin' ? 'selected' : ''}>관리자</option><option value="customer" ${v.role === 'customer' ? 'selected' : ''}>고객(거래처) · 재고조회만</option><option value="crew" ${v.role === 'crew' ? 'selected' : ''}>시공팀 · 시공 스케줄만</option></select></div>
       <div class="fld full"><label>로그인 이메일<span class="req">*</span></label><input id="m-email" type="email" value="${esc(v.email || '')}" autocapitalize="none" spellcheck="false" placeholder="예) hong@dawoo.com"></div>
     </div>
-    <div class="banner info" style="margin:0 0 12px"><i class="ti ti-info-circle"></i>이 이메일로 Firebase 콘솔에서 계정(비밀번호)을 만들어야 로그인됩니다. 비밀번호는 콘솔에서 관리합니다.</div>
+    ${m && v.email ? `<div class="fld full" style="margin-bottom:12px"><label><i class="ti ti-key" style="font-size:13px;color:var(--blue)"></i> 비밀번호 변경 <span style="color:var(--t3);font-weight:500">— 메일 없이 바로 적용(가메일 계정 가능)</span></label>
+      <div style="display:flex;gap:8px">
+        <input id="m-newpw" type="text" autocapitalize="none" spellcheck="false" placeholder="새 비밀번호 (6자 이상)" style="flex:1">
+        <button class="btn btn-pri btn-sm" type="button" style="flex:none" onclick="adminSetPw('${esc(v.email)}')"><i class="ti ti-check"></i>변경</button>
+      </div></div>` : `<div class="banner info" style="margin:0 0 12px"><i class="ti ti-info-circle"></i>이 이메일로 Firebase 콘솔에서 계정(비밀번호)을 먼저 만들어야 로그인됩니다. 만든 뒤엔 여기서 비밀번호를 바로 바꿀 수 있습니다.</div>`}
     <div class="frm-foot">
       ${m && state.members.length > 1 ? `<button class="btn btn-danger" onclick="delMember('${id}')"><i class="ti ti-trash"></i></button>` : ''}
       <button class="btn btn-pri" style="flex:1" onclick="submitMember('${id || ''}')"><i class="ti ti-check"></i>저장</button>
     </div>`);
+}
+/* 관리자 전용: 계정 비밀번호 직접 변경 (가메일 계정용 · 메일 불필요) */
+async function adminSetPw(email) {
+  if (!isAdmin()) { toast('관리자만 가능합니다'); return; }
+  if (!CLOUD || !auth || !auth.currentUser) { toast('클라우드 모드에서만 가능합니다'); return; }
+  email = (email || '').trim().toLowerCase();
+  const pw = (el('m-newpw') && el('m-newpw').value) || '';
+  if (!email) { toast('이 계정의 로그인 이메일이 없습니다'); return; }
+  if (pw.length < 6) { toast('비밀번호는 6자 이상 입력하세요'); return; }
+  if (!confirm(email + '\n이 계정의 비밀번호를 변경할까요?')) return;
+  try {
+    const token = await auth.currentUser.getIdToken();
+    const r = await fetch(PUSH_FN + '?action=setpw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ email: email, password: pw })
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok) { toast('비밀번호가 변경되었습니다 ✓'); if (el('m-newpw')) el('m-newpw').value = ''; }
+    else if (r.status === 403) { toast('권한 없음 (관리자만)'); }
+    else if (j.error === 'invalid input') { toast('이메일/비밀번호를 확인하세요 (6자 이상)'); }
+    else if (r.status === 400 || (j.error && /EMAIL_NOT_FOUND|no user/i.test(j.error))) { toast('그 이메일로 만든 계정이 없습니다 (콘솔에서 먼저 생성)'); }
+    else { toast('변경 실패: ' + (j.error || r.status)); }
+  } catch (e) { toast('변경 실패: ' + (e && e.message || '')); }
 }
 async function submitMember(id) {
   const name = el('m-name').value.trim();
