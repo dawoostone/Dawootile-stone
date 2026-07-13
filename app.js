@@ -623,12 +623,15 @@ function custHoldCard(h, isPast) {
 function custHoldsBody() {
   const list = custMyHolds();
   const past = custMyPastHolds();
-  const note = `<div style="font-size:12px;color:var(--t2);margin-top:10px;line-height:1.55;background:var(--soft);border-radius:10px;padding:11px 13px"><i class="ti ti-info-circle" style="font-size:13px;color:var(--blue)"></i> 지난 홀딩의 <b>활성화(재홀딩)·기간 연장</b>이 필요하시면 담당자에게 <b>직접 문의</b>해 주세요.</div>`;
+  const note = `<div style="font-size:12px;color:var(--t2);margin-top:12px;line-height:1.55;background:var(--soft);border-radius:10px;padding:11px 13px"><i class="ti ti-info-circle" style="font-size:13px;color:var(--blue)"></i> 지난 홀딩의 <b>활성화(재홀딩)·기간 연장</b>이 필요하시면 담당자에게 <b>직접 문의</b>해 주세요.</div>`;
   if (!list.length && !past.length) return `<div class="empty"><i class="ti ti-lock-off"></i>등록된 홀딩이 없습니다</div>${note}`;
-  let html = '';
-  if (list.length) html += list.map(h => custHoldCard(h, false)).join('');
-  else html += `<div style="font-size:12.5px;color:var(--t3);padding:6px 2px 8px">진행 중인 홀딩이 없습니다</div>`;
-  if (past.length) html += `<div style="font-size:12px;font-weight:600;color:var(--t3);margin:12px 2px 8px;padding-top:10px;border-top:0.5px solid var(--bd)"><i class="ti ti-history" style="font-size:13px"></i> 지난 내역 (${past.length}) <span style="font-weight:400">· 기간 경과로 해제됨</span></div>` + past.map(h => custHoldCard(h, true)).join('');
+  const box = (inner, h) => `<div style="max-height:${h};overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:12px;padding:9px 9px 1px;background:#fff">${inner}</div>`;
+  let html = `<div style="font-size:12px;font-weight:600;color:var(--t2);margin:2px 2px 6px"><i class="ti ti-lock" style="font-size:12px;color:var(--gd)"></i> 진행 중인 홀딩${list.length ? ` (${list.length})` : ''}</div>`;
+  html += box(list.length ? list.map(h => custHoldCard(h, false)).join('') : `<div style="font-size:12.5px;color:var(--t3);padding:12px 4px">진행 중인 홀딩이 없습니다</div>`, '46vh');
+  if (past.length) {
+    html += `<div style="font-size:12px;font-weight:600;color:var(--t3);margin:14px 2px 6px"><i class="ti ti-history" style="font-size:13px"></i> 지난 내역 (${past.length}) <span style="font-weight:400">· 기간 경과로 해제됨</span></div>`;
+    html += box(past.map(h => custHoldCard(h, true)).join(''), '40vh');
+  }
   html += note;
   return html;
 }
