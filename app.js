@@ -687,14 +687,17 @@ function renderCustomerStock() {
   const reqSec = `
     <div class="card" style="padding:13px 15px;margin-bottom:12px">
       <div style="font-weight:600;font-size:14px;margin-bottom:10px"><i class="ti ti-lock-plus" style="color:var(--blue)"></i> 홀딩 요청 보내기</div>
-      <div class="fld" style="margin-bottom:8px"><label style="font-size:12px;color:var(--t2)">자재명</label>${searchBox('creq-mat', '자재명 검색·선택', '', 'invNames', '')}</div>
+      <div class="fld" style="margin-bottom:8px"><label style="font-size:12px;color:var(--t2)">자재명 <span style="color:var(--red-t)">*</span></label>${searchBox('creq-mat', '자재명 검색·선택', '', 'invNames', '')}</div>
       <div style="display:flex;gap:8px;margin-bottom:8px">
-        <div class="fld" style="flex:1"><label style="font-size:12px;color:var(--t2)">장수</label><input id="creq-jang" inputmode="numeric" placeholder="장수" style="width:100%;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px"></div>
-        <div class="fld" style="flex:1.2"><label style="font-size:12px;color:var(--t2)">사용 예정일</label><input type="date" id="creq-usedate" style="width:100%;font-size:14px;padding:8px 10px;border:1.5px solid var(--bd2);border-radius:10px"></div>
+        <div class="fld" style="flex:1"><label style="font-size:12px;color:var(--t2)">장수 <span style="color:var(--red-t)">*</span></label><input id="creq-jang" inputmode="numeric" placeholder="장수" style="width:100%;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px"></div>
+        <div class="fld" style="flex:1.2"><label style="font-size:12px;color:var(--t2)">사용 예정일 <span style="color:var(--red-t)">*</span></label><input type="date" id="creq-usedate" style="width:100%;font-size:14px;padding:8px 10px;border:1.5px solid var(--bd2);border-radius:10px"></div>
       </div>
-      <div class="fld" style="margin-bottom:10px"><label style="font-size:12px;color:var(--t2)">현장 · 담당자 (메모)</label><input id="creq-note" lang="ko" placeholder="예: ○○현장 · 김과장" style="width:100%;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px"></div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <div class="fld" style="flex:1"><label style="font-size:12px;color:var(--t2)">현장명 <span style="color:var(--red-t)">*</span></label><input id="creq-site" lang="ko" placeholder="예: ○○현장" style="width:100%;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px"></div>
+        <div class="fld" style="flex:1"><label style="font-size:12px;color:var(--t2)">담당자명 <span style="color:var(--red-t)">*</span></label><input id="creq-manager" lang="ko" placeholder="예: 김과장" style="width:100%;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px"></div>
+      </div>
       <button class="btn btn-pri btn-block" onclick="submitHoldReq()"><i class="ti ti-send"></i> 요청 보내기</button>
-      <div style="font-size:11px;color:var(--t3);margin-top:8px;line-height:1.5"><i class="ti ti-info-circle" style="font-size:12px"></i> 요청을 보내면 담당자에게 알림이 가고, 확인 후 확정됩니다. 아래에서 상태를 확인하세요.</div>
+      <div style="font-size:11px;color:var(--t3);margin-top:8px;line-height:1.5"><i class="ti ti-info-circle" style="font-size:12px"></i> 모든 항목은 필수입니다. 요청을 보내면 담당자에게 알림이 가고, 확인 후 확정됩니다.</div>
     </div>
     <div style="font-size:12px;color:var(--t3);margin:2px 0 8px">내 요청 내역 · 총 ${myReqs.length}건${reqPending ? ` · 대기 ${reqPending}` : ''}</div>
     ${custReqBody(myReqs)}`;
@@ -730,20 +733,27 @@ function custReqBody(list) {
 async function submitHoldReq() {
   const mat = (el('creq-mat') && el('creq-mat').value || '').trim();
   const jang = parseFloat(el('creq-jang') && el('creq-jang').value) || 0;
+  const useDate = el('creq-usedate') ? el('creq-usedate').value : '';
+  const site = (el('creq-site') && el('creq-site').value || '').trim();
+  const manager = (el('creq-manager') && el('creq-manager').value || '').trim();
   if (!mat) { toast('자재를 선택하세요'); return; }
   if (jang <= 0) { toast('장수를 입력하세요'); return; }
-  const useDate = el('creq-usedate') ? el('creq-usedate').value : '';
-  const note = (el('creq-note') && el('creq-note').value || '').trim();
+  if (!useDate) { toast('사용 예정일을 선택하세요'); return; }
+  if (!site) { toast('현장명을 입력하세요'); return; }
+  if (!manager) { toast('담당자명을 입력하세요'); return; }
+  const note = '현장 ' + site + ' · 담당 ' + manager;
   if (_busy) return; _busy = true;
   try {
     const it = state.inventory.find(i => _normName(i.name) === _normName(mat));
     const hebe = it ? +(jang * (+it.hebePerJang || 0)).toFixed(2) : 0;
-    await Store.add('holdRequests', { vendor: me.name, items: [{ materialName: mat, jang: jang, hebe: hebe }], useDate: useDate, note: note, status: '대기', createdAt: Date.now(), by: me.name });
-    notifyHoldReq(mat + ' ' + jang + '장');
+    await Store.add('holdRequests', { vendor: me.name, items: [{ materialName: mat, jang: jang, hebe: hebe }], useDate: useDate, site: site, manager: manager, note: note, status: '대기', createdAt: Date.now(), by: me.name });
+    notifyHoldReq(mat + ' ' + jang + '장 · ' + site);
     toast('홀딩 요청을 보냈습니다 ✓');
     if (el('creq-mat')) el('creq-mat').value = '';
     if (el('creq-jang')) el('creq-jang').value = '';
-    if (el('creq-note')) el('creq-note').value = '';
+    if (el('creq-usedate')) el('creq-usedate').value = '';
+    if (el('creq-site')) el('creq-site').value = '';
+    if (el('creq-manager')) el('creq-manager').value = '';
   } catch (e) { toast('요청 전송 실패 — 잠시 후 다시 시도하세요'); } finally { _busy = false; }
 }
 
