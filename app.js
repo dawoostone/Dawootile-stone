@@ -29,7 +29,7 @@ function prefillEmail() {
 }
 function cref(name) { return db.collection('teams').doc(TEAM).collection(name); }
 
-const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients', 'issues', 'restocks', 'basins'];
+const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients', 'issues', 'restocks', 'basins', 'holdRequests'];
 
 // 로컬(미리보기) 모드용 - 같은 기기의 다른 탭끼리 실시간 반영
 const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('dws') : null;
@@ -459,6 +459,18 @@ async function notifyStockOut(name) {
     });
   } catch (e) { }
 }
+/* 고객 홀딩 요청 → 전 직원 즉시 푸시 (Cloud Function 'holdreq' 액션) */
+async function notifyHoldReq(summary) {
+  try {
+    if (!CLOUD || !auth || !auth.currentUser) return;
+    const token = await auth.currentUser.getIdToken();
+    await fetch(PUSH_FN + '?action=holdreq', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ vendor: (me && me.name) || '', summary: summary || '' })
+    });
+  } catch (e) { }
+}
 let _pushReg = null, _pushMsg = null, _onMsgBound = false;
 function pushSupported() {
   return CLOUD && ('serviceWorker' in navigator) && ('Notification' in window) && typeof firebase !== 'undefined' && !!firebase.messaging;
@@ -618,6 +630,16 @@ function startCustomerSubs() {
     }, err => console.warn('cust inv', err));
   } catch (e) { console.warn(e); }
   startCustomerHoldings();
+  startCustomerHoldReqs();
+}
+function startCustomerHoldReqs() {
+  if (!CLOUD || !me || me.role !== 'customer' || !me.name) return;
+  try {
+    cref('holdRequests').where('vendor', '==', me.name).onSnapshot(snap => {
+      state.holdRequests = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+      if (me && me.role === 'customer' && (filters.custTab || 'stock') === 'req') renderCustomerStock();
+    }, err => console.warn('cust holdreq', err));
+  } catch (e) { console.warn(e); }
 }
 function startCustomerHoldings() {
   if (!CLOUD || !me || me.role !== 'customer' || !me.name) return;
@@ -644,6 +666,22 @@ function renderCustomerStock() {
     <div id="cust-body">${custStockBody(list)}</div>
     ${state.inventory.some(i => i.restockDate) ? `<div style="font-size:11px;color:var(--t3);margin-top:8px;line-height:1.5;background:var(--soft);border-radius:9px;padding:9px 11px"><i class="ti ti-info-circle" style="font-size:12px;vertical-align:-1px"></i> 재입고 일정은 통관사·선사 스케줄에 따라 변동될 수 있습니다.</div>` : ''}`;
   const holdsSec = `<div style="font-size:12px;color:var(--t3);margin:2px 0 8px">우리 업체 홀딩 내역 · 총 ${myHolds.length}건</div>${custHoldsBody()}`;
+  const myReqs = (state.holdRequests || []).slice().sort((a, b) => (+b.createdAt || 0) - (+a.createdAt || 0));
+  const reqPending = myReqs.filter(r => (r.status || '대기') === '대기').length;
+  const reqSec = `
+    <div class="card" style="padding:13px 15px;margin-bottom:12px">
+      <div style="font-weight:600;font-size:14px;margin-bottom:10px"><i class="ti ti-lock-plus" style="color:var(--blue)"></i> 홀딩 요청 보내기</div>
+      <div class="fld" style="margin-bottom:8px"><label style="font-size:12px;color:var(--t2)">자재명</label>${searchBox('creq-mat', '자재명 검색·선택', '', 'invNames', '')}</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <div class="fld" style="flex:1"><label style="font-size:12px;color:var(--t2)">장수</label><input id="creq-jang" inputmode="numeric" placeholder="장수" style="width:100%;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px"></div>
+        <div class="fld" style="flex:1.2"><label style="font-size:12px;color:var(--t2)">사용 예정일</label><input type="date" id="creq-usedate" style="width:100%;font-size:14px;padding:8px 10px;border:1.5px solid var(--bd2);border-radius:10px"></div>
+      </div>
+      <div class="fld" style="margin-bottom:10px"><label style="font-size:12px;color:var(--t2)">현장 · 담당자 (메모)</label><input id="creq-note" lang="ko" placeholder="예: ○○현장 · 김과장" style="width:100%;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px"></div>
+      <button class="btn btn-pri btn-block" onclick="submitHoldReq()"><i class="ti ti-send"></i> 요청 보내기</button>
+      <div style="font-size:11px;color:var(--t3);margin-top:8px;line-height:1.5"><i class="ti ti-info-circle" style="font-size:12px"></i> 요청을 보내면 담당자에게 알림이 가고, 확인 후 확정됩니다. 아래에서 상태를 확인하세요.</div>
+    </div>
+    <div style="font-size:12px;color:var(--t3);margin:2px 0 8px">내 요청 내역 · 총 ${myReqs.length}건${reqPending ? ` · 대기 ${reqPending}` : ''}</div>
+    ${custReqBody(myReqs)}`;
   el('pg-stock').innerHTML = `
     <div style="max-width:680px;margin:0 auto">
     <div class="ph"><div><h2><i class="ti ti-packages"></i>${esc(me.name)}</h2><p><span class="live-dot" style="background:#1D9E75;--pc:rgba(29,158,117,.6);width:7px;height:7px;display:inline-block;vertical-align:middle;margin-right:5px"></span>실시간 조회</p></div>
@@ -651,9 +689,46 @@ function renderCustomerStock() {
     <div class="chips" style="margin-bottom:10px">
       <button class="chip ${tab === 'stock' ? 'active' : ''}" onclick="goCustTab('stock')"><i class="ti ti-packages"></i> 재고 조회</button>
       <button class="chip ${tab === 'holds' ? 'active' : ''}" onclick="goCustTab('holds')"><i class="ti ti-lock"></i> 내 홀딩${myHolds.length ? ` (${myHolds.length})` : ''}</button>
+      <button class="chip ${tab === 'req' ? 'active' : ''}" onclick="goCustTab('req')"><i class="ti ti-lock-plus"></i> 홀딩 요청${reqPending ? ` (${reqPending})` : ''}</button>
     </div>
-    ${tab === 'stock' ? stockSec : holdsSec}
+    ${tab === 'stock' ? stockSec : (tab === 'req' ? reqSec : holdsSec)}
     </div>`;
+}
+/* 고객 본인 홀딩 요청 내역 카드 */
+function custReqBody(list) {
+  if (!list.length) return `<div class="empty"><i class="ti ti-inbox"></i>보낸 요청이 없습니다</div>`;
+  return list.map(r => {
+    const st = r.status || '대기';
+    const col = st === '승인' ? { bg: 'var(--gl2,#e8f7f0)', c: '#0F6E56' } : (st === '취소' ? { bg: 'var(--soft)', c: 'var(--t3)' } : { bg: '#fef3e2', c: '#9a6a12' });
+    const items = (r.items || []).map(it => `<b style="color:var(--t1)">${esc(it.materialName || '-')}</b> ${+it.jang || 0}장${it.hebe ? ` (${(+it.hebe).toFixed(1)}㎡)` : ''}`).join(', ');
+    const when = r.createdAt ? new Date(+r.createdAt).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' }) : '';
+    return `<div class="card" style="margin-bottom:8px;padding:11px 13px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div style="font-size:13.5px;word-break:keep-all">${items}</div>
+        <span style="flex:none;font-size:11px;font-weight:700;background:${col.bg};color:${col.c};border-radius:999px;padding:3px 10px">${esc(st)}</span>
+      </div>
+      <div style="font-size:11.5px;color:var(--t3);margin-top:5px">${r.useDate ? '사용예정 ' + esc(r.useDate) + ' · ' : ''}요청 ${when}${r.note ? ' · ' + esc(r.note) : ''}</div>
+    </div>`;
+  }).join('');
+}
+async function submitHoldReq() {
+  const mat = (el('creq-mat') && el('creq-mat').value || '').trim();
+  const jang = parseFloat(el('creq-jang') && el('creq-jang').value) || 0;
+  if (!mat) { toast('자재를 선택하세요'); return; }
+  if (jang <= 0) { toast('장수를 입력하세요'); return; }
+  const useDate = el('creq-usedate') ? el('creq-usedate').value : '';
+  const note = (el('creq-note') && el('creq-note').value || '').trim();
+  if (_busy) return; _busy = true;
+  try {
+    const it = state.inventory.find(i => _normName(i.name) === _normName(mat));
+    const hebe = it ? +(jang * (+it.hebePerJang || 0)).toFixed(2) : 0;
+    await Store.add('holdRequests', { vendor: me.name, items: [{ materialName: mat, jang: jang, hebe: hebe }], useDate: useDate, note: note, status: '대기', createdAt: Date.now(), by: me.name });
+    notifyHoldReq(mat + ' ' + jang + '장');
+    toast('홀딩 요청을 보냈습니다 ✓');
+    if (el('creq-mat')) el('creq-mat').value = '';
+    if (el('creq-jang')) el('creq-jang').value = '';
+    if (el('creq-note')) el('creq-note').value = '';
+  } catch (e) { toast('요청 전송 실패 — 잠시 후 다시 시도하세요'); } finally { _busy = false; }
 }
 
 /* ---------- 시공팀(crew) 시공 스케줄 전용 화면 (읽기 전용 · 자기 팀 현장만) ---------- */
@@ -1165,6 +1240,8 @@ function buildAlerts() {
   const plannedHolds = state.holdings.filter(h => h.status === '예정');
   const waitQuote = state.sites.filter(s => ['접수', '가견적', '견적'].includes(s.stage));
   const openIssues = state.issues.filter(i => i.status !== '처리완료');
+  const holdReqs = (state.holdRequests || []).filter(r => (r.status || '대기') === '대기');
+  holdReqs.forEach(r => { const items = (r.items || []).map(it => `${it.materialName} ${+it.jang || 0}장`).join(', '); alerts.push({ key: 'holdreq|' + r.id, c: 'a', ic: 'ti-lock-plus', t: `${r.vendor || ''} 홀딩 요청`, s: items + (r.useDate ? ` · 사용 ${r.useDate}` : '') + (r.note ? ` · ${r.note}` : ''), tag: '홀딩요청' }); });
   lowItems.forEach(i => alerts.push({ key: 'low|' + i.name, c: 'r', ic: 'ti-alert-triangle', t: `${i.name} 입고 필요`, s: `가용 ${availJang(i)}장 · 안전재고 ${(+i.safeJang || 0)}장 미만`, tag: '재고부족' }));
   openIssues.forEach(i => alerts.push({ key: 'issue|' + (i.id || i.reason), c: 'r', ic: 'ti-alert-triangle', t: `${i.siteName || '현장'} 이슈 미해결`, s: (i.reason || '').slice(0, 40), tag: '이슈' }));
   plannedHolds.forEach(h => alerts.push({ key: 'plan|' + h.id, c: 'a', ic: 'ti-clock-pause', t: `${h.materialName || '-'} 입고 대기`, s: `${h.vendor || ''} · ${(+h.jang || 0)}장 예약(예정홀딩) · 입고 시 자동 전환`, tag: '예정홀딩' }));
@@ -1173,6 +1250,7 @@ function buildAlerts() {
   waitQuote.forEach(s => alerts.push({ key: 'quote|' + s.id + '|' + s.stage, c: 'a', ic: 'ti-file-invoice', t: `${s.name} 견적 진행 필요`, s: `현재 단계: ${s.stage} · ${s.client || ''}`, tag: s.stage }));
   const _recency = a => {
     const k = a.key || '';
+    if (k.indexOf('holdreq|') === 0) { const x = (state.holdRequests || []).find(r => 'holdreq|' + r.id === k); return x ? +x.createdAt || 0 : 0; }
     if (k.indexOf('low|') === 0) { const it = state.inventory.find(i => 'low|' + i.name === k); return it ? +it.createdAt || 0 : 0; }
     if (k.indexOf('issue|') === 0) { const x = state.issues.find(i => 'issue|' + (i.id || i.reason) === k); return x ? +x.createdAt || 0 : 0; }
     if (k.indexOf('plan|') === 0 || k.indexOf('hold|') === 0) { const x = state.holdings.find(h => k.indexOf('|' + h.id) > -1); return x ? +x.createdAt || 0 : 0; }
@@ -3723,6 +3801,56 @@ function clearHoldSearch() {
   filters.holdSearch = ''; if (el('hold-search')) el('hold-search').value = '';
   filterHold(); const i = el('hold-search'); if (i) i.focus();
 }
+/* 직원용 고객 홀딩 요청 검토 섹션 (홀딩 화면 상단) */
+function staffHoldReqHtml() {
+  const all = (state.holdRequests || []).slice().sort((a, b) => (+b.createdAt || 0) - (+a.createdAt || 0));
+  if (!all.length) return '';
+  const pending = all.filter(r => (r.status || '대기') === '대기');
+  const past = all.filter(r => (r.status || '대기') !== '대기');
+  const showArch = !!filters.holdReqArchive;
+  const rowFn = (r, isPending) => {
+    const items = (r.items || []).map(it => `<b>${esc(it.materialName || '-')}</b> ${+it.jang || 0}장${it.hebe ? ` (${(+it.hebe).toFixed(1)}㎡)` : ''}`).join(', ');
+    const when = r.createdAt ? new Date(+r.createdAt).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' }) : '';
+    const st = r.status || '대기';
+    const badge = st === '승인' ? `<span style="flex:none;font-size:11px;font-weight:700;background:var(--gl2,#e8f7f0);color:#0F6E56;border-radius:999px;padding:3px 10px">승인</span>` : (st === '취소' ? `<span style="flex:none;font-size:11px;font-weight:700;background:var(--soft);color:var(--t3);border-radius:999px;padding:3px 10px">취소</span>` : '');
+    return `<div style="border-top:0.5px solid var(--bd);padding:10px 13px">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+        <div style="min-width:0"><div style="font-size:13.5px;word-break:keep-all"><b style="color:var(--blue)">${esc(r.vendor || '')}</b> · ${items}</div>
+        <div style="font-size:11.5px;color:var(--t3);margin-top:3px">${r.useDate ? '사용예정 ' + esc(r.useDate) + ' · ' : ''}요청 ${when}${r.note ? ' · ' + esc(r.note) : ''}</div></div>
+        ${!isPending ? badge : ''}
+      </div>
+      ${isPending ? `<div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn btn-sm btn-pri" style="flex:1" onclick="approveHoldReq('${r.id}')"><i class="ti ti-check"></i>확인</button>
+        <button class="btn btn-sm" style="flex:1" onclick="prefillHoldFromReq('${r.id}')"><i class="ti ti-lock-plus"></i>홀딩 등록</button>
+        <button class="btn btn-sm btn-danger" style="flex:none" onclick="rejectHoldReq('${r.id}')"><i class="ti ti-x"></i></button>
+      </div>` : ''}
+    </div>`;
+  };
+  const pendHtml = pending.length ? pending.map(r => rowFn(r, true)).join('') : `<div style="padding:12px 13px;font-size:12.5px;color:var(--t3)">대기 중인 요청이 없습니다</div>`;
+  return `<div class="card" style="padding:0;margin-bottom:12px;border:1.5px solid ${pending.length ? '#f0b048' : 'var(--bd)'};overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:11px 13px;background:${pending.length ? '#fef3e2' : 'var(--soft)'}">
+      <div style="font-weight:700;font-size:14px"><i class="ti ti-bell-ringing" style="color:${pending.length ? '#9a6a12' : 'var(--t3)'}"></i> 고객 홀딩 요청${pending.length ? ` <span style="color:#9a6a12">· 대기 ${pending.length}</span>` : ''}</div>
+      ${past.length ? `<button class="btn btn-ghost btn-sm" onclick="filters.holdReqArchive=${showArch ? 'false' : 'true'};renderHold()">${showArch ? '지난 요청 숨기기' : `지난 요청 (${past.length})`}</button>` : ''}
+    </div>
+    ${pendHtml}
+    ${showArch ? past.map(r => rowFn(r, false)).join('') : ''}
+  </div>`;
+}
+async function approveHoldReq(id) {
+  const r = (state.holdRequests || []).find(x => x.id === id); if (!r) return;
+  await Store.update('holdRequests', id, { status: '승인', handledBy: me.name, handledAt: Date.now() });
+  toast('요청을 승인 처리했습니다. 홀딩은 [홀딩 등록]으로 확정하세요.');
+}
+async function rejectHoldReq(id) {
+  const r = (state.holdRequests || []).find(x => x.id === id); if (!r) return;
+  if (!confirm('이 홀딩 요청을 취소(거절)할까요?')) return;
+  await Store.update('holdRequests', id, { status: '취소', handledBy: me.name, handledAt: Date.now() });
+  toast('요청을 취소 처리했습니다');
+}
+function prefillHoldFromReq(id) {
+  const r = (state.holdRequests || []).find(x => x.id === id); if (!r) return;
+  openHoldForm('', { vendor: r.vendor, useDate: r.useDate || '', note: r.note || '', items: (r.items || []).map(it => ({ materialName: it.materialName, jang: it.jang })) });
+}
 function renderHold() {
   const isResv = h => (h.status || '홀딩') === '홀딩';
   const released = state.holdings.filter(h => h.status === '해제');
@@ -3761,6 +3889,7 @@ function renderHold() {
           <button class="btn btn-sm" style="flex:none" onclick="downloadHoldXls()"><i class="ti ti-file-spreadsheet"></i>엑셀</button>
         </div>
       </div>
+      ${staffHoldReqHtml()}
       ${viewBtns}
       ${viewBanner}
       <div id="hold-body">${holdBodyHtml()}</div>
