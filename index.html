@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0F6E56">
@@ -80,7 +80,7 @@ input,select,textarea{font-family:inherit}
 .wrap{max-width:940px;margin:0 auto;padding:15px 14px 8px}
 @media(min-width:760px){ .wrap{padding:20px} }
 
-.botnav{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--bd);display:flex;z-index:40;padding-bottom:env(safe-area-inset-bottom);box-shadow:0 -2px 12px rgba(16,40,33,.06)}
+.botnav{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--bd);display:flex;z-index:40;padding-bottom:max(6px,env(safe-area-inset-bottom));box-shadow:0 -2px 12px rgba(16,40,33,.06)}
 body.cust-mode .botnav,body.cust-mode .fab,body.cust-mode .tb-menu,body.cust-mode .drawer,body.cust-mode .drawer-ov{display:none!important}
 body.cust-mode .wrap{padding-bottom:24px}
 .nav-i{flex:1;padding:9px 2px 8px;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--t3);font-size:10.5px;font-weight:500;position:relative}
