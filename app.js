@@ -3990,12 +3990,33 @@ async function submitHold(id) {
     let held = 0; state.holdings.forEach(h => { if (h.id === id) return; if ((h.status || '홀딩') !== '홀딩') return; holdItems(h).forEach(x => { if (_normName(x.materialName) === _normName(mat)) held += (+x.jang || 0); }); });
     return phys - held;
   }
-  const fits = items.every(it => availExcl(it.materialName) >= it.jang);
-  const status = fits ? '홀딩' : '예정';
-  const obj = { vendor, items, materialName: items[0].materialName, jang: items[0].jang, hebe: items[0].hebe, lot: items[0].lot, useDate: el('h-useDate').value, note: el('h-note').value.trim(), status, forSiteId: siteId, forSiteName: siteName, by: me.name };
+  const useDate = el('h-useDate').value, note = el('h-note').value.trim();
+  const mkObj = (its, status) => ({ vendor, items: its, materialName: its[0].materialName, jang: its[0].jang, hebe: its[0].hebe, lot: its[0].lot, useDate, note, status, forSiteId: siteId, forSiteName: siteName, by: me.name });
   await ensureClient(vendor);   // 신규 거래처 자동 등록
-  if (id) await Store.update('holdings', id, obj); else await Store.add('holdings', obj);
-  toast(status === '예정' ? '예정홀딩으로 등록 — 입고되면 자동 전환' : (id ? '저장됨' : '홀딩 등록 완료')); closeModal();
+  // 품목별로 재고 있는 건 활성 홀딩, 부족한 건 예정홀딩으로 분리 (같은 자재 여러 줄이면 누적 차감)
+  const fitItems = [], shortItems = [], used = {};
+  items.forEach(it => {
+    const k = _normName(it.materialName);
+    const avail = availExcl(it.materialName) - (used[k] || 0);
+    if (avail >= it.jang) { fitItems.push(it); used[k] = (used[k] || 0) + it.jang; }
+    else shortItems.push(it);
+  });
+  if (id) {   // 편집: 단일 문서 유지 (하나라도 부족하면 예정)
+    await Store.update('holdings', id, mkObj(items, shortItems.length ? '예정' : '홀딩'));
+    toast('저장됨'); closeModal(); return;
+  }
+  if (fitItems.length && shortItems.length) {
+    await Store.add('holdings', mkObj(fitItems, '홀딩'));
+    await Store.add('holdings', mkObj(shortItems, '예정'));
+    toast(`재고분 ${fitItems.length}품목 홀딩 · 부족분 ${shortItems.length}품목 예정홀딩으로 분리 등록`);
+  } else if (fitItems.length) {
+    await Store.add('holdings', mkObj(fitItems, '홀딩'));
+    toast('홀딩 등록 완료');
+  } else {
+    await Store.add('holdings', mkObj(shortItems, '예정'));
+    toast('예정홀딩으로 등록 — 입고되면 자동 전환');
+  }
+  closeModal();
 }
 async function releaseHold(id) { if (!confirm('홀딩을 해제할까요? (기록은 남고 목록에서만 빠집니다 — 지난·해제 내역 보기에서 다시 볼 수 있음)')) return; await Store.update('holdings', id, { status: '해제' }); toast('홀딩 해제됨'); }
 /* 특정 자재의 가용 장수(이 홀딩 제외, 활성 '홀딩'만 차감) */
