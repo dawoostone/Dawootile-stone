@@ -2116,7 +2116,8 @@ function openItemForm(id) {
     ` : ''}
     <div class="frm-foot">
       ${it && isAdmin() ? `<button class="btn btn-danger" onclick="delItem('${id}')"><i class="ti ti-trash"></i></button>` : ''}
-      <button class="btn btn-pri" style="flex:1" onclick="submitItem('${id || ''}')"><i class="ti ti-check"></i>저장</button>
+      <button class="btn" style="flex:1" onclick="closeModal()">취소</button>
+      <button class="btn btn-pri" style="flex:1.4" onclick="submitItem('${id || ''}')"><i class="ti ti-check"></i>저장</button>
     </div>`);
   setSelectValue('i-vendor', 'suppliers', v.vendor);
 }
