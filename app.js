@@ -388,8 +388,19 @@ function onData(coll) {
     _membersWaiters.splice(0).forEach(fn => fn());
   }
   if (coll === 'sites' && me && !isCustomerRole()) autoAdvanceStages();
-  if (coll === 'holdings' && me && !isCustomerRole()) autoReleaseHolds();
+  if (coll === 'holdings' && me && !isCustomerRole()) { autoReleaseHolds(); maybeActivatePlanned(); }
+  if (coll === 'inventory' && me && !isCustomerRole()) maybeActivatePlanned();   // 재고 변동(해제·입고·조정 등)으로 여유 생기면 예정홀딩 확보
   if (me) render();
+}
+/* 예정홀딩(및 일부 예정 품목)을 재고 여유가 생길 때 일정 빠른 순으로 자동 확보 — 재진입 방지 */
+let _actPlanRun = false;
+async function maybeActivatePlanned() {
+  if (_actPlanRun || !me || isCustomerRole()) return;
+  const hasPlanned = (state.holdings || []).some(h => !['확정', '해제'].includes(h.status || '홀딩') && holdItems(h).some(it => it.planned));
+  if (!hasPlanned) return;
+  _actPlanRun = true;
+  try { await activatePlannedHolds(); } catch (e) { console.warn('activatePlanned', e); }
+  finally { setTimeout(() => { _actPlanRun = false; }, 400); }
 }
 
 /* ---------- 5. 로그인 (이메일 + 비밀번호 / Firebase 인증) ---------- */
