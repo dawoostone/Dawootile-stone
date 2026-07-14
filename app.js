@@ -1750,7 +1750,7 @@ async function advanceStage(id, stage) {
   toast(`단계 → ${stage}`); closeModal();
 }
 async function delSite(id) {
-  if (!confirm('이 현장을 삭제할까요?')) return;
+  if (!guardDelete('이 현장을 삭제할까요?')) return;
   const s = state.sites.find(x => x.id === id); const nm = s ? s.name : '';
   await Store.remove('sites', id);
   // 이 현장에 연결됐던 홀딩의 현장 정보 제거(고아 데이터 방지)
@@ -2213,7 +2213,7 @@ async function submitInEdit(id) {
 async function delInTxn(id) {
   if (!isAdmin()) { toast('관리자만 삭제할 수 있습니다'); return; }
   const t = state.transactions.find(x => x.id === id && x.type === 'in'); if (!t) return;
-  if (!confirm(`이 입고를 삭제할까요?\n${t.itemName} +${+t.jang || 0}장 · ${t.date || ''}\n실재고에서 차감됩니다.`)) return;
+  if (!guardDelete(`이 입고를 삭제할까요?\n${t.itemName} +${+t.jang || 0}장 · ${t.date || ''}\n실재고에서 차감됩니다.`)) return;
   const it = state.inventory.find(i => i.id === t.itemId || i.name === t.itemName);
   if (it) await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) - (+t.jang || 0)) });
   await Store.remove('transactions', id);
@@ -2331,7 +2331,14 @@ async function submitItem(id) {
   else { obj.lastInDate = todayStr(); await Store.add('inventory', obj); toast('품목 추가됨'); }
   closeModal();
 }
-async function delItem(id) { if (!confirm('이 품목을 삭제할까요?')) return; await Store.remove('inventory', id); toast('삭제됨'); closeModal(); }
+/* 실수 삭제 방지 — 삭제하려면 '삭제' 를 직접 입력해야 진행 */
+function guardDelete(msg) {
+  const v = prompt((msg ? msg + '\n\n' : '') + "⚠ 실수 방지 — 삭제하려면 아래에 '삭제' 라고 입력하세요.");
+  if (v == null) return false;
+  if (v.trim() !== '삭제') { toast("삭제하려면 '삭제' 를 정확히 입력해야 합니다"); return false; }
+  return true;
+}
+async function delItem(id) { if (!guardDelete('이 품목을 삭제할까요?')) return; await Store.remove('inventory', id); toast('삭제됨'); closeModal(); }
 
 /* 입고 등록 → 자재 선택(언더바) + 롯트 + 패턴별 장수 → 헤베 자동환산 */
 function openStockForm() {
@@ -3304,7 +3311,7 @@ async function submitBasin(id) {
   toast(id ? '수정되었습니다' : '세면대 발주가 등록되었습니다');
 }
 async function deleteBasin(id) {
-  if (!confirm('이 발주 건을 삭제할까요?')) return;
+  if (!guardDelete('이 발주 건을 삭제할까요?')) return;
   await Store.remove('basins', id);
   closeModal(); toast('삭제되었습니다');
 }
@@ -3643,7 +3650,7 @@ async function submitShip() {
 async function delShip(id) {
   if (!isAdmin()) { toast('관리자만 삭제할 수 있습니다'); return; }
   const t = state.transactions.find(x => x.id === id); if (!t) return;
-  if (!confirm(`이 출고를 삭제할까요?\n${t.itemName} ${t.jang}장 · ${t.date}\n재고 연동분은 자동 복구됩니다.`)) return;
+  if (!guardDelete(`이 출고를 삭제할까요?\n${t.itemName} ${t.jang}장 · ${t.date}\n재고 연동분은 자동 복구됩니다.`)) return;
   if (t.itemId) { const it = state.inventory.find(i => i.id === t.itemId); if (it) await Store.update('inventory', it.id, { jang: (+it.jang || 0) + (+t.jang || 0) }); }
   await Store.remove('transactions', id);
   const key = t.shipId || t.id;
@@ -3662,7 +3669,7 @@ async function delShipGroup(key) {
   if (!isAdmin()) { toast('관리자만 삭제할 수 있습니다'); return; }
   const list = state.transactions.filter(t => t.type === 'out' && (t.shipId || t.id) === key);
   if (!list.length) return;
-  if (!confirm(`이 출고(${list.length}건)를 삭제할까요?\n${list.map(t => `${t.itemName} ${t.jang}장`).join(', ')}\n재고 연동분은 자동 복구됩니다.`)) return;
+  if (!guardDelete(`이 출고(${list.length}건)를 삭제할까요?\n${list.map(t => `${t.itemName} ${t.jang}장`).join(', ')}\n재고 연동분은 자동 복구됩니다.`)) return;
   for (const t of list) {
     if (t.itemId) { const it = state.inventory.find(i => i.id === t.itemId); if (it) await Store.update('inventory', it.id, { jang: (+it.jang || 0) + (+t.jang || 0) }); }
     await Store.remove('transactions', t.id);
@@ -3674,7 +3681,7 @@ async function delShipGroup(key) {
 async function delIn(id) {
   if (!isAdmin()) { toast('관리자만 삭제할 수 있습니다'); return; }
   const t = state.transactions.find(x => x.id === id); if (!t) return;
-  if (!confirm(`이 입고를 삭제할까요?\n${t.itemName} ${t.jang}장 · 롯트 ${t.lot || '-'} · ${t.date}\n재고에서 그만큼 되돌립니다. (수정하려면 삭제 후 다시 입고)`)) return;
+  if (!guardDelete(`이 입고를 삭제할까요?\n${t.itemName} ${t.jang}장 · 롯트 ${t.lot || '-'} · ${t.date}\n재고에서 그만큼 되돌립니다. (수정하려면 삭제 후 다시 입고)`)) return;
   if (t.itemId) { const it = state.inventory.find(i => i.id === t.itemId); if (it) await Store.update('inventory', it.id, { jang: Math.max(0, (+it.jang || 0) - (+t.jang || 0)) }); }
   await Store.remove('transactions', id);
   toast('입고 삭제됨 (재고 되돌림)');
@@ -4038,7 +4045,7 @@ async function restoreHold(id) {
 async function delHold(id) {
   if (!isAdmin()) { toast('관리자만 삭제할 수 있습니다'); return; }
   const h = state.holdings.find(x => x.id === id); if (!h) return;
-  if (!confirm(`이 홀딩을 완전히 삭제할까요?\n${h.vendor || ''} · ${h.materialName || ''} ${h.jang || 0}장`)) return;
+  if (!guardDelete(`이 홀딩을 완전히 삭제할까요?\n${h.vendor || ''} · ${h.materialName || ''} ${h.jang || 0}장`)) return;
   await Store.remove('holdings', id); toast('홀딩 삭제됨');
 }
 
@@ -4165,7 +4172,7 @@ async function setRoleDoc(email, role, name, prevEmail) {
   } catch (e) { console.warn('roles doc', e); }
 }
 async function delMember(id) {
-  if (!confirm('이 직원을 삭제할까요?')) return;
+  if (!guardDelete('이 직원 계정을 삭제할까요?')) return;
   const m = state.members.find(x => x.id === id);
   await Store.remove('members', id);
   if (m && m.email) { try { await cref('roles').doc((m.email || '').toLowerCase()).delete(); } catch (e) { } }
@@ -4180,7 +4187,7 @@ async function addClient() {
 async function delClient(id) { if (!isAdmin()) return; if (!confirm('이 거래처를 삭제할까요?')) return; await Store.remove('clients', id); toast('삭제됨'); }
 async function delAllClients() {
   if (!isAdmin()) return;
-  if (!confirm('등록된 거래처를 전부 삭제할까요? 되돌릴 수 없습니다.')) return;
+  if (!guardDelete('등록된 거래처를 전부 삭제할까요? 되돌릴 수 없습니다.')) return;
   for (const c of (state.clients || []).slice()) { await Store.remove('clients', c.id); }
   toast('거래처 전체 삭제됨');
 }
