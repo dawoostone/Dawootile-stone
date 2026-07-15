@@ -2455,17 +2455,39 @@ function activeRestocks() {
   return (state.restocks || []).filter(r => !r.done)
     .sort((a, b) => (a.expectedDate || '9999-99-99').localeCompare(b.expectedDate || '9999-99-99'));
 }
+let _rsN = 0;
+function rsRowHtml(d) {
+  d = d || {}; const i = _rsN++;
+  return `<div class="rs-row" style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+    <div style="flex:2.2;min-width:0">${searchBox('rsm-' + i, '자재명 검색·입력', d.name || '', 'matNames', '')}</div>
+    <input class="rs-qty" inputmode="numeric" placeholder="수량" value="${esc(d.qty || '')}" style="flex:1;min-width:56px;font-size:15px;padding:10px 11px;border:1.5px solid var(--bd2);border-radius:10px">
+    <button type="button" class="btn btn-ghost btn-sm" style="flex:none" onclick="this.closest('.rs-row').remove()" aria-label="삭제"><i class="ti ti-x"></i></button>
+  </div>`;
+}
+function addRsRow(d) { const c = el('rs-rows'); if (c) c.insertAdjacentHTML('beforeend', rsRowHtml(d)); }
+function collectRsRows() {
+  const rows = [];
+  document.querySelectorAll('#rs-rows .rs-row').forEach(r => {
+    const inp = r.querySelector('input.sb-in'); const name = inp ? (inp.value || '').trim() : '';
+    const qty = parseFloat(r.querySelector('.rs-qty').value) || 0;
+    if (name) rows.push({ name: name, qty: qty });
+  });
+  return rows;
+}
 function openRestockForm(id) {
   const r = id ? (state.restocks || []).find(x => x.id === id) : null; const v = r || {};
+  _rsN = 0;
+  const rowsInit = r ? [{ name: v.itemName, qty: v.jang || '' }] : [{}];
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-truck-delivery"></i>${r ? '예정 입고 수정' : '예정 입고 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="banner info"><i class="ti ti-info-circle"></i><span>발주한 자재의 <b>입고 예정</b>을 등록합니다. 고객 재고 화면의 <b>품절</b> 자재에 예정일이 표시되고, 실제 입고를 등록하면 자동으로 정리됩니다.</span></div>
     <div class="frm">
-      <div class="fld full"><label>자재명<span class="req">*</span></label>${searchBox('rs-name', '자재명 검색·입력', v.itemName, 'matNames', '')}</div>
-      <div class="fld"><label>예정 수량(장)</label><input id="rs-jang" inputmode="numeric" placeholder="선택" value="${esc(v.jang || '')}"></div>
+      <div class="fld full"><label>자재 · 수량<span class="req">*</span> <span style="color:var(--t3);font-weight:500">(여러 개는 '자재 추가')</span></label>
+        <div id="rs-rows">${rowsInit.map(rsRowHtml).join('')}</div>
+        ${!r ? `<button type="button" class="btn btn-ghost btn-sm btn-block" onclick="addRsRow({})"><i class="ti ti-plus"></i>자재 추가</button>` : ''}
+      </div>
       <div class="fld"><label>입고 예정일<span class="req">*</span></label><input type="date" id="rs-date" value="${esc(v.expectedDate || '')}"></div>
-      <div class="fld full"><label>발주처</label>${searchBox('rs-vendor', '발주처 검색·입력', v.vendor, 'companyNames', '')}</div>
-      <div class="fld full"><label>메모</label><input id="rs-note" lang="ko" value="${esc(v.note || '')}" placeholder="선택"></div>
+      <div class="fld full"><label>메모</label><input id="rs-note" lang="ko" value="${esc(v.note || '')}" placeholder="선택 (공통 적용)"></div>
     </div>
     <div class="frm-foot">
       <button class="btn" style="flex:1" onclick="closeModal()">취소</button>
@@ -2473,16 +2495,26 @@ function openRestockForm(id) {
     </div>`);
 }
 async function submitRestock(id) {
-  const name = (el('rs-name') && el('rs-name').value || '').trim();
   const date = el('rs-date') && el('rs-date').value;
-  if (!name) { toast('자재명을 입력하세요'); return; }
   if (!date) { toast('입고 예정일을 선택하세요'); return; }
-  const it = state.inventory.find(i => _normName(i.name) === _normName(name));
-  const obj = { itemName: name, spec: it ? it.spec : '', jang: parseFloat(el('rs-jang').value) || 0, expectedDate: date, vendor: (el('rs-vendor').value || '').trim(), note: (el('rs-note').value || '').trim(), done: false };
-  if (id) { await Store.update('restocks', id, obj); toast('예정 입고 수정됨'); }
-  else { obj.createdAt = Date.now(); obj.by = me.name; await Store.add('restocks', obj); toast('예정 입고 등록됨'); }
-  await syncItemRestock(name);
-  closeModal();
+  const note = (el('rs-note') && el('rs-note').value || '').trim();
+  const rows = collectRsRows();
+  if (!rows.length) { toast('자재명을 입력하세요'); return; }
+  if (id) {   // 수정: 단일 건
+    const row = rows[0];
+    const it = state.inventory.find(i => _normName(i.name) === _normName(row.name));
+    await Store.update('restocks', id, { itemName: row.name, spec: it ? it.spec : '', jang: row.qty || 0, expectedDate: date, note: note, done: false });
+    await syncItemRestock(row.name);
+    toast('예정 입고 수정됨'); closeModal(); return;
+  }
+  const names = new Set();
+  for (const row of rows) {
+    const it = state.inventory.find(i => _normName(i.name) === _normName(row.name));
+    await Store.add('restocks', { itemName: row.name, spec: it ? it.spec : '', jang: row.qty || 0, expectedDate: date, note: note, done: false, createdAt: Date.now(), by: me.name });
+    names.add(row.name);
+  }
+  for (const n of names) await syncItemRestock(n);
+  toast(`예정 입고 ${rows.length}건 등록됨`); closeModal();
 }
 async function delRestock(id) {
   const r = (state.restocks || []).find(x => x.id === id);
