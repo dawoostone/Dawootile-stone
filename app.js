@@ -2542,8 +2542,8 @@ function restockCardHtml() {
       </div></div>`;
   }).join('') : `<div class="empty"><i class="ti ti-calendar-off"></i>예정된 입고가 없습니다</div>`;
   return `<div class="card" style="margin-top:14px">
-    <div class="card-h"><h3><i class="ti ti-truck-delivery"></i>예정 입고 (재입고 예정)</h3><button class="btn btn-sm" onclick="openRestockForm()"><i class="ti ti-plus"></i>예정 등록</button></div>
-    ${rows}</div>`;
+    <div class="card-h"><h3><i class="ti ti-truck-delivery"></i>예정 입고 (재입고 예정)${list.length ? ` <span style="font-size:12px;font-weight:500;color:var(--t3)">${list.length}건</span>` : ''}</h3><button class="btn btn-sm" onclick="openRestockForm()"><i class="ti ti-plus"></i>예정 등록</button></div>
+    <div style="max-height:300px;overflow-y:auto;-webkit-overflow-scrolling:touch">${rows}</div></div>`;
 }
 
 /* ===================================================================
