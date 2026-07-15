@@ -738,6 +738,7 @@ function custReqBody(list) {
         <span style="flex:none;font-size:11px;font-weight:700;background:${col.bg};color:${col.c};border-radius:999px;padding:3px 10px">${esc(st)}</span>
       </div>
       <div style="font-size:11.5px;color:var(--t3);margin-top:5px">${r.useDate ? '사용예정 ' + esc(r.useDate) + ' · ' : ''}요청 ${when}${r.note ? ' · ' + esc(r.note) : ''}</div>
+      ${st === '취소' && r.rejectReason ? `<div style="font-size:12px;color:var(--red-t);margin-top:6px;background:#fff2f0;border-radius:8px;padding:7px 10px"><i class="ti ti-message-2" style="font-size:13px"></i> 취소 사유: ${esc(r.rejectReason)}</div>` : ''}
     </div>`;
   }).join('');
 }
@@ -3910,10 +3911,10 @@ function staffHoldReqHtml() {
         <div style="font-size:11.5px;color:var(--t3);margin-top:3px">${r.useDate ? '사용예정 ' + esc(r.useDate) + ' · ' : ''}요청 ${when}${r.note ? ' · ' + esc(r.note) : ''}</div></div>
         ${!isPending ? badge : ''}
       </div>
+      ${!isPending && st === '취소' && r.rejectReason ? `<div style="font-size:11.5px;color:var(--red-t);margin-top:5px;background:#fff2f0;border-radius:8px;padding:6px 9px"><i class="ti ti-message-2" style="font-size:12px"></i> 취소 사유: ${esc(r.rejectReason)}</div>` : ''}
       ${isPending ? `<div style="display:flex;gap:6px;margin-top:8px">
-        <button class="btn btn-sm btn-pri" style="flex:1" onclick="approveHoldReq('${r.id}')"><i class="ti ti-check"></i>확인</button>
-        <button class="btn btn-sm" style="flex:1" onclick="prefillHoldFromReq('${r.id}')"><i class="ti ti-lock-plus"></i>홀딩 등록</button>
-        <button class="btn btn-sm btn-danger" style="flex:none" onclick="rejectHoldReq('${r.id}')"><i class="ti ti-x"></i></button>
+        <button class="btn btn-sm btn-pri" style="flex:1" onclick="prefillHoldFromReq('${r.id}')"><i class="ti ti-lock-check"></i>확인 · 홀딩 등록</button>
+        <button class="btn btn-sm btn-danger" style="flex:none" onclick="rejectHoldReq('${r.id}')"><i class="ti ti-x"></i>취소</button>
       </div>` : ''}
     </div>`;
   };
@@ -3927,20 +3928,19 @@ function staffHoldReqHtml() {
     ${showArch ? past.map(r => rowFn(r, false)).join('') : ''}
   </div>`;
 }
-async function approveHoldReq(id) {
-  const r = (state.holdRequests || []).find(x => x.id === id); if (!r) return;
-  await Store.update('holdRequests', id, { status: '승인', handledBy: me.name, handledAt: Date.now() });
-  toast('요청을 승인 처리했습니다. 홀딩은 [홀딩 등록]으로 확정하세요.');
-}
 async function rejectHoldReq(id) {
   const r = (state.holdRequests || []).find(x => x.id === id); if (!r) return;
-  if (!confirm('이 홀딩 요청을 취소(거절)할까요?')) return;
-  await Store.update('holdRequests', id, { status: '취소', handledBy: me.name, handledAt: Date.now() });
-  toast('요청을 취소 처리했습니다');
+  const reason = prompt('취소 사유를 입력하세요 (고객에게 그대로 전달됩니다)', '');
+  if (reason === null) return;   // 취소 안 함
+  await Store.update('holdRequests', id, { status: '취소', rejectReason: (reason || '').trim(), handledBy: me.name, handledAt: Date.now() });
+  toast('요청을 취소 처리했습니다 (사유 전달)');
 }
+/* 요청 → 홀딩 등록 연동: 등록 완료 시 해당 요청을 '승인'으로 표시하기 위한 링크 */
+let _holdReqLink = '';
 function prefillHoldFromReq(id) {
   const r = (state.holdRequests || []).find(x => x.id === id); if (!r) return;
   openHoldForm('', { vendor: r.vendor, useDate: r.useDate || '', note: r.note || '', items: (r.items || []).map(it => ({ materialName: it.materialName, jang: it.jang })) });
+  _holdReqLink = id;   // openHoldForm 이 먼저 초기화하므로 그 뒤에 설정
 }
 function renderHold() {
   const isResv = h => (h.status || '홀딩') === '홀딩';
@@ -3988,7 +3988,7 @@ function renderHold() {
 }
 function openHoldForm(id, pre) {
   const h = id ? state.holdings.find(x => x.id === id) : null; const v = h || Object.assign({}, pre || {});
-  _mrowPattern = true; _mrowDepot = false;
+  _mrowPattern = true; _mrowDepot = false; _holdReqLink = '';   // 일반 홀딩 등록이면 요청 연동 없음
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-lock-plus"></i>${h ? '홀딩 수정' : '홀딩 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
@@ -4071,7 +4071,12 @@ async function submitHold(id) {
   const first = outItems[0];
   const obj = { vendor, items: outItems, materialName: first.materialName, jang: first.jang, hebe: first.hebe, lot: first.lot, useDate, note, status, forSiteId: siteId, forSiteName: siteName, by: me.name };
   await ensureClient(vendor);   // 신규 거래처 자동 등록
-  if (id) await Store.update('holdings', id, obj); else await Store.add('holdings', obj);
+  if (id) await Store.update('holdings', id, obj);
+  else {
+    await Store.add('holdings', obj);
+    // 고객 요청에서 넘어온 등록이면 해당 요청을 '승인'으로 마킹
+    if (_holdReqLink) { try { await Store.update('holdRequests', _holdReqLink, { status: '승인', handledBy: me.name, handledAt: Date.now() }); } catch (e) { } _holdReqLink = ''; }
+  }
   toast(allPlanned ? '예정홀딩으로 등록 — 입고되면 자동 전환' : (anyPlanned ? '홀딩 등록 — 일부 품목은 예정(입고 대기)' : (id ? '저장됨' : '홀딩 등록 완료')));
   closeModal();
 }
