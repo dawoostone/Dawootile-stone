@@ -1076,6 +1076,8 @@ function restocksForItem(name) {
 }
 /* 자재의 가장 이른 재입고 예정일 (없으면 '') */
 function restockDateForItem(name) { const r = restocksForItem(name)[0]; return r ? (r.expectedDate || '') : ''; }
+/* 자재의 예정입고 총 장수(미완료 합계) */
+function plannedJangFor(name) { return restocksForItem(name).reduce((a, r) => a + (+r.jang || 0), 0); }
 /* 예정입고 변경 후: inventory.restockDate 를 최신 예정일로 동기화(고객 화면 노출용) */
 async function syncItemRestock(name) {
   const it = state.inventory.find(i => _normName(i.name) === _normName(name));
@@ -1929,11 +1931,13 @@ function stockRowsHtml(list) {
     const s = stockState(i);
     const held = heldJangFor(i.name), avail = (+i.jang || 0) - held;
     const dmg = damagedStock(i.name);
+    const plan = plannedJangFor(i.name), planD = restockDateForItem(i.name);
+    const planTxt = plan > 0 ? `<div style="font-size:10px;color:#2f6fed;font-weight:700">입고 예정 ${plan}장${planD ? ` <span style="font-weight:500;color:#5a86e0">(${(() => { const p = String(planD).split('-'); return p.length === 3 ? +p[1] + '/' + +p[2] : planD; })()})</span>` : ''}</div>` : '';
     return `<tr onclick="openItemForm('${i.id}')">
       <td><b>${esc(i.name)}</b>${dmg > 0 ? ` <span style="display:inline-block;font-size:10px;font-weight:700;color:#b42318;background:#fef3f2;border:1px solid #fecdca;border-radius:8px;padding:1px 6px">파손 ${dmg}</span>` : ''}<div style="font-size:11px;color:var(--t3)">${esc(i.vendor || '')}</div></td>
       <td>${esc(i.spec || '-')}</td>
       <td style="font-size:11px">${patternStockCell(i.name)}</td>
-      <td><b>${(+i.jang || 0)}</b>장${i.safeJang ? `<div style="font-size:10px;color:var(--t3)">안전 ${i.safeJang}</div>` : ''}</td>
+      <td><b>${(+i.jang || 0)}</b>장${i.safeJang ? `<div style="font-size:10px;color:var(--t3)">안전 ${i.safeJang}</div>` : ''}${planTxt}</td>
       <td><b style="color:${avail <= 0 ? 'var(--red-t)' : 'var(--gd)'}">${avail}</b>장${held > 0 ? `<div style="font-size:10px;color:var(--t3)">홀딩 ${held}</div>` : ''}</td>
       <td>${itemHebe(i).toFixed(1)}㎡</td>
       <td><span class="pill ${s.cls}">${s.k}</span></td>
