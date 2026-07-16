@@ -382,7 +382,9 @@ async function seedSample() {
   ];
   for (const o of outs) { o.type = 'out'; o.hebe = +(o.jang * 5.12).toFixed(2); o.by = '김민준'; await Store.add('transactions', o); }
 }
+const _loadedColls = {};
 function onData(coll) {
+  _loadedColls[coll] = true;
   if (coll === 'members' && !_membersLoaded) {
     _membersLoaded = true;
     _membersWaiters.splice(0).forEach(fn => fn());
@@ -390,7 +392,7 @@ function onData(coll) {
   if (coll === 'sites' && me && !isCustomerRole()) autoAdvanceStages();
   if (coll === 'holdings' && me && !isCustomerRole()) { autoReleaseHolds(); maybeActivatePlanned(); }
   if (coll === 'inventory' && me && !isCustomerRole()) maybeActivatePlanned();   // 재고 변동(해제·입고·조정 등)으로 여유 생기면 예정홀딩 확보
-  if (['holdings', 'inventory', 'transactions'].includes(coll) && me && !isCustomerRole()) syncAvailMirror();   // 고객 노출용 가용수량 미러 갱신
+  if (['holdings', 'inventory', 'transactions'].includes(coll) && me && !isCustomerRole()) scheduleAvailMirror();   // 고객 노출용 가용수량 미러 갱신(디바운스)
   if (me) render();
 }
 /* 예정홀딩(및 일부 예정 품목)을 재고 여유가 생길 때 일정 빠른 순으로 자동 확보 — 재진입 방지 */
@@ -404,18 +406,27 @@ async function maybeActivatePlanned() {
   finally { setTimeout(() => { _actPlanRun = false; }, 400); }
 }
 /* 가용수량 미러: 고객은 자기 홀딩만 보이므로 전체 홀딩을 뺀 '가용'을 계산할 수 없음.
-   직원 클라이언트가 inventory 문서에 availJang(=실재고−활성홀딩−파손)을 기록해 고객 화면에 노출. */
-let _availSyncRun = false;
-async function syncAvailMirror() {
-  if (_availSyncRun || !me || isCustomerRole() || !CLOUD) return;
-  _availSyncRun = true;
+   직원 클라이언트가 inventory 문서에 availJang(=실재고−활성홀딩−파손)을 기록해 고객 화면에 노출.
+   ★ 홀딩/재고 스냅샷 도착 순서에 따른 오계산(홀딩 로드 전 전체수량을 가용으로 기록)을 막기 위해
+     디바운스로 마지막 상태에서 한 번만 계산하고, 홀딩·재고가 모두 로드된 뒤에만 기록. */
+let _availTimer = null, _availBusy = false;
+function scheduleAvailMirror() {
+  if (!me || isCustomerRole() || !CLOUD) return;
+  clearTimeout(_availTimer);
+  _availTimer = setTimeout(runAvailMirror, 700);
+}
+async function runAvailMirror() {
+  if (!me || isCustomerRole() || !CLOUD) return;
+  if (_availBusy) { scheduleAvailMirror(); return; }               // 진행 중이면 뒤로 미룸(마지막 상태 반영)
+  if (!_loadedColls.holdings || !_loadedColls.inventory) { scheduleAvailMirror(); return; }  // 로드 전 계산 금지
+  _availBusy = true;
   try {
     for (const it of state.inventory) {
       const av = Math.max(0, availJang(it));
       const cur = (it.availJang == null) ? null : +it.availJang;
       if (cur !== av) { try { await Store.update('inventory', it.id, { availJang: av }); } catch (e) { } }
     }
-  } finally { setTimeout(() => { _availSyncRun = false; }, 500); }
+  } finally { _availBusy = false; }
 }
 
 /* ---------- 5. 로그인 (이메일 + 비밀번호 / Firebase 인증) ---------- */
