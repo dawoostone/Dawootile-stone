@@ -390,6 +390,7 @@ function onData(coll) {
   if (coll === 'sites' && me && !isCustomerRole()) autoAdvanceStages();
   if (coll === 'holdings' && me && !isCustomerRole()) { autoReleaseHolds(); maybeActivatePlanned(); }
   if (coll === 'inventory' && me && !isCustomerRole()) maybeActivatePlanned();   // 재고 변동(해제·입고·조정 등)으로 여유 생기면 예정홀딩 확보
+  if (['holdings', 'inventory', 'transactions'].includes(coll) && me && !isCustomerRole()) syncAvailMirror();   // 고객 노출용 가용수량 미러 갱신
   if (me) render();
 }
 /* 예정홀딩(및 일부 예정 품목)을 재고 여유가 생길 때 일정 빠른 순으로 자동 확보 — 재진입 방지 */
@@ -401,6 +402,20 @@ async function maybeActivatePlanned() {
   _actPlanRun = true;
   try { await activatePlannedHolds(); } catch (e) { console.warn('activatePlanned', e); }
   finally { setTimeout(() => { _actPlanRun = false; }, 400); }
+}
+/* 가용수량 미러: 고객은 자기 홀딩만 보이므로 전체 홀딩을 뺀 '가용'을 계산할 수 없음.
+   직원 클라이언트가 inventory 문서에 availJang(=실재고−활성홀딩−파손)을 기록해 고객 화면에 노출. */
+let _availSyncRun = false;
+async function syncAvailMirror() {
+  if (_availSyncRun || !me || isCustomerRole() || !CLOUD) return;
+  _availSyncRun = true;
+  try {
+    for (const it of state.inventory) {
+      const av = Math.max(0, availJang(it));
+      const cur = (it.availJang == null) ? null : +it.availJang;
+      if (cur !== av) { try { await Store.update('inventory', it.id, { availJang: av }); } catch (e) { } }
+    }
+  } finally { setTimeout(() => { _availSyncRun = false; }, 500); }
 }
 
 /* ---------- 5. 로그인 (이메일 + 비밀번호 / Firebase 인증) ---------- */
@@ -582,10 +597,12 @@ function custStockList() {
   if (q) l = l.filter(i => (i.name || '').toLowerCase().includes(q) || (i.spec || '').toLowerCase().includes(q));
   return l;
 }
+/* 고객에게 보이는 수량 = 가용수량(전체 홀딩 제외). 미러 필드 availJang 사용, 없으면 실재고로 대체 */
+function custAvail(i) { return (i.availJang == null) ? Math.max(0, +i.jang || 0) : Math.max(0, +i.availJang || 0); }
 function custStockBody(list) {
   if (!list.length) return `<div class="empty"><i class="ti ti-search-off"></i>해당하는 자재가 없습니다</div>`;
   const rows = list.map(i => {
-    const jang = +i.jang || 0;
+    const jang = custAvail(i);
     const hebe = jang * (+i.hebePerJang || 0);
     const inStock = jang > 0;
     const dot = inStock ? 'background:#1D9E75;--pc:rgba(29,158,117,.6)' : 'background:#E23B3B;--pc:rgba(226,59,59,.75)';
@@ -600,7 +617,7 @@ function custStockBody(list) {
   }).join('');
   return `<div style="border:0.5px solid var(--bd);border-radius:12px;overflow:hidden;margin-top:2px">
     <div style="max-height:calc(100vh - 250px);min-height:200px;overflow-y:auto;-webkit-overflow-scrolling:touch">
-      <table class="cust-tbl"><thead><tr><th>자재명 · 규격</th><th style="text-align:right;width:66px">재고</th><th style="width:62px">상태</th></tr></thead><tbody>${rows}</tbody></table>
+      <table class="cust-tbl"><thead><tr><th>자재명 · 규격</th><th style="text-align:right;width:70px">가용재고</th><th style="width:62px">상태</th></tr></thead><tbody>${rows}</tbody></table>
     </div></div>`;
 }
 function filterCustStock() {
@@ -680,7 +697,7 @@ function startCustomerHoldings() {
 function renderCustomerStock() {
   const tab = filters.custTab || 'stock';
   const list = custStockList();
-  const inN = state.inventory.filter(i => (+i.jang || 0) > 0).length;
+  const inN = state.inventory.filter(i => custAvail(i) > 0).length;
   const outN = state.inventory.length - inN;
   const myHolds = custMyHolds();
   const stockSec = `
