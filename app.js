@@ -603,7 +603,6 @@ function custStockBody(list) {
   if (!list.length) return `<div class="empty"><i class="ti ti-search-off"></i>해당하는 자재가 없습니다</div>`;
   const rows = list.map(i => {
     const jang = custAvail(i);
-    const hebe = jang * (+i.hebePerJang || 0);
     const inStock = jang > 0;
     const dot = inStock ? 'background:#1D9E75;--pc:rgba(29,158,117,.6)' : 'background:#E23B3B;--pc:rgba(226,59,59,.75)';
     const lbl = inStock ? '<span style="font-size:11.5px;font-weight:600;color:#0F6E56">있음</span>' : '<span style="font-size:11.5px;font-weight:600;color:#A32D2D">품절</span>';
@@ -611,7 +610,7 @@ function custStockBody(list) {
     if (i.restockDate) { const p = String(i.restockDate).split('-'); if (p.length === 3) { const rcol = inStock ? '#2f6fed' : 'var(--amber-t)'; restock = `<div style="font-size:11px;color:${rcol};margin-top:3px;font-weight:600"><i class="ti ti-truck-delivery" style="font-size:12px;vertical-align:-1px"></i> 재입고 예정 ${+p[1]}/${+p[2]}</div>`; } }
     return `<tr>
       <td><div style="font-weight:600;color:var(--t1);word-break:keep-all">${esc(i.name)}</div>${i.spec ? `<div style="color:var(--t3);font-size:11px;margin-top:2px">${esc(i.spec)}</div>` : ''}${restock}</td>
-      <td style="text-align:right;white-space:nowrap"><div style="font-weight:700;color:${inStock ? 'var(--t1)' : 'var(--t3)'}">${jang}장</div><div style="color:var(--t3);font-size:11px">${hebe.toFixed(1)}㎡</div></td>
+      <td style="text-align:right;white-space:nowrap"><div style="font-weight:700;font-size:15px;color:${inStock ? 'var(--t1)' : 'var(--t3)'}">${jang}장</div></td>
       <td><span style="display:inline-flex;align-items:center;gap:6px"><span class="live-dot" style="${dot}"></span>${lbl}</span></td>
     </tr>`;
   }).join('');
