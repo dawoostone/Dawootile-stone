@@ -658,21 +658,54 @@ function custHoldCard(h, isPast) {
       ${h.note ? `<div style="margin-top:7px;padding-top:7px;border-top:1px dashed var(--bd2);font-size:12.5px;color:var(--t2);word-break:break-all"><i class="ti ti-note" style="font-size:12px;color:var(--t3)"></i> ${esc(h.note)}</div>` : ''}
     </div>`;
 }
+/* 고객 홀딩을 상태별 3그룹으로 분리: 진행중(홀딩·예정) / 출고완료(확정) / 해제 */
+function custHoldGroups() {
+  const mine = (state.holdings || []).filter(h => _normName(h.vendor) === _normName(me.name));
+  const active = mine.filter(h => !['확정', '해제'].includes(h.status || '홀딩')).sort((a, b) => (a.useDate || '9999-99-99').localeCompare(b.useDate || '9999-99-99'));
+  const done = mine.filter(h => (h.status || '') === '확정').sort((a, b) => (b.useDate || '0000-00-00').localeCompare(a.useDate || '0000-00-00'));
+  const released = mine.filter(h => (h.status || '') === '해제').sort((a, b) => (b.useDate || '0000-00-00').localeCompare(a.useDate || '0000-00-00'));
+  return { active, done, released };
+}
+/* 검색어 매칭: 자재명·롯트·비고 */
+function custHoldMatch(h, q) {
+  if (!q) return true;
+  const inItems = holdItems(h).some(it => (it.materialName || '').toLowerCase().includes(q) || (it.lot || '').toLowerCase().includes(q));
+  return inItems || (h.note || '').toLowerCase().includes(q);
+}
+/* 현재 선택된 뷰의 카드 목록 HTML (검색 반영) */
+function custHoldListHtml() {
+  const g = custHoldGroups();
+  const view = filters.custHoldView || 'active';
+  const q = (filters.custHoldSearch || '').trim().toLowerCase();
+  const cur = view === 'done' ? g.done : (view === 'released' ? g.released : g.active);
+  const filtered = cur.filter(h => custHoldMatch(h, q));
+  if (!filtered.length) return `<div style="font-size:12.5px;color:var(--t3);padding:16px 6px;text-align:center">${q ? '검색 결과가 없습니다' : '해당 내역이 없습니다'}</div>`;
+  return filtered.map(h => custHoldCard(h, view === 'released')).join('');
+}
 function custHoldsBody() {
-  const list = custMyHolds();
-  const past = custMyPastHolds();
-  const note = `<div style="font-size:12px;color:var(--t2);margin-top:12px;line-height:1.55;background:var(--soft);border-radius:10px;padding:11px 13px"><i class="ti ti-info-circle" style="font-size:13px;color:var(--blue)"></i> 지난 홀딩의 <b>활성화(재홀딩)·기간 연장</b>이 필요하시면 담당자에게 <b>직접 문의</b>해 주세요.</div>`;
-  if (!list.length && !past.length) return `<div class="empty"><i class="ti ti-lock-off"></i>등록된 홀딩이 없습니다</div>${note}`;
-  const box = (inner, h) => `<div style="max-height:${h};overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:12px;padding:9px 9px 1px;background:#fff">${inner}</div>`;
-  let html = `<div style="font-size:12px;font-weight:600;color:var(--t2);margin:2px 2px 6px"><i class="ti ti-lock" style="font-size:12px;color:var(--gd)"></i> 진행 중인 홀딩${list.length ? ` (${list.length})` : ''}</div>`;
-  html += box(list.length ? list.map(h => custHoldCard(h, false)).join('') : `<div style="font-size:12.5px;color:var(--t3);padding:12px 4px">진행 중인 홀딩이 없습니다</div>`, '46vh');
-  if (past.length) {
-    html += `<div style="font-size:12px;font-weight:600;color:var(--t3);margin:14px 2px 6px"><i class="ti ti-history" style="font-size:13px"></i> 지난 내역 (${past.length}) <span style="font-weight:400">· 기간 경과로 해제됨</span></div>`;
-    html += box(past.map(h => custHoldCard(h, true)).join(''), '40vh');
-  }
+  const g = custHoldGroups();
+  const view = filters.custHoldView || 'active';
+  const q = filters.custHoldSearch || '';
+  const note = `<div style="font-size:12px;color:var(--t2);margin-top:12px;line-height:1.55;background:var(--soft);border-radius:10px;padding:11px 13px"><i class="ti ti-info-circle" style="font-size:13px;color:var(--blue)"></i> 지난(해제) 홀딩의 <b>활성화(재홀딩)·기간 연장</b>이 필요하시면 담당자에게 <b>직접 문의</b>해 주세요.</div>`;
+  if (!g.active.length && !g.done.length && !g.released.length) return `<div class="empty"><i class="ti ti-lock-off"></i>등록된 홀딩이 없습니다</div>${note}`;
+  const chip = (v, label, ic, n) => `<button class="chip ${view === v ? 'active' : ''}" onclick="goCustHoldView('${v}')"><i class="ti ${ic}"></i> ${label}${n ? ` (${n})` : ''}</button>`;
+  let html = `<div class="chips" style="margin:2px 0 9px">${chip('active', '진행중', 'ti-lock', g.active.length)}${chip('done', '출고완료', 'ti-circle-check', g.done.length)}${chip('released', '해제', 'ti-history', g.released.length)}</div>`;
+  html += `<div class="search-box" style="margin-bottom:9px">
+      <i class="ti ti-search"></i>
+      <input id="custhold-search" placeholder="자재명·롯트·비고 검색" value="${esc(q)}" oninput="filterCustHold()" autocomplete="off" lang="ko">
+      <button class="search-x" id="custhold-search-x" style="${q.trim() ? '' : 'display:none'}" onclick="clearCustHold()"><i class="ti ti-x"></i></button>
+    </div>`;
+  html += `<div id="custhold-list" style="max-height:58vh;min-height:160px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:12px;padding:9px 9px 1px;background:#fff">${custHoldListHtml()}</div>`;
   html += note;
   return html;
 }
+function goCustHoldView(v) { filters.custHoldView = v; filters.custHoldSearch = ''; renderCustomerStock(); }
+function filterCustHold() {
+  filters.custHoldSearch = el('custhold-search') ? el('custhold-search').value : '';
+  const box = el('custhold-list'); if (box) box.innerHTML = custHoldListHtml();
+  const x = el('custhold-search-x'); if (x) x.style.display = (filters.custHoldSearch || '').trim() ? '' : 'none';
+}
+function clearCustHold() { filters.custHoldSearch = ''; if (el('custhold-search')) el('custhold-search').value = ''; filterCustHold(); const i = el('custhold-search'); if (i) i.focus(); }
 function goCustTab(v) { filters.custTab = v; renderCustomerStock(); }
 /* 고객 로그인 시: 재고(읽기 허용) + 본인 업체 홀딩만 구독. 나머지 컬렉션은 구독하지 않음(권한 없음·충돌 방지) */
 function startCustomerSubs() {
@@ -719,7 +752,7 @@ function renderCustomerStock() {
     </div>
     <div id="cust-body">${custStockBody(list)}</div>
     ${state.inventory.some(i => i.restockDate) ? `<div style="font-size:11px;color:var(--t3);margin-top:8px;line-height:1.5;background:var(--soft);border-radius:9px;padding:9px 11px"><i class="ti ti-info-circle" style="font-size:12px;vertical-align:-1px"></i> 재입고 일정은 통관사·선사 스케줄에 따라 변동될 수 있습니다.</div>` : ''}`;
-  const holdsSec = `<div style="font-size:12px;color:var(--t3);margin:2px 0 8px">우리 업체 홀딩 내역 · 총 ${myHolds.length}건</div>${custHoldsBody()}`;
+  const holdsSec = `<div style="font-size:12px;color:var(--t3);margin:2px 0 8px">우리 업체 홀딩 내역 · 상태별로 확인하세요</div>${custHoldsBody()}`;
   const myReqs = (state.holdRequests || []).slice().sort((a, b) => (+b.createdAt || 0) - (+a.createdAt || 0));
   const reqPending = myReqs.filter(r => (r.status || '대기') === '대기').length;
   const reqSec = `
