@@ -399,11 +399,15 @@ function onData(coll) {
 let _actPlanRun = false;
 async function maybeActivatePlanned() {
   if (_actPlanRun || !me || isCustomerRole()) return;
+  if (!_loadedColls.holdings || !_loadedColls.inventory) return;   // 로드 전 계산 금지(오배치 방지)
   const hasPlanned = (state.holdings || []).some(h => !['확정', '해제'].includes(h.status || '홀딩') && holdItems(h).some(it => it.planned));
   if (!hasPlanned) return;
   _actPlanRun = true;
-  try { await activatePlannedHolds(); } catch (e) { console.warn('activatePlanned', e); }
-  finally { setTimeout(() => { _actPlanRun = false; }, 400); }
+  try {
+    await activatePlannedHolds();     // ① 빈 재고를 일정 빠른 순으로 예정→활성
+    await preemptForUrgent();          // ② 임박(3일 이내) 미충족 건이 3주+ 남은 홀딩 수량을 가져오고, 밀린 건은 예정으로
+  } catch (e) { console.warn('reconcileHolds', e); }
+  finally { setTimeout(() => { _actPlanRun = false; }, 500); }
 }
 /* 가용수량 미러: 고객은 자기 홀딩만 보이므로 전체 홀딩을 뺀 '가용'을 계산할 수 없음.
    직원 클라이언트가 inventory 문서에 availJang(=실재고−활성홀딩−파손)을 기록해 고객 화면에 노출.
@@ -1185,11 +1189,84 @@ async function activatePlannedHolds(name, physJang) {
     });
     if (changed) {
       const newStatus = newItems.every(x => x.planned) ? '예정' : '홀딩';
-      await Store.update('holdings', h.id, { items: newItems, status: newStatus });
+      const patch = { items: newItems, status: newStatus };
+      if (!newItems.some(x => x.planned) && h.autoDemoted) patch.autoDemoted = false;   // 다시 전부 확보되면 강등표시 해제
+      await Store.update('holdings', h.id, patch);
       count++;
     }
   }
   return count;
+}
+/* ── 임박 홀딩 선점(preemption) ──
+   가용이 없을 때: 사용일이 3일 이내로 임박했지만 재고를 못 잡은(예정) 품목이,
+   3주(21일) 이상 남은 기존 활성 홀딩의 같은 자재 수량을 가져온다.
+   밀려난(먼) 홀딩은 그만큼 예정홀딩으로 내려간다. 물리 재고 총량은 불변(재배치만).
+   정책: 완전 자동 / 트리거 3일 이내 / 보호 3주 이상 / 알림은 직원에게만. */
+const PREEMPT_URGENT_DAYS = 3, PREEMPT_FAROUT_DAYS = 21;
+async function preemptForUrgent() {
+  if (!me || isCustomerRole() || !CLOUD) return 0;
+  // 확정·해제 아닌 활성 홀딩만, 품목 클론(불변 원본 보존)
+  const work = state.holdings
+    .filter(h => !['확정', '해제'].includes(h.status || '홀딩'))
+    .map(h => ({ h, items: holdItems(h).map(x => ({ materialName: x.materialName, jang: +x.jang || 0, lot: x.lot || '', pattern: x.pattern || '', planned: !!x.planned })) }));
+  if (!work.length) return 0;
+  const mats = new Set();
+  work.forEach(w => w.items.forEach(it => { if (it.materialName) mats.add(_normName(it.materialName)); }));
+  const changed = new Set();
+  const moves = [];
+  for (const matKey of mats) {
+    let guard = 0;
+    while (guard++ < 300) {
+      // 임박 미충족(planned) 품목: 사용일 today~+3(지난 것 포함), 이른 순
+      let U = null;
+      for (const w of work.slice().sort((a, b) => (a.h.useDate || '9999-99-99').localeCompare(b.h.useDate || '9999-99-99'))) {
+        const d = daysFromNow(w.h.useDate);
+        if (d == null || d > PREEMPT_URGENT_DAYS) continue;
+        const it = w.items.find(x => _normName(x.materialName) === matKey && x.planned && x.jang > 0);
+        if (it) { U = { w, it }; break; }
+      }
+      if (!U) break;
+      // 기증 후보: 사용일 21일 이상 남고, 활성(non-planned) 재고 보유. 가장 멀리 남은 것부터
+      let D = null;
+      for (const w of work.slice().sort((a, b) => (b.h.useDate || '0000-00-00').localeCompare(a.h.useDate || '0000-00-00'))) {
+        const d = daysFromNow(w.h.useDate);
+        if (d == null || d < PREEMPT_FAROUT_DAYS) continue;
+        if (w === U.w) continue;
+        const it = w.items.find(x => _normName(x.materialName) === matKey && !x.planned && x.jang > 0);
+        if (it) { D = { w, it }; break; }
+      }
+      if (!D) break;
+      const x = Math.min(U.it.jang, D.it.jang);
+      if (x <= 0) break;
+      // U: planned → active (x장 확보)
+      U.it.jang -= x;
+      const uAct = U.w.items.find(y => _normName(y.materialName) === matKey && !y.planned);
+      if (uAct) uAct.jang += x; else U.w.items.push({ materialName: U.it.materialName, jang: x, lot: U.it.lot, pattern: U.it.pattern, planned: false });
+      // D: active → planned (x장 강등)
+      D.it.jang -= x;
+      const dPl = D.w.items.find(y => _normName(y.materialName) === matKey && y.planned);
+      if (dPl) dPl.jang += x; else D.w.items.push({ materialName: D.it.materialName, jang: x, lot: D.it.lot, pattern: D.it.pattern, planned: true });
+      changed.add(U.w); changed.add(D.w);
+      moves.push({ donor: D.w.h.vendor || '', mat: D.it.materialName, x, urgent: U.w.h.vendor || '', useDate: U.w.h.useDate || '' });
+    }
+  }
+  if (!changed.size) return 0;
+  for (const w of changed) {
+    const items = w.items.filter(x => x.jang > 0).map(x => {
+      const inv = state.inventory.find(i => _normName(i.name) === _normName(x.materialName));
+      return { materialName: x.materialName, jang: x.jang, hebe: inv ? +((x.jang) * (+inv.hebePerJang || 0)).toFixed(2) : 0, lot: x.lot || '', pattern: x.pattern || '', planned: !!x.planned };
+    });
+    if (!items.length) continue;
+    const status = items.every(x => x.planned) ? '예정' : '홀딩';
+    const first = items[0];
+    const patch = { items, status, materialName: first.materialName, jang: first.jang, hebe: first.hebe, lot: first.lot || '' };
+    const hadPlanned = holdItems(w.h).some(x => x.planned);
+    if (!hadPlanned && items.some(x => x.planned)) { patch.autoDemoted = true; patch.autoDemotedAt = Date.now(); }   // 강등 표시(직원 홈 알림용)
+    try { await Store.update('holdings', w.h.id, patch); } catch (e) { }
+  }
+  // 직원에게만 알림: 현재 세션 토스트 + 홈 화면 '자동조정' 배지(autoDemoted). 고객에겐 조용히 '예정'으로만 표시.
+  try { toast('홀딩 자동조정 ' + moves.length + '건: 임박 건에 재고 배정, 먼 건은 예정으로'); } catch (e) { }
+  return changed.size;
 }
 /* ===== 자재 여러 줄 입력 컴포넌트 (현장/홀딩 공용) ===== */
 let _mrowN = 0, _mrowPattern = false, _mrowDepot = false;   // _mrowPattern: 패턴 선택칸 표시 / _mrowDepot: 출고 폼에서 true → 창고별 재고 선택칸 표시
@@ -1354,6 +1431,8 @@ function buildAlerts() {
   lowItems.forEach(i => alerts.push({ key: 'low|' + i.name, c: 'r', ic: 'ti-alert-triangle', t: `${i.name} 입고 필요`, s: `가용 ${availJang(i)}장 · 안전재고 ${(+i.safeJang || 0)}장 미만`, tag: '재고부족' }));
   openIssues.forEach(i => alerts.push({ key: 'issue|' + (i.id || i.reason), c: 'r', ic: 'ti-alert-triangle', t: `${i.siteName || '현장'} 이슈 미해결`, s: (i.reason || '').slice(0, 40), tag: '이슈' }));
   plannedHolds.forEach(h => alerts.push({ key: 'plan|' + h.id, c: 'a', ic: 'ti-clock-pause', t: `${h.materialName || '-'} 입고 대기`, s: `${h.vendor || ''} · ${(+h.jang || 0)}장 예약(예정홀딩) · 입고 시 자동 전환`, tag: '예정홀딩' }));
+  const demoted = state.holdings.filter(h => h.autoDemoted && !['확정', '해제'].includes(h.status || '홀딩') && holdItems(h).some(x => x.planned));
+  demoted.forEach(h => alerts.push({ key: 'demote|' + h.id, c: 'a', ic: 'ti-transfer', t: `${h.vendor || ''} 홀딩 자동 조정됨`, s: `임박 건에 재고 양보 → 일부 예정홀딩 전환 · 사용예정 ${h.useDate || '-'}`, tag: '자동조정' }));
   soonConstruct.forEach(s => alerts.push({ key: 'const|' + s.id + '|' + s.constructDate, c: 'a', ic: 'ti-tools', t: `${s.name} 시공 임박`, s: `${s.constructDate} 시공 예정 · ${s.team || '시공팀 미정'}`, tag: 'D-' + daysFromNow(s.constructDate) }));
   soonHold.forEach(h => alerts.push({ key: 'hold|' + h.id + '|' + h.useDate, c: 'b', ic: 'ti-lock', t: `${h.vendor} 홀딩 사용 임박`, s: `${h.materialName} ${(+h.hebe || 0).toFixed(1)}㎡ · ${h.useDate} 사용`, tag: '홀딩' }));
   waitQuote.forEach(s => alerts.push({ key: 'quote|' + s.id + '|' + s.stage, c: 'a', ic: 'ti-file-invoice', t: `${s.name} 견적 진행 필요`, s: `현재 단계: ${s.stage} · ${s.client || ''}`, tag: s.stage }));
