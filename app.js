@@ -2059,7 +2059,10 @@ async function submitSite(id) {
 const ITEM_CATS = ['세라믹', '석재', '세면대', '무늬목', '기타'];
 function itemCat(it) { return (it && it.cat) ? it.cat : '세라믹'; }
 function itemUnit(cat) { return (cat === '세면대' || cat === '기타') ? '개' : '장'; }
-function catIsCeramicLike(cat) { return cat === '세라믹' || cat === '석재'; }
+function catIsCeramicLike(cat) { return cat === '세라믹' || cat === '석재'; }   // 헤베(㎡)·패턴 사용
+function catUsesSpec(cat) { return cat !== '기타'; }   // 규격: 세라믹·석재·무늬목·세면대
+function catUsesStone(cat) { return cat === '세면대'; }   // 석종(자재종류) 선택
+function basinStoneNames() { const set = new Set(BASIN_STONES.map(s => s.k)); (state.inventory || []).forEach(i => { if (itemCat(i) === '세면대' && i.stone) set.add(i.stone); }); return [...set]; }
 function catColor(c) { return { '세라믹': '#0F6E56', '석재': '#7a5b2e', '세면대': '#2f6fed', '무늬목': '#9a6a12', '기타': '#6b7280' }[c || '세라믹'] || '#6b7280'; }
 function catBadge(cat) { const c = cat || '세라믹'; const col = catColor(c); return `<span style="display:inline-block;font-size:9.5px;font-weight:700;color:${col};background:${col}1a;border:1px solid ${col}55;border-radius:7px;padding:1px 6px;vertical-align:middle;margin-left:4px">${esc(c)}</span>`; }
 function stockBaseList() {
@@ -2086,7 +2089,7 @@ function stockRowsHtml(list) {
     const cat = itemCat(i), u = itemUnit(cat), ceramic = catIsCeramicLike(cat);
     const planTxt = plan > 0 ? `<div style="font-size:10px;color:#2f6fed;font-weight:700">입고 예정 ${plan}${u}${planD ? ` <span style="font-weight:500;color:#5a86e0">(${(() => { const p = String(planD).split('-'); return p.length === 3 ? +p[1] + '/' + +p[2] : planD; })()})</span>` : ''}</div>` : '';
     return `<tr onclick="openItemForm('${i.id}')">
-      <td><b>${esc(i.name)}</b>${catBadge(cat)}${dmg > 0 ? ` <span style="display:inline-block;font-size:10px;font-weight:700;color:#b42318;background:#fef3f2;border:1px solid #fecdca;border-radius:8px;padding:1px 6px">파손 ${dmg}</span>` : ''}<div style="font-size:11px;color:var(--t3)">${esc(i.vendor || '')}</div></td>
+      <td><b>${esc(i.name)}</b>${catBadge(cat)}${dmg > 0 ? ` <span style="display:inline-block;font-size:10px;font-weight:700;color:#b42318;background:#fef3f2;border:1px solid #fecdca;border-radius:8px;padding:1px 6px">파손 ${dmg}</span>` : ''}<div style="font-size:11px;color:var(--t3)">${esc(i.vendor || '')}${i.stone ? ` · 석종 ${esc(i.stone)}` : ''}</div></td>
       <td>${esc(i.spec || '-')}</td>
       <td style="font-size:11px">${ceramic ? patternStockCell(i.name) : '-'}</td>
       <td><b>${(+i.jang || 0)}</b>${u}${i.safeJang ? `<div style="font-size:10px;color:var(--t3)">안전 ${i.safeJang}</div>` : ''}${planTxt}</td>
@@ -2250,7 +2253,8 @@ function openItemForm(id) {
       <div class="fld"><label>제품 종류<span class="req">*</span></label>
         <select id="i-cat" onchange="onItemCatChange()">${ITEM_CATS.map(c => `<option value="${c}" ${itemCat(v) === c ? 'selected' : ''}>${c}${c === '기타' ? ' (폽업·수전 등)' : ''}</option>`).join('')}</select>
       </div>
-      <div class="fld"><label>자재명<span class="req">*</span></label><input id="i-name" value="${esc(v.name || '')}" placeholder="자재명"></div>
+      <div class="fld" id="i-stone-fld"><label>석종(자재종류) <span style="color:var(--t3);font-weight:500">— 세면대 (기존 목록 선택 또는 새로 입력)</span></label>${searchBox('i-stone', '석종 검색·입력', v.stone || '', 'basinStoneNames', '')}</div>
+      <div class="fld"><label>자재명<span class="req">*</span> <span style="color:var(--t3);font-weight:500" id="i-name-hint"></span></label><input id="i-name" value="${esc(v.name || '')}" placeholder="자재명"></div>
       <div class="fld" id="i-spec-fld"><label>규격 (가로*세로*두께)</label>
         <select id="i-spec" onchange="onSpecChange('i')">${specOptions(v.spec || '')}</select>
       </div>
@@ -2299,12 +2303,17 @@ function openItemForm(id) {
 /* 품목 폼: 종류 변경 시 세라믹 전용 항목 표시/숨김 + 단위 라벨 갱신 */
 function onItemCatChange() {
   const cat = el('i-cat') ? el('i-cat').value : '세라믹';
-  const ceramic = catIsCeramicLike(cat);
-  ['i-spec-fld', 'i-hebe-fld', 'i-pattern-block'].forEach(id => { const e = el(id); if (e) e.style.display = ceramic ? '' : 'none'; });
-  if (!ceramic) { const a = el('i-spec-add'); if (a) a.classList.add('hidden'); }
+  const ceramic = catIsCeramicLike(cat);   // 헤베·패턴
+  const toggle = (id, show) => { const e = el(id); if (e) e.style.display = show ? '' : 'none'; };
+  toggle('i-stone-fld', catUsesStone(cat));   // 석종 — 세면대만
+  toggle('i-spec-fld', catUsesSpec(cat));     // 규격 — 기타 빼고 전부(세면대·무늬목 포함)
+  toggle('i-hebe-fld', ceramic);              // 헤베(㎡) — 세라믹·석재
+  toggle('i-pattern-block', ceramic);         // 패턴 — 세라믹·석재
+  if (!catUsesSpec(cat)) { const a = el('i-spec-add'); if (a) a.classList.add('hidden'); }
   const u = itemUnit(cat);
   const jl = el('i-jang-label'); if (jl) jl.textContent = '현재 ' + (u === '개' ? '수량(개)' : '장수');
   const sl = el('i-safe-label'); if (sl) sl.textContent = "안전재고(" + u + ") — 미만이면 '부족'";
+  const nh = el('i-name-hint'); if (nh) nh.textContent = catUsesStone(cat) ? '(비우면 석종명으로 저장)' : '';
 }
 /* 현재고 → 파손 처리(정상↔파손). 실재고는 그대로, '파손' 수량만 변동 */
 function openDamageForm(id) {
@@ -2505,16 +2514,19 @@ function updateItemHebe() {
   if (el('i-tothebe')) el('i-tothebe').textContent = (jang * ps.hebePerJang).toFixed(2);
 }
 async function submitItem(id) {
-  const name = el('i-name').value.trim(); if (!name) { toast('자재명을 입력하세요'); return; }
   const cat = el('i-cat') ? el('i-cat').value : '세라믹';
   const ceramic = catIsCeramicLike(cat);
-  let spec = ceramic ? el('i-spec').value : ''; if (spec === '__add') spec = '';
+  const stone = catUsesStone(cat) ? ((el('i-stone') && el('i-stone').value || '').trim()) : '';
+  let name = el('i-name').value.trim();
+  if (!name && stone) name = stone;   // 세면대: 자재명 비우면 석종명으로
+  if (!name) { toast(catUsesStone(cat) ? '석종을 선택하거나 자재명을 입력하세요' : '자재명을 입력하세요'); return; }
+  let spec = catUsesSpec(cat) ? el('i-spec').value : ''; if (spec === '__add') spec = '';
   const ps = parseSpec(spec);
   const jang = parseFloat(el('i-jang').value) || 0;
   let vendor = el('i-vendor').value; if (vendor === '__add') vendor = ''; vendor = vendor.trim();
   const patterns = [];
   if (ceramic) document.querySelectorAll('#ipat-defs .ipat-name').forEach(i => { const val = (i.value || '').trim(); if (val && !patterns.includes(val)) patterns.push(val); });
-  const obj = { name, cat, spec, vendor, depot: el('i-depot').value.trim() || '본사', jang, hebePerJang: ceramic ? ps.hebePerJang : 0, safeJang: parseFloat(el('i-safe').value) || 0, patterns };
+  const obj = { name, cat, stone, spec, vendor, depot: el('i-depot').value.trim() || '본사', jang, hebePerJang: ceramic ? ps.hebePerJang : 0, safeJang: parseFloat(el('i-safe').value) || 0, patterns };
   if (id) { await Store.update('inventory', id, obj); toast('저장됨'); }
   else { obj.lastInDate = todayStr(); await Store.add('inventory', obj); toast('품목 추가됨'); }
   closeModal();
