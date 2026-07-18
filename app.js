@@ -2550,21 +2550,26 @@ function openStockForm() {
         ${searchBox('in-item', '자재명 검색·입력', '', 'invNames', 'onInItemChange')}
       </div>
       <div class="fld"><label>규격</label><input id="in-spec" readonly placeholder="자재 선택 시 자동" style="background:var(--soft)"></div>
-      <div class="fld"><label>롯트 넘버<span class="req">*</span></label><input id="in-lot" placeholder="롯트 넘버 입력"></div>
+      <div class="fld" id="in-lot-fld"><label>롯트 넘버<span class="req">*</span></label><input id="in-lot" placeholder="롯트 넘버 입력"></div>
       <div class="fld"><label>창고(입고지)</label><input id="in-depot" list="in-depot-list" placeholder="창고"><datalist id="in-depot-list">${depotOptions().map(d => `<option value="${esc(d)}">`).join('')}</datalist></div>
     </div>
-    <div class="sec-label"><i class="ti ti-layout-grid"></i>패턴별 장수 <span style="font-weight:500;color:var(--t3)">(패턴이 없으면 장수만 입력)</span></div>
-    <div id="in-patterns"></div>
-    <button class="btn btn-ghost btn-sm" type="button" onclick="addPatternRow()" style="margin-top:4px"><i class="ti ti-plus"></i>패턴 추가</button>
+    <div id="in-pattern-block">
+      <div class="sec-label"><i class="ti ti-layout-grid"></i>패턴별 장수 <span style="font-weight:500;color:var(--t3)">(패턴이 없으면 장수만 입력)</span></div>
+      <div id="in-patterns"></div>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="addPatternRow()" style="margin-top:4px"><i class="ti ti-plus"></i>패턴 추가</button>
+    </div>
+    <div class="frm" id="in-simple-block" style="display:none">
+      <div class="fld"><label id="in-simple-label">수량</label><input id="in-simple-qty" inputmode="numeric" placeholder="수량 입력" oninput="computeInTotal()"></div>
+    </div>
     <div class="frm" style="margin-top:14px">
       <div class="fld"><label>입고일</label><input type="date" id="in-date" value="${todayStr()}"></div>
       <div class="fld"><label>발주처/매입처 <span style="color:var(--t3);font-weight:500">(기본: 직발주)</span></label><select id="in-vendor" onchange="onMasterChange('in-vendor','suppliers')">${masterOptions('suppliers', '다우세라믹앤석재')}</select></div>
       <div class="fld full hidden" id="in-vendor-add"><label>기타 발주처 입력 후 추가</label><div style="display:flex;gap:8px"><input id="in-vendor-new" placeholder="이름 입력" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('in-vendor','suppliers')"><i class="ti ti-plus"></i>추가</button></div></div>
       <div class="fld full"><label>메모</label><input id="in-note" placeholder="선택"></div>
     </div>
-    <div class="reco" id="in-summary" style="margin-top:14px"><div class="reco-h"><i class="ti ti-calculator"></i>자동 환산</div>
-      <div class="row"><span class="rl">총 입고 장수</span><span class="rv"><b id="in-tot-jang">0</b> 장</span></div>
-      <div class="row"><span class="rl">환산 헤베</span><span class="rv"><b id="in-tot-hebe">0</b> ㎡</span></div>
+    <div class="reco" id="in-summary" style="margin-top:14px"><div class="reco-h"><i class="ti ti-calculator"></i>합계</div>
+      <div class="row"><span class="rl">총 입고 수량</span><span class="rv"><b id="in-tot-jang">0</b> <span id="in-tot-unit">장</span></span></div>
+      <div class="row" id="in-hebe-row"><span class="rl">환산 헤베</span><span class="rv"><b id="in-tot-hebe">0</b> ㎡</span></div>
     </div>
     <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitStock()"><i class="ti ti-check"></i>입고 등록</button></div>`);
   _inLastMat = '';
@@ -2580,8 +2585,19 @@ function onInItemChange() {
   const it = inSelItem();
   el('in-spec').value = it ? (it.spec || '-') : '';
   if (el('in-depot')) el('in-depot').value = it ? (it.depot || '') : '';   // 선택 자재의 기본 창고
-  if (it && it.name !== _inLastMat) { _inLastMat = it.name; fillInPatterns(it.name); }   // 자재가 바뀔 때만 고정 패턴 새로 채움(입력 중 장수 유지)
-  else if (!it) _inLastMat = '';
+  // 종류별: 세라믹·석재는 롯트+패턴, 그 외(세면대·무늬목·기타)는 수량만
+  const cat = it ? itemCat(it) : '세라믹';
+  const ceramic = catIsCeramicLike(cat);
+  const show = (id, on) => { const e = el(id); if (e) e.style.display = on ? '' : 'none'; };
+  show('in-lot-fld', ceramic);
+  show('in-pattern-block', ceramic);
+  show('in-simple-block', !ceramic && !!it);
+  show('in-hebe-row', ceramic);
+  const sl = el('in-simple-label'); if (sl) sl.textContent = '수량(' + itemUnit(cat) + ')';
+  if (it && it.name !== _inLastMat) {
+    _inLastMat = it.name;
+    if (ceramic) fillInPatterns(it.name);   // 자재가 바뀔 때만 고정 패턴 새로 채움
+  } else if (!it) _inLastMat = '';
   computeInTotal();
 }
 /* 선택 자재의 고정 패턴대로 입고 패턴칸 자동 구성 (없으면 빈 칸 1개) */
@@ -2604,26 +2620,35 @@ function addPatternRow(name) {
   box.appendChild(row);
 }
 function computeInTotal() {
-  let tot = 0;
-  document.querySelectorAll('#in-patterns .in-pat-jang').forEach(i => tot += parseFloat(i.value) || 0);
   const it = inSelItem();
+  const cat = it ? itemCat(it) : '세라믹';
+  const ceramic = catIsCeramicLike(cat);
+  let tot = 0;
+  if (ceramic) document.querySelectorAll('#in-patterns .in-pat-jang').forEach(i => tot += parseFloat(i.value) || 0);
+  else tot = parseFloat(el('in-simple-qty') && el('in-simple-qty').value) || 0;
   const per = it ? (+it.hebePerJang || 0) : 0;
   if (el('in-tot-jang')) el('in-tot-jang').textContent = tot;
+  if (el('in-tot-unit')) el('in-tot-unit').textContent = itemUnit(cat);
   if (el('in-tot-hebe')) el('in-tot-hebe').textContent = (tot * per).toFixed(2);
 }
 async function submitStock() {
   const it = inSelItem();
   if (!it) { toast('자재를 선택하세요 (자재명 입력 후 목록에서 선택)'); return; }
-  const lot = el('in-lot').value.trim();
-  if (!lot) { toast('롯트 넘버를 입력하세요 (세라믹 필수)'); return; }
-  const patterns = []; let jang = 0;
-  document.querySelectorAll('#in-patterns .pat-row').forEach(r => {
-    const nm = r.querySelector('.in-pat-name').value.trim();
-    const q = parseFloat(r.querySelector('.in-pat-jang').value) || 0;
-    if (q > 0) { patterns.push({ pattern: nm || '-', jang: q }); jang += q; }
-  });
-  if (jang <= 0) { toast('입고 장수를 입력하세요'); return; }
-  const hebe = +(jang * (+it.hebePerJang || 0)).toFixed(2);
+  const ceramic = catIsCeramicLike(itemCat(it));
+  let lot = ''; const patterns = []; let jang = 0;
+  if (ceramic) {
+    lot = el('in-lot').value.trim();
+    if (!lot) { toast('롯트 넘버를 입력하세요 (세라믹·석재 필수)'); return; }
+    document.querySelectorAll('#in-patterns .pat-row').forEach(r => {
+      const nm = r.querySelector('.in-pat-name').value.trim();
+      const q = parseFloat(r.querySelector('.in-pat-jang').value) || 0;
+      if (q > 0) { patterns.push({ pattern: nm || '-', jang: q }); jang += q; }
+    });
+  } else {
+    jang = parseFloat(el('in-simple-qty') && el('in-simple-qty').value) || 0;   // 세면대·무늬목·기타: 롯트·패턴 없이 수량만
+  }
+  if (jang <= 0) { toast('입고 수량을 입력하세요'); return; }
+  const hebe = ceramic ? +(jang * (+it.hebePerJang || 0)).toFixed(2) : 0;
   let vendor = el('in-vendor').value; if (vendor === '__add') vendor = ''; vendor = (vendor || '다우세라믹앤석재').trim();
   const date = el('in-date').value, note = el('in-note').value.trim();
   const depot = (el('in-depot') && el('in-depot').value || '').trim() || it.depot || '본사';
@@ -2632,7 +2657,8 @@ async function submitStock() {
   await Store.add('transactions', { type: 'in', itemId: it.id, itemName: it.name, spec: it.spec, lot, patterns, jang, hebe, vendor, date, note, depot, by: me.name });
   await clearRestocksOnIn(it.name);
   const conv = await activatePlannedHolds(it.name, newJang);
-  toast(`입고 완료 · ${jang}장 (${hebe}㎡)` + (conv ? ` · 예정홀딩 ${conv}건 활성화` : '')); closeModal();
+  const u = itemUnit(itemCat(it));
+  toast(`입고 완료 · ${jang}${u}` + (ceramic ? ` (${hebe}㎡)` : '') + (conv ? ` · 예정홀딩 ${conv}건 활성화` : '')); closeModal();
 }
 
 /* ===================================================================
