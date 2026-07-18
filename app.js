@@ -608,7 +608,7 @@ function render() {
 /* ---------- 고객(거래처) 재고 조회 전용 화면 (읽기 전용) ---------- */
 function custStockList() {
   const q = (filters.custSearch || '').trim().toLowerCase();
-  let l = state.inventory.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  let l = state.inventory.filter(i => catIsCeramicLike(itemCat(i))).sort((a, b) => (a.name || '').localeCompare(b.name || ''));   // 부자재는 직원용 — 고객엔 세라믹·석재만
   if (q) l = l.filter(i => (i.name || '').toLowerCase().includes(q) || (i.spec || '').toLowerCase().includes(q));
   return l;
 }
@@ -744,8 +744,9 @@ function startCustomerHoldings() {
 function renderCustomerStock() {
   const tab = filters.custTab || 'stock';
   const list = custStockList();
-  const inN = state.inventory.filter(i => custAvail(i) > 0).length;
-  const outN = state.inventory.length - inN;
+  const custInv = state.inventory.filter(i => catIsCeramicLike(itemCat(i)));
+  const inN = custInv.filter(i => custAvail(i) > 0).length;
+  const outN = custInv.length - inN;
   const myHolds = custMyHolds();
   const stockSec = `
     <div style="font-size:12px;color:var(--t3);margin:2px 0 8px"><span class="live-dot" style="background:#1D9E75;--pc:rgba(29,158,117,.6);width:7px;height:7px;display:inline-block;vertical-align:middle;margin-right:5px"></span>실시간 · 재고있음 ${inN} · 품절 ${outN}</div>
@@ -2053,6 +2054,14 @@ async function submitSite(id) {
 /* ===================================================================
    재고 · 입고
    =================================================================== */
+/* ── 제품 종류(카테고리) & 단위 ──
+   세라믹·석재·무늬목 = '장', 세면대·기타(폽업·수전 등) = '개'. 규격·헤베·패턴은 세라믹/석재만 사용. */
+const ITEM_CATS = ['세라믹', '석재', '세면대', '무늬목', '기타'];
+function itemCat(it) { return (it && it.cat) ? it.cat : '세라믹'; }
+function itemUnit(cat) { return (cat === '세면대' || cat === '기타') ? '개' : '장'; }
+function catIsCeramicLike(cat) { return cat === '세라믹' || cat === '석재'; }
+function catColor(c) { return { '세라믹': '#0F6E56', '석재': '#7a5b2e', '세면대': '#2f6fed', '무늬목': '#9a6a12', '기타': '#6b7280' }[c || '세라믹'] || '#6b7280'; }
+function catBadge(cat) { const c = cat || '세라믹'; const col = catColor(c); return `<span style="display:inline-block;font-size:9.5px;font-weight:700;color:${col};background:${col}1a;border:1px solid ${col}55;border-radius:7px;padding:1px 6px;vertical-align:middle;margin-left:4px">${esc(c)}</span>`; }
 function stockBaseList() {
   const f = filters.stock;
   let list = state.inventory.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -2061,8 +2070,10 @@ function stockBaseList() {
   else if (f === 'low') list = list.filter(i => ['부족', '없음'].includes(stockState(i).k));
   else if (f === 'ok') list = list.filter(i => stockState(i).k === '정상');
   else if (f === 'dmg') list = list.filter(i => damagedStock(i.name) > 0);
+  const cat = filters.stockCat || 'all';
+  if (cat !== 'all') list = list.filter(i => itemCat(i) === cat);
   const q = (filters.stockSearch || '').trim().toLowerCase();
-  if (q) list = list.filter(i => (i.name || '').toLowerCase().includes(q) || (i.spec || '').toLowerCase().includes(q) || (i.vendor || '').toLowerCase().includes(q));
+  if (q) list = list.filter(i => (i.name || '').toLowerCase().includes(q) || (i.spec || '').toLowerCase().includes(q) || (i.vendor || '').toLowerCase().includes(q) || itemCat(i).includes(q));
   return list;
 }
 function stockRowsHtml(list) {
@@ -2072,14 +2083,15 @@ function stockRowsHtml(list) {
     const held = heldJangFor(i.name), avail = (+i.jang || 0) - held;
     const dmg = damagedStock(i.name);
     const plan = plannedJangFor(i.name), planD = restockDateForItem(i.name);
-    const planTxt = plan > 0 ? `<div style="font-size:10px;color:#2f6fed;font-weight:700">입고 예정 ${plan}장${planD ? ` <span style="font-weight:500;color:#5a86e0">(${(() => { const p = String(planD).split('-'); return p.length === 3 ? +p[1] + '/' + +p[2] : planD; })()})</span>` : ''}</div>` : '';
+    const cat = itemCat(i), u = itemUnit(cat), ceramic = catIsCeramicLike(cat);
+    const planTxt = plan > 0 ? `<div style="font-size:10px;color:#2f6fed;font-weight:700">입고 예정 ${plan}${u}${planD ? ` <span style="font-weight:500;color:#5a86e0">(${(() => { const p = String(planD).split('-'); return p.length === 3 ? +p[1] + '/' + +p[2] : planD; })()})</span>` : ''}</div>` : '';
     return `<tr onclick="openItemForm('${i.id}')">
-      <td><b>${esc(i.name)}</b>${dmg > 0 ? ` <span style="display:inline-block;font-size:10px;font-weight:700;color:#b42318;background:#fef3f2;border:1px solid #fecdca;border-radius:8px;padding:1px 6px">파손 ${dmg}</span>` : ''}<div style="font-size:11px;color:var(--t3)">${esc(i.vendor || '')}</div></td>
+      <td><b>${esc(i.name)}</b>${catBadge(cat)}${dmg > 0 ? ` <span style="display:inline-block;font-size:10px;font-weight:700;color:#b42318;background:#fef3f2;border:1px solid #fecdca;border-radius:8px;padding:1px 6px">파손 ${dmg}</span>` : ''}<div style="font-size:11px;color:var(--t3)">${esc(i.vendor || '')}</div></td>
       <td>${esc(i.spec || '-')}</td>
-      <td style="font-size:11px">${patternStockCell(i.name)}</td>
-      <td><b>${(+i.jang || 0)}</b>장${i.safeJang ? `<div style="font-size:10px;color:var(--t3)">안전 ${i.safeJang}</div>` : ''}${planTxt}</td>
-      <td><b style="color:${avail <= 0 ? 'var(--red-t)' : 'var(--gd)'}">${avail}</b>장${held > 0 ? `<div style="font-size:10px;color:var(--t3)">홀딩 ${held}</div>` : ''}</td>
-      <td>${itemHebe(i).toFixed(1)}㎡</td>
+      <td style="font-size:11px">${ceramic ? patternStockCell(i.name) : '-'}</td>
+      <td><b>${(+i.jang || 0)}</b>${u}${i.safeJang ? `<div style="font-size:10px;color:var(--t3)">안전 ${i.safeJang}</div>` : ''}${planTxt}</td>
+      <td><b style="color:${avail <= 0 ? 'var(--red-t)' : 'var(--gd)'}">${avail}</b>${u}${held > 0 ? `<div style="font-size:10px;color:var(--t3)">홀딩 ${held}</div>` : ''}</td>
+      <td>${ceramic ? itemHebe(i).toFixed(1) + '㎡' : '-'}</td>
       <td><span class="pill ${s.cls}">${s.k}</span></td>
       <td>${esc(i.depot || '본사')}</td>
     </tr>`;
@@ -2159,8 +2171,9 @@ function renderStock() {
       <input id="stock-search" placeholder="품명·규격·공급처 검색" value="${esc(filters.stockSearch || '')}" oninput="filterStockTable()" autocomplete="off">
       ${filters.stockSearch ? `<button class="search-x" onclick="el('stock-search').value='';filterStockTable()"><i class="ti ti-x"></i></button>` : ''}
     </div>
+    <div class="chips">${['all'].concat(ITEM_CATS).map(chipCat).join('')}</div>
     <div class="chips">${chipS('all', '전체', f)}${chipS('none', '없음', f)}${chipS('short', '부족', f)}${chipS('ok', '정상', f)}${chipS('dmg', '파손', f)}</div>
-    ${f === 'low' ? `<div class="banner warn"><i class="ti ti-alert-triangle"></i><span><b>입고가 필요한 자재</b>만 모았습니다. 자재명과 현재 장수를 확인하세요.</span></div>` : ''}
+    ${f === 'low' ? `<div class="banner warn"><i class="ti ti-alert-triangle"></i><span><b>입고가 필요한 자재</b>만 모았습니다. 자재명과 현재 수량을 확인하세요.</span></div>` : ''}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:12px;color:var(--t3)">검색 결과 <b id="stock-count" style="color:var(--t1)">${list.length}종</b></span><button class="btn btn-sm" onclick="stockExportExcel()"><i class="ti ti-download"></i>재고 엑셀</button></div>
     <div class="tbl-wrap" style="max-height:calc(100vh - 360px);min-height:220px;overflow:auto">
       <table class="tbl">
@@ -2180,6 +2193,7 @@ function renderStock() {
     </div>`;
 }
 function chipS(v, l, c) { return `<button class="chip ${c === v ? 'active' : ''}" onclick="filters.stock='${v}';renderStock()">${l}</button>`; }
+function chipCat(c) { const cur = filters.stockCat || 'all'; const label = c === 'all' ? '전체종류' : c; const on = cur === c; const col = c === 'all' ? '' : catColor(c); return `<button class="chip ${on ? 'active' : ''}" style="${on && col ? `background:${col};border-color:${col};color:#fff` : (col ? `color:${col}` : '')}" onclick="filters.stockCat='${c}';renderStock()">${label}</button>`; }
 /* 현재 재고 리스트 → 엑셀 (항목별 실재고 · 롯트 참고) */
 function stockExportExcel() {
   if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후 다시'); return; }
@@ -2233,8 +2247,11 @@ function openItemForm(id) {
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-box"></i>${it ? '품목 수정' : '품목 추가'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
+      <div class="fld"><label>제품 종류<span class="req">*</span></label>
+        <select id="i-cat" onchange="onItemCatChange()">${ITEM_CATS.map(c => `<option value="${c}" ${itemCat(v) === c ? 'selected' : ''}>${c}${c === '기타' ? ' (폽업·수전 등)' : ''}</option>`).join('')}</select>
+      </div>
       <div class="fld"><label>자재명<span class="req">*</span></label><input id="i-name" value="${esc(v.name || '')}" placeholder="자재명"></div>
-      <div class="fld"><label>규격 (가로*세로*두께)</label>
+      <div class="fld" id="i-spec-fld"><label>규격 (가로*세로*두께)</label>
         <select id="i-spec" onchange="onSpecChange('i')">${specOptions(v.spec || '')}</select>
       </div>
       <div class="fld full hidden" id="i-spec-add">
@@ -2247,14 +2264,16 @@ function openItemForm(id) {
       <div class="fld"><label>공급처/발주처</label><select id="i-vendor" onchange="onMasterChange('i-vendor','suppliers')">${masterOptions('suppliers', v.vendor || '')}</select></div>
       <div class="fld full hidden" id="i-vendor-add"><label>새 공급처 입력 후 추가</label><div style="display:flex;gap:8px"><input id="i-vendor-new" placeholder="이름 입력" style="flex:1"><button class="btn btn-pri btn-sm" type="button" onclick="commitMaster('i-vendor','suppliers')"><i class="ti ti-plus"></i>추가</button></div></div>
       <div class="fld"><label>창고</label><input id="i-depot" value="${esc(v.depot || '본사')}"></div>
-      <div class="fld"><label>현재 장수</label><input id="i-jang" value="${esc(v.jang || 0)}" inputmode="numeric" oninput="updateItemHebe()"></div>
-      <div class="fld"><label>안전재고(장) — 미만이면 '부족'</label><input id="i-safe" value="${esc(v.safeJang || 0)}" inputmode="numeric" placeholder="안전재고 장수"></div>
-      <div class="fld full"><div class="reco" id="i-hebe-info" style="margin-top:0"><div class="reco-h"><i class="ti ti-ruler-2"></i>자동 환산</div><div class="row"><span class="rl">장당 헤베</span><span class="rv"><b id="i-perjang">${(parseSpec(v.spec).hebePerJang || 0).toFixed(3)}</b> ㎡/장</span></div><div class="row"><span class="rl">현재 재고 헤베</span><span class="rv"><b id="i-tothebe">${itemHebe(v).toFixed(2)}</b> ㎡</span></div></div></div>
+      <div class="fld"><label id="i-jang-label">현재 ${itemUnit(itemCat(v)) === '개' ? '수량(개)' : '장수'}</label><input id="i-jang" value="${esc(v.jang || 0)}" inputmode="numeric" oninput="updateItemHebe()"></div>
+      <div class="fld"><label id="i-safe-label">안전재고(${itemUnit(itemCat(v))}) — 미만이면 '부족'</label><input id="i-safe" value="${esc(v.safeJang || 0)}" inputmode="numeric" placeholder="안전재고"></div>
+      <div class="fld full" id="i-hebe-fld"><div class="reco" id="i-hebe-info" style="margin-top:0"><div class="reco-h"><i class="ti ti-ruler-2"></i>자동 환산</div><div class="row"><span class="rl">장당 헤베</span><span class="rv"><b id="i-perjang">${(parseSpec(v.spec).hebePerJang || 0).toFixed(3)}</b> ㎡/장</span></div><div class="row"><span class="rl">현재 재고 헤베</span><span class="rv"><b id="i-tothebe">${itemHebe(v).toFixed(2)}</b> ㎡</span></div></div></div>
     </div>
+    <div id="i-pattern-block">
     <div class="sec-label"><i class="ti ti-layout-grid"></i>패턴 정의(고정) <span style="font-weight:500;color:var(--t3)">— 입고 때 자동 표시</span></div>
     <div style="font-size:11.5px;color:var(--t3);margin-bottom:6px;background:var(--soft);border-radius:9px;padding:9px 11px;line-height:1.5"><i class="ti ti-info-circle"></i> 이 자재의 패턴을 배치 순서대로 적어두면(예: 1번(좌상), 2번(우상)) 입고 등록 때 그대로 자동 표시돼 매번 입력할 필요가 없습니다. 공정이 바뀌면 언제든 여기서 수정하세요.</div>
     <div id="ipat-defs">${(() => { const defs = it ? matPatternDefs(it.name) : []; return defs.length ? defs.map(ipatDefRow).join('') : ipatDefRow(''); })()}</div>
     <button class="btn btn-ghost btn-sm" type="button" onclick="addIpatDef()" style="margin-bottom:8px"><i class="ti ti-plus"></i>패턴 추가</button>
+    </div>
     ${it ? `
     <div class="sec-label" style="display:flex;justify-content:space-between;align-items:center"><span><i class="ti ti-list-details"></i>롯트별 재고</span>${isAdmin() ? `<button class="btn btn-ghost btn-sm" type="button" onclick="openAdjustForm('${it.id}')"><i class="ti ti-adjustments"></i>재고 조정</button>` : ''}</div>
     ${(() => { const ls = lotStock(it.name); return ls.length ? `<div class="tbl-wrap" style="margin-bottom:6px"><table class="tbl"><thead><tr><th>롯트</th><th>입고</th><th>출고</th><th>잔여</th></tr></thead><tbody>${ls.map(l => `<tr><td><b>${esc(l.lot)}</b></td><td>${l.inQty}장</td><td>${l.outQty}장</td><td><b style="color:${l.remain <= 0 ? 'var(--t3)' : 'var(--gd)'}">${l.remain}장</b></td></tr>`).join('')}</tbody></table></div>` : `<div style="font-size:12.5px;color:var(--t3);padding:2px 0 8px">롯트 정보가 없습니다 (입고 시 롯트를 입력하면 표시됩니다)</div>`; })()}
@@ -2275,6 +2294,17 @@ function openItemForm(id) {
       <button class="btn btn-pri" style="flex:1.4" onclick="submitItem('${id || ''}')"><i class="ti ti-check"></i>저장</button>
     </div>`);
   setSelectValue('i-vendor', 'suppliers', v.vendor);
+  onItemCatChange();   // 종류에 맞춰 규격·헤베·패턴 표시/숨김 + 단위 라벨 반영
+}
+/* 품목 폼: 종류 변경 시 세라믹 전용 항목 표시/숨김 + 단위 라벨 갱신 */
+function onItemCatChange() {
+  const cat = el('i-cat') ? el('i-cat').value : '세라믹';
+  const ceramic = catIsCeramicLike(cat);
+  ['i-spec-fld', 'i-hebe-fld', 'i-pattern-block'].forEach(id => { const e = el(id); if (e) e.style.display = ceramic ? '' : 'none'; });
+  if (!ceramic) { const a = el('i-spec-add'); if (a) a.classList.add('hidden'); }
+  const u = itemUnit(cat);
+  const jl = el('i-jang-label'); if (jl) jl.textContent = '현재 ' + (u === '개' ? '수량(개)' : '장수');
+  const sl = el('i-safe-label'); if (sl) sl.textContent = "안전재고(" + u + ") — 미만이면 '부족'";
 }
 /* 현재고 → 파손 처리(정상↔파손). 실재고는 그대로, '파손' 수량만 변동 */
 function openDamageForm(id) {
@@ -2476,13 +2506,15 @@ function updateItemHebe() {
 }
 async function submitItem(id) {
   const name = el('i-name').value.trim(); if (!name) { toast('자재명을 입력하세요'); return; }
-  let spec = el('i-spec').value; if (spec === '__add') spec = '';
+  const cat = el('i-cat') ? el('i-cat').value : '세라믹';
+  const ceramic = catIsCeramicLike(cat);
+  let spec = ceramic ? el('i-spec').value : ''; if (spec === '__add') spec = '';
   const ps = parseSpec(spec);
   const jang = parseFloat(el('i-jang').value) || 0;
   let vendor = el('i-vendor').value; if (vendor === '__add') vendor = ''; vendor = vendor.trim();
   const patterns = [];
-  document.querySelectorAll('#ipat-defs .ipat-name').forEach(i => { const val = (i.value || '').trim(); if (val && !patterns.includes(val)) patterns.push(val); });
-  const obj = { name, spec, vendor, depot: el('i-depot').value.trim() || '본사', jang, hebePerJang: ps.hebePerJang, safeJang: parseFloat(el('i-safe').value) || 0, patterns };
+  if (ceramic) document.querySelectorAll('#ipat-defs .ipat-name').forEach(i => { const val = (i.value || '').trim(); if (val && !patterns.includes(val)) patterns.push(val); });
+  const obj = { name, cat, spec, vendor, depot: el('i-depot').value.trim() || '본사', jang, hebePerJang: ceramic ? ps.hebePerJang : 0, safeJang: parseFloat(el('i-safe').value) || 0, patterns };
   if (id) { await Store.update('inventory', id, obj); toast('저장됨'); }
   else { obj.lastInDate = todayStr(); await Store.add('inventory', obj); toast('품목 추가됨'); }
   closeModal();
