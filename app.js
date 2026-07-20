@@ -2912,10 +2912,17 @@ async function bulkInSubmit() {
    출고 (현장/공장·거래처) + 월별/분석
    =================================================================== */
 /* 출고 건을 shipId 기준으로 묶은 목록 (최신순) */
+/* 출고 정렬용 타임스탬프: 등록시각(createdAt) → shipId 내장 시각(S+ms) → 날짜 순 */
+function outTs(t) {
+  if (t.createdAt) return +t.createdAt;
+  if (t.shipId && /^S\d{10,}$/.test(t.shipId)) return +t.shipId.slice(1);
+  return t.date ? new Date(t.date + 'T00:00').getTime() : 0;
+}
 function shipSlipGroups() {
-  const outs = state.transactions.filter(t => t.type === 'out').sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const outs = state.transactions.filter(t => t.type === 'out');
   const gmap = {}, groups = [];
-  outs.forEach(t => { const k = t.shipId || t.id; if (!gmap[k]) { gmap[k] = { key: k, date: t.date, dest: t.dest || t.factory, targetName: t.targetName, by: t.by, items: [] }; groups.push(gmap[k]); } gmap[k].items.push(t); });
+  outs.forEach(t => { const k = t.shipId || t.id; if (!gmap[k]) { gmap[k] = { key: k, date: t.date, dest: t.dest || t.factory, targetName: t.targetName, by: t.by, items: [], ts: outTs(t) }; groups.push(gmap[k]); } gmap[k].items.push(t); gmap[k].ts = Math.max(gmap[k].ts, outTs(t)); });
+  groups.sort((a, b) => b.ts - a.ts);   // 최근 출고가 맨 위로
   return groups;
 }
 /* 출고증 인쇄 목록: 검색 없으면 최근 10건, 검색하면 업체명·자재명으로 전체에서 찾기 */
@@ -3096,7 +3103,7 @@ function shipReportList() {
   return state.transactions.filter(t => t.type === 'out')
     .filter(t => (!from || (t.date || '') >= from) && (!to || (t.date || '') <= to) && (!cl || t.targetName === cl) && (!mt || t.itemName === mt)
       && (!q || (t.itemName || '').toLowerCase().includes(q) || (t.targetName || '').toLowerCase().includes(q)))
-    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (outTs(b) - outTs(a)));
 }
 function shipReport() {
   const list = shipReportList();
@@ -3914,7 +3921,7 @@ async function submitShip() {
       const lot = (r.lot && r.lot.trim()) ? r.lot.trim() : soleLot(material);   // 롯트 미지정인데 남은 롯트가 하나면 자동 연동
       const oDepot = (r.depot && r.depot.trim()) ? r.depot.trim() : (el('o-depot') && el('o-depot').value || '').trim();   // 행별 창고 우선(창고별 재고), 없으면 폼 상단 창고
       if (it) await Store.update('inventory', it.id, { jang: newJang });
-      await Store.add('transactions', { type: 'out', shipId, itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot, pattern: r.pattern, depot: oDepot, dest, factory: dest, target: '', targetName, date, note, damaged, by: me.name });
+      await Store.add('transactions', { type: 'out', shipId, itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot, pattern: r.pattern, depot: oDepot, dest, factory: dest, target: '', targetName, date, note, damaged, createdAt: Date.now(), by: me.name });
       totalJang += jang;
       if (it && oldJang > 0 && newJang <= 0) zeroed.push(material);
     }
