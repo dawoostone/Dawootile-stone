@@ -3830,6 +3830,7 @@ function openShipForm(pre) {
       <div class="fld full"><label>출고지(공장/현장)<span class="req">*</span></label>
         <select id="o-dest" onchange="onShipDest()">
           <option value="">선택…</option>
+          <option value="업체 배차">🚚 업체 배차 (업체가 직접 수령·배차 — 출고지 입력 불필요)</option>
           ${state.factories.slice().sort((a, b) => (a.value || '').localeCompare(b.value || '')).map(f => `<option value="${esc(f.value)}">${esc(f.value)} (공장)</option>`).join('')}
           <option value="__manual">직접 입력 (현장·기타)</option>
         </select>
@@ -4353,7 +4354,7 @@ function renderSettings() {
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-briefcase"></i>거래처 관리</h3>${isAdmin() && (state.clients || []).length ? `<button class="more" style="color:var(--red-t)" onclick="delAllClients()"><i class="ti ti-trash" style="font-size:14px"></i>전체 삭제</button>` : ''}</div>
       <div style="display:flex;gap:8px;margin-bottom:10px"><input id="client-new" placeholder="거래처명 입력" autocomplete="off" style="flex:1;font-size:16px;padding:11px 12px;border:1.5px solid var(--bd2);border-radius:10px"><button class="btn btn-pri btn-sm" onclick="addClient()"><i class="ti ti-plus"></i>등록</button></div>
-      ${(state.clients || []).length ? state.clients.slice().sort((a, b) => (a.value || '').localeCompare(b.value || '')).map(c => `<div class="mem"><div class="info"><div class="nm">${esc(c.value)}</div></div>${isAdmin() ? `<button class="x" onclick="delClient('${c.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('') : `<div style="font-size:12.5px;color:var(--t3);padding:4px 0">등록된 거래처가 없습니다. 등록하면 현장·출고·홀딩의 업체명 검색에 나옵니다.</div>`}
+      ${(state.clients || []).length ? `<div style="max-height:300px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:10px;padding:2px 8px">${state.clients.slice().sort((a, b) => (a.value || '').localeCompare(b.value || '')).map(c => `<div class="mem"><div class="info"><div class="nm">${esc(c.value)}</div></div>${isAdmin() ? `<button class="x" onclick="delClient('${c.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('')}</div><div style="font-size:11.5px;color:var(--t3);margin-top:6px">총 ${(state.clients || []).length}개</div>` : `<div style="font-size:12.5px;color:var(--t3);padding:4px 0">등록된 거래처가 없습니다. 등록하면 현장·출고·홀딩의 업체명 검색에 나옵니다.</div>`}
       ${!isAdmin() ? `<div class="banner info" style="margin-top:10px"><i class="ti ti-info-circle"></i>거래처 삭제는 관리자만 가능합니다.</div>` : ''}
     </div>
     <div class="card">
