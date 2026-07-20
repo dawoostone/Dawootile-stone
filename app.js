@@ -1120,9 +1120,11 @@ function damagedStock(name) {
   state.transactions.forEach(t => {
     if (_normName(t.itemName) !== key) return;
     if (t.type === 'damage') { n += (+t.jang || 0); return; }   // 파손 처리(+)/복구(−)
-    if (!/파손/.test(t.note || '')) return;
+    // '파손 자재'로 표시된 입·출고만 반영. damaged 플래그 우선, 없으면(구버전) note '파손'으로 판단
+    const dmgFlag = (t.damaged === true) || (t.damaged === undefined && /파손/.test(t.note || ''));
+    if (!dmgFlag) return;
     if (t.type === 'in') n += (+t.jang || 0);
-    else if (t.type === 'out') n -= (+t.jang || 0);
+    else if (t.type === 'out') n -= (+t.jang || 0);   // 파손 자재 출고 → 파손 재고에서 차감(폐기·반품)
   });
   return n;
 }
@@ -2287,7 +2289,7 @@ function openItemForm(id) {
     ${(() => { const adjs = txns.filter(t => t.type === 'adjust').sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0)); return adjs.length ? adjs.map(t => { const d = +t.jang || 0; return `<div class="alert-i b" style="margin-bottom:6px"><div class="ai" style="color:${d >= 0 ? 'var(--gd)' : 'var(--red-t)'}"><i class="ti ti-adjustments"></i></div><div class="at"><b style="color:${d >= 0 ? 'var(--gd)' : 'var(--red-t)'}">${d > 0 ? '+' : ''}${d}장</b><span>${esc(t.date || '')}${t.lot ? ' · 롯트 ' + esc(t.lot) : ''}${t.pattern ? ' · 패턴 ' + esc(t.pattern) : ''} · ${esc(t.note || '')} · ${esc(t.by || '')}</span></div><button class="btn btn-ghost btn-sm" type="button" onclick="event.stopPropagation();delAdjust('${t.id}')" title="되돌리기"><i class="ti ti-arrow-back-up"></i></button></div>`; }).join('') : `<div style="font-size:12.5px;color:var(--t3);padding:2px 0 8px">조정 내역이 없습니다</div>`; })()}` : ''}
     <div class="sec-label"><i class="ti ti-logout"></i>출고 내역 <span style="font-weight:500;color:var(--t3)">· 누적 ${totalOut}장</span></div>
     <div style="font-size:11.5px;color:var(--t3);margin-bottom:6px"><i class="ti ti-info-circle"></i> 출고를 탭하면 롯트·패턴을 지정해 미지정을 해소할 수 있습니다</div>
-    ${txnRowsWithMore(outs, 'out-more', t => `<div class="alert-i b" style="margin-bottom:6px;cursor:pointer" onclick="openOutEdit('${t.id}')" title="탭하면 롯트·패턴 지정"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${+t.jang || 0}장${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}</b><span>${esc(t.date || '')} · ${esc(t.targetName || '-')}${t.lot ? ' · 롯트 ' + esc(t.lot) : ' · <span style="color:var(--red-t)">롯트 미지정</span>'}</span></div><i class="ti ti-edit" style="color:var(--t3);align-self:center"></i></div>`, '출고 내역 없음')}
+    ${txnRowsWithMore(outs, 'out-more', t => { const dmg = (t.damaged === true) || (t.damaged === undefined && /파손/.test(t.note || '')); return `<div class="alert-i b" style="margin-bottom:6px;cursor:pointer" onclick="openOutEdit('${t.id}')" title="탭하면 롯트·패턴 지정"><div class="ai"><i class="ti ti-logout"></i></div><div class="at"><b>${+t.jang || 0}장${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}${dmg ? ` <span style="display:inline-block;font-size:10px;font-weight:700;color:#b42318;background:#fef3f2;border:1px solid #fecdca;border-radius:8px;padding:1px 6px">파손</span>` : ''}</b><span>${esc(t.date || '')} · ${esc(t.targetName || '-')}${t.lot ? ' · 롯트 ' + esc(t.lot) : ' · <span style="color:var(--red-t)">롯트 미지정</span>'}</span></div><i class="ti ti-edit" style="color:var(--t3);align-self:center"></i></div>`; }, '출고 내역 없음')}
     <div class="sec-label" style="margin-top:14px"><i class="ti ti-login"></i>입고 내역</div>
     <div style="font-size:11.5px;color:var(--t3);margin-bottom:6px"><i class="ti ti-info-circle"></i> 입고 내역을 탭하면 롯트·패턴을 수정할 수 있습니다</div>
     ${txnRowsWithMore(ins, 'in-more', t => `<div class="alert-i b" style="background:var(--gl2);border-color:var(--gbd);margin-bottom:6px;cursor:pointer" onclick="openInEdit('${t.id}')" title="탭하면 롯트·패턴 수정"><div class="ai" style="color:var(--gd)"><i class="ti ti-login"></i></div><div class="at"><b>+${+t.jang || 0}장${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}</b><span>${esc(t.date || '')} · 롯트 ${esc(t.lot || '-')} · ${esc(t.by || '')}</span></div><i class="ti ti-edit" style="color:var(--t3);align-self:center"></i></div>`, '입고 내역 없음')}
@@ -3168,6 +3170,7 @@ function openOutEdit(id) {
       <div class="fld"><label>거래처</label><input id="oe-target" lang="ko" value="${esc(t.targetName || '')}"></div>
       <div class="fld"><label>출고지</label><input id="oe-dest" lang="ko" value="${esc(t.dest || t.factory || '')}"></div>
       <div class="fld full"><label>메모</label><input id="oe-note" lang="ko" value="${esc(t.note || '')}"></div>
+      <div class="fld full" style="background:#fff2f0;border-radius:9px;padding:10px 12px"><label style="display:flex;align-items:center;gap:9px;cursor:pointer;font-weight:600;color:#b42318"><input type="checkbox" id="oe-damaged" ${((t.damaged === true) || (t.damaged === undefined && /파손/.test(t.note || ''))) ? 'checked' : ''} style="width:18px;height:18px"> <i class="ti ti-alert-square-rounded"></i>파손 자재 출고 <span style="font-weight:400;color:var(--t3);font-size:12px">(체크 시 파손 재고에서 차감)</span></label></div>
       <div class="fld full" style="font-size:11.5px;color:var(--t3);background:var(--soft);border-radius:9px;padding:9px 11px;line-height:1.5"><i class="ti ti-info-circle"></i> 롯트·패턴을 바꾸면 롯트별/패턴별 재고가 자동으로 다시 계산됩니다. 장수를 바꾸면 실재고도 함께 보정됩니다.</div>
     </div>
     <div class="frm-foot">${isAdmin() ? `<button class="btn" style="color:var(--red-t);border-color:#e6a9a9" onclick="delShip('${t.id}');closeModal()"><i class="ti ti-trash"></i></button>` : ''}<button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitOutEdit('${t.id}')"><i class="ti ti-check"></i>저장</button></div>`);
@@ -3186,7 +3189,8 @@ async function submitOutEdit(id) {
     date: el('oe-date').value || t.date || '',
     targetName: (el('oe-target').value || '').trim(),
     dest: (el('oe-dest').value || '').trim(),
-    note: (el('oe-note').value || '').trim()
+    note: (el('oe-note').value || '').trim(),
+    damaged: !!(el('oe-damaged') && el('oe-damaged').checked)   // 파손 자재 출고 지정(체크 해제 시 파손 차감 취소)
   };
   patch.factory = patch.dest;
   await Store.update('transactions', id, patch);
@@ -3824,6 +3828,7 @@ function openShipForm(pre) {
       </div>
       <div class="fld full hidden" id="o-dest-manual"><label>출고지 직접 입력</label><input id="o-dest-text" placeholder="현장명/출고지 입력" autocomplete="off"></div>
       <div class="fld full"><label>메모</label><input id="o-note" placeholder="선택"></div>
+      <div class="fld full" style="background:#fff2f0;border-radius:9px;padding:10px 12px"><label style="display:flex;align-items:center;gap:9px;cursor:pointer;font-weight:600;color:#b42318"><input type="checkbox" id="o-damaged" style="width:18px;height:18px"> <i class="ti ti-alert-square-rounded"></i>파손 자재 출고 <span style="font-weight:400;color:var(--t3);font-size:12px">(체크 시 파손 재고에서 차감 — 폐기·반품)</span></label></div>
     </div>
     <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitShip()"><i class="ti ti-check"></i>출고 등록</button></div>`);
   if (pre && pre.targetName && el('o-targetName')) el('o-targetName').value = pre.targetName;
@@ -3885,6 +3890,7 @@ async function submitShip() {
     await ensureClient(targetName);   // 신규 거래처 자동 등록
     const shipId = 'S' + Date.now();
     const note = el('o-note').value.trim();
+    const damaged = !!(el('o-damaged') && el('o-damaged').checked);   // 파손 자재 출고
     let totalJang = 0; const zeroed = [];
     for (const r of rows) {
       const material = r.name, jang = r.qty;
@@ -3895,7 +3901,7 @@ async function submitShip() {
       const lot = (r.lot && r.lot.trim()) ? r.lot.trim() : soleLot(material);   // 롯트 미지정인데 남은 롯트가 하나면 자동 연동
       const oDepot = (r.depot && r.depot.trim()) ? r.depot.trim() : (el('o-depot') && el('o-depot').value || '').trim();   // 행별 창고 우선(창고별 재고), 없으면 폼 상단 창고
       if (it) await Store.update('inventory', it.id, { jang: newJang });
-      await Store.add('transactions', { type: 'out', shipId, itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot, pattern: r.pattern, depot: oDepot, dest, factory: dest, target: '', targetName, date, note, by: me.name });
+      await Store.add('transactions', { type: 'out', shipId, itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot, pattern: r.pattern, depot: oDepot, dest, factory: dest, target: '', targetName, date, note, damaged, by: me.name });
       totalJang += jang;
       if (it && oldJang > 0 && newJang <= 0) zeroed.push(material);
     }
