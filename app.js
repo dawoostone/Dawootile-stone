@@ -593,8 +593,16 @@ function fabAction() {
   else if (tab === 'hold') openHoldForm();
   else if (tab === 'basin') openBasinForm();
 }
+let _renderTimer = null;
 function render() {
   if (!me) return;
+  // 입력 중(검색창·폼 포커스)에는 전체 재렌더를 미뤄 한글 입력·검색 끊김 방지
+  const _ae = document.activeElement;
+  if (_ae && (_ae.tagName === 'INPUT' || _ae.tagName === 'TEXTAREA' || _ae.isContentEditable)) {
+    if (!_renderTimer) _renderTimer = setTimeout(() => { _renderTimer = null; render(); }, 600);
+    return;
+  }
+  if (_renderTimer) { clearTimeout(_renderTimer); _renderTimer = null; }
   if (isCustomerRole()) { renderCustomerStock(); return; }   // 고객: 재고 조회 전용
   if (isCrewRole()) { renderCrewSchedule(); return; }        // 시공팀: 시공 스케줄 전용
   if (tab === 'home') renderHome();
@@ -3382,7 +3390,7 @@ function renderBasin() {
     <div class="chips">${chips}</div>
     <div class="search-box">
       <i class="ti ti-search"></i>
-      <input id="basin-search" placeholder="업체·석종·규격·주문번호 검색" value="${esc(filters.basinSearch || '')}" oninput="filterBasin()" autocomplete="off">
+      <input id="basin-search" placeholder="업체·석종·규격·주문번호 검색" value="${esc(filters.basinSearch || '')}" oninput="filterBasin()" autocomplete="off" lang="ko">
       ${filters.basinSearch ? `<button class="search-x" onclick="el('basin-search').value='';filters.basinSearch='';renderBasin()"><i class="ti ti-x"></i></button>` : ''}
     </div>
     <div style="display:flex;gap:8px;margin-bottom:10px">
