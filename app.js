@@ -642,7 +642,7 @@ function custStockBody(list) {
     </tr>`;
   }).join('');
   return `<div style="border:0.5px solid var(--bd);border-radius:12px;overflow:hidden;margin-top:2px">
-    <div style="max-height:calc(100vh - 250px);min-height:200px;overflow-y:auto;-webkit-overflow-scrolling:touch">
+    <div id="cust-stock-wrap" data-keepscroll style="max-height:calc(100vh - 250px);min-height:200px;overflow-y:auto;-webkit-overflow-scrolling:touch">
       <table class="cust-tbl"><thead><tr><th>자재명 · 규격</th><th style="text-align:right;width:70px">가용재고</th><th style="width:62px">상태</th></tr></thead><tbody>${rows}</tbody></table>
     </div></div>`;
 }
@@ -711,7 +711,7 @@ function custHoldsBody() {
       <input id="custhold-search" placeholder="자재명·롯트·비고 검색" value="${esc(q)}" oninput="filterCustHold()" autocomplete="off" lang="ko">
       <button class="search-x" id="custhold-search-x" style="${q.trim() ? '' : 'display:none'}" onclick="clearCustHold()"><i class="ti ti-x"></i></button>
     </div>`;
-  html += `<div id="custhold-list" style="max-height:58vh;min-height:160px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:12px;padding:9px 9px 1px;background:#fff">${custHoldListHtml()}</div>`;
+  html += `<div id="custhold-list" data-keepscroll style="max-height:58vh;min-height:160px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:12px;padding:9px 9px 1px;background:#fff">${custHoldListHtml()}</div>`;
   html += note;
   return html;
 }
@@ -2192,7 +2192,7 @@ function renderStock() {
     <div class="chips">${chipS('all', '전체', f)}${chipS('none', '없음', f)}${chipS('short', '부족', f)}${chipS('ok', '정상', f)}${chipS('dmg', '파손', f)}</div>
     ${f === 'low' ? `<div class="banner warn"><i class="ti ti-alert-triangle"></i><span><b>입고가 필요한 자재</b>만 모았습니다. 자재명과 현재 수량을 확인하세요.</span></div>` : ''}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:12px;color:var(--t3)">검색 결과 <b id="stock-count" style="color:var(--t1)">${list.length}종</b></span><button class="btn btn-sm" onclick="stockExportExcel()"><i class="ti ti-download"></i>재고 엑셀</button></div>
-    <div class="tbl-wrap" style="max-height:calc(100vh - 360px);min-height:220px;overflow:auto">
+    <div class="tbl-wrap" id="stock-wrap" data-keepscroll style="max-height:calc(100vh - 360px);min-height:220px;overflow:auto">
       <table class="tbl">
         <thead><tr><th>자재명</th><th>규격</th><th>패턴별</th><th>실재고</th><th>가용</th><th>헤베(㎡)</th><th>상태</th><th>창고</th></tr></thead>
         <tbody id="stock-tbody">${stockRowsHtml(list)}</tbody>
@@ -2206,7 +2206,7 @@ function renderStock() {
         <input id="in-search" placeholder="자재명·공급처·롯트 검색" value="${esc(filters.inSearch || '')}" oninput="filterInList()" autocomplete="off" lang="ko">
         <button class="search-x" id="in-search-x" style="${(filters.inSearch || '').trim() ? '' : 'display:none'}" onclick="el('in-search').value='';filterInList()"><i class="ti ti-x"></i></button>
       </div>
-      <div id="in-list" style="max-height:360px;overflow-y:auto;-webkit-overflow-scrolling:touch">${inListHtml()}</div>
+      <div id="in-list" data-keepscroll style="max-height:360px;overflow-y:auto;-webkit-overflow-scrolling:touch">${inListHtml()}</div>
     </div>`;
 }
 function chipS(v, l, c) { return `<button class="chip ${c === v ? 'active' : ''}" onclick="filters.stock='${v}';renderStock()">${l}</button>`; }
@@ -3002,7 +3002,7 @@ function renderShip() {
         <div style="font-size:13px;color:var(--t2)" id="r-sum">전체 기간</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">${isAdmin() ? `<button class="btn btn-sm" onclick="autoLinkSoleLots()"><i class="ti ti-link"></i>미지정 롯트 자동연결</button>` : ''}<button class="btn btn-sm btn-pri" onclick="downloadShipXls()"><i class="ti ti-file-spreadsheet"></i>엑셀 다운로드</button></div>
       </div>
-      <div class="tbl-wrap" id="r-wrap" style="max-height:340px;overflow:auto">
+      <div class="tbl-wrap" id="r-wrap" data-keepscroll style="max-height:340px;overflow:auto">
         <table class="tbl"><thead><tr><th>날짜</th><th>거래처</th><th>자재</th><th>장수</th><th>헤베</th><th>출고지</th></tr></thead><tbody id="r-body"></tbody></table>
       </div>
     </div>
@@ -4095,7 +4095,7 @@ function holdListTableHtml(list) {
       <td style="color:${stColor(st)};font-weight:700">${esc(st)}</td>
     </tr>`;
   }).join('');
-  return `<div class="tbl-wrap" style="max-height:calc(100vh - 320px);overflow:auto">
+  return `<div class="tbl-wrap" id="holdlist-wrap" data-keepscroll style="max-height:calc(100vh - 320px);overflow:auto">
     <table class="tbl"><thead><tr><th>예정일</th><th>거래처</th><th>자재</th><th>장수</th><th>헤베</th><th>현장</th><th>상태</th></tr></thead><tbody>${body}</tbody></table>
   </div>`;
 }
