@@ -603,6 +603,10 @@ function render() {
     return;
   }
   if (_renderTimer) { clearTimeout(_renderTimer); _renderTimer = null; }
+  // 스크롤 위치 보존(재렌더로 스크롤이 위로 튕기는 것 방지) — data-keepscroll + id 붙은 요소
+  const _keep = {};
+  document.querySelectorAll('[data-keepscroll]').forEach(e => { if (e.id && e.scrollTop > 0) _keep[e.id] = e.scrollTop; });
+  if (Object.keys(_keep).length) requestAnimationFrame(() => { for (const id in _keep) { const e = el(id); if (e) e.scrollTop = _keep[id]; } });
   if (isCustomerRole()) { renderCustomerStock(); return; }   // 고객: 재고 조회 전용
   if (isCrewRole()) { renderCrewSchedule(); return; }        // 시공팀: 시공 스케줄 전용
   if (tab === 'home') renderHome();
@@ -2763,7 +2767,7 @@ function restockCardHtml() {
   }).join('') : `<div class="empty"><i class="ti ti-calendar-off"></i>예정된 입고가 없습니다</div>`;
   return `<div class="card" style="margin-top:14px">
     <div class="card-h"><h3><i class="ti ti-truck-delivery"></i>예정 입고 (재입고 예정)${list.length ? ` <span style="font-size:12px;font-weight:500;color:var(--t3)">${list.length}건</span>` : ''}</h3><button class="btn btn-sm" onclick="openRestockForm()"><i class="ti ti-plus"></i>예정 등록</button></div>
-    <div style="max-height:300px;overflow-y:auto;-webkit-overflow-scrolling:touch">${rows}</div></div>`;
+    <div id="restock-scroll" data-keepscroll style="max-height:300px;overflow-y:auto;-webkit-overflow-scrolling:touch">${rows}</div></div>`;
 }
 
 /* ===================================================================
@@ -4354,7 +4358,7 @@ function renderSettings() {
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-briefcase"></i>거래처 관리</h3>${isAdmin() && (state.clients || []).length ? `<button class="more" style="color:var(--red-t)" onclick="delAllClients()"><i class="ti ti-trash" style="font-size:14px"></i>전체 삭제</button>` : ''}</div>
       <div style="display:flex;gap:8px;margin-bottom:10px"><input id="client-new" placeholder="거래처명 입력" autocomplete="off" style="flex:1;font-size:16px;padding:11px 12px;border:1.5px solid var(--bd2);border-radius:10px"><button class="btn btn-pri btn-sm" onclick="addClient()"><i class="ti ti-plus"></i>등록</button></div>
-      ${(state.clients || []).length ? `<div style="max-height:300px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:10px;padding:2px 8px">${state.clients.slice().sort((a, b) => (a.value || '').localeCompare(b.value || '')).map(c => `<div class="mem"><div class="info"><div class="nm">${esc(c.value)}</div></div>${isAdmin() ? `<button class="x" onclick="delClient('${c.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('')}</div><div style="font-size:11.5px;color:var(--t3);margin-top:6px">총 ${(state.clients || []).length}개</div>` : `<div style="font-size:12.5px;color:var(--t3);padding:4px 0">등록된 거래처가 없습니다. 등록하면 현장·출고·홀딩의 업체명 검색에 나옵니다.</div>`}
+      ${(state.clients || []).length ? `<div id="client-scroll" data-keepscroll style="max-height:300px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:10px;padding:2px 8px">${state.clients.slice().sort((a, b) => (a.value || '').localeCompare(b.value || '')).map(c => `<div class="mem"><div class="info"><div class="nm">${esc(c.value)}</div></div>${isAdmin() ? `<button class="x" onclick="delClient('${c.id}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}</div>`).join('')}</div><div style="font-size:11.5px;color:var(--t3);margin-top:6px">총 ${(state.clients || []).length}개</div>` : `<div style="font-size:12.5px;color:var(--t3);padding:4px 0">등록된 거래처가 없습니다. 등록하면 현장·출고·홀딩의 업체명 검색에 나옵니다.</div>`}
       ${!isAdmin() ? `<div class="banner info" style="margin-top:10px"><i class="ti ti-info-circle"></i>거래처 삭제는 관리자만 가능합니다.</div>` : ''}
     </div>
     <div class="card">
