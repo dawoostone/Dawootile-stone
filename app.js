@@ -3820,7 +3820,7 @@ function printBasinSlip(id) {
     <tbody>${rows}</tbody>
   </table>
   <div class="bottom">
-    <table class="who"><tr><td class="wk">담당자</td><td>${e(me ? me.name : '')}</td></tr><tr><td class="wk">현장주소</td><td>${e(b.address || '')}</td></tr></table>
+    <table class="who"><tr><td class="wk">담당자</td><td>${e(me ? me.name : '')}</td></tr><tr><td class="wk">현장주소</td><td>${e(b.address || '')}</td></tr>${b.note ? `<tr><td class="wk">비 고</td><td>${e(b.note)}</td></tr>` : ''}</table>
     <div class="stamp">${stamp}</div>
   </div>
 </body></html>`;
