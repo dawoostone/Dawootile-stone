@@ -1634,11 +1634,14 @@ function renderIssues() {
 }
 function issueCard(i) {
   const done = i.status === '처리완료';
-  const site = state.sites.find(x => x.id === i.siteId);
-  const stageTxt = site ? (site.stage || '') : '삭제된 현장';
+  const isBasin = i.kind === 'basin';
+  const site = isBasin ? null : state.sites.find(x => x.id === i.siteId);
+  const basin = isBasin ? (state.basins || []).find(x => x.id === i.basinId) : null;
+  const stageTxt = isBasin ? (basin ? (basin.stage || '') : '삭제된 발주') : (site ? (site.stage || '') : '삭제된 현장');
+  const kindBadge = isBasin ? `<span class="pill p-hold" style="flex:none;margin-right:6px;font-size:10px">세면대</span>` : '';
   return `<div class="site" style="border-left:4px solid ${done ? '#12b76a' : '#f04438'}">
     <div class="site-top">
-      <div><div class="nm">${esc(i.siteName || '현장')}</div><div class="ad"><i class="ti ti-calendar-event" style="font-size:13px"></i>${i.createdAt ? new Date(i.createdAt).toLocaleDateString('ko-KR') : ''} · ${esc(i.by || '')} 등록${stageTxt ? ' · 현재 ' + esc(stageTxt) : ''}</div></div>
+      <div><div class="nm">${kindBadge}${esc(i.siteName || (isBasin ? '세면대 발주' : '현장'))}</div><div class="ad"><i class="ti ti-calendar-event" style="font-size:13px"></i>${i.createdAt ? new Date(i.createdAt).toLocaleDateString('ko-KR') : ''} · ${esc(i.by || '')} 등록${stageTxt ? ' · 현재 ' + esc(stageTxt) : ''}</div></div>
       <span class="pill ${done ? 'p-done' : 'p-issue'}">${done ? '처리완료' : '미해결'}</span>
     </div>
     <div style="margin-top:9px;font-size:13.5px;color:var(--t1);white-space:pre-wrap;line-height:1.6">${esc(i.reason || '')}</div>
@@ -1646,7 +1649,9 @@ function issueCard(i) {
       ? `<div style="margin-top:9px;font-size:12px;color:var(--t3)"><i class="ti ti-check"></i> ${esc(i.resolvedDate || '')} ${esc(i.resolvedBy || '')} 처리 완료</div>`
       : `<button class="btn btn-pri btn-block" style="margin-top:10px" onclick="resolveIssue('${i.id}')"><i class="ti ti-circle-check"></i>처리 완료</button>`}
     <div class="frm-foot" style="margin-top:8px">
-      ${site ? `<button class="btn btn-sm" style="flex:1" onclick="openSiteDetail('${i.siteId}')"><i class="ti ti-building-community"></i>현장 보기</button>` : ''}
+      ${isBasin
+      ? (basin ? `<button class="btn btn-sm" style="flex:1" onclick="openBasinForm('${i.basinId}')"><i class="ti ti-bath"></i>세면대 발주 보기</button>` : '')
+      : (site ? `<button class="btn btn-sm" style="flex:1" onclick="openSiteDetail('${i.siteId}')"><i class="ti ti-building-community"></i>현장 보기</button>` : '')}
       ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="delIssue('${i.id}')"><i class="ti ti-trash"></i></button>` : ''}
     </div>
   </div>`;
@@ -1677,7 +1682,7 @@ async function submitIssue() {
   const s = state.sites.find(x => x.id === siteId);
   _busy = true;
   try {
-    await Store.add('issues', { siteId, siteName: s ? s.name : '', reason, status: '미해결', by: me.name });
+    await Store.add('issues', { kind: 'site', siteId, siteName: s ? s.name : '', reason, status: '미해결', by: me.name, createdAt: Date.now() });
     toast('이슈 등록됨'); closeModal();
   } finally { setTimeout(() => { _busy = false; }, 800); }
 }
@@ -1689,6 +1694,37 @@ async function resolveIssue(id) {
 async function delIssue(id) {
   if (!confirm('이 이슈 기록을 삭제할까요?')) return;
   await Store.remove('issues', id); toast('삭제됨');
+}
+/* 세면대(발주) 이슈 등록 */
+function basinIssueLabel(b) { return `${b.vendor || '(업체미정)'} · ${basinItems(b).map(it => it.stone).filter(Boolean).join('/') || '세면대'}`; }
+function openBasinIssueForm(preBasinId) {
+  const all = (state.basins || []).slice().sort((a, b) => (b.orderDate || '0000').localeCompare(a.orderDate || '0000'));
+  if (!all.length) { toast('등록된 세면대 발주가 없습니다'); return; }
+  openModal(`
+    <div class="sheet-h"><h3><i class="ti ti-alert-triangle"></i>세면대 이슈 등록</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="frm">
+      <div class="fld full"><label>세면대 발주 선택 <span class="req">*</span></label>
+        <select id="bi-basin"><option value="">— 발주를 선택하세요 —</option>${all.map(b => `<option value="${b.id}" ${preBasinId === b.id ? 'selected' : ''}>${esc(basinIssueLabel(b))}${b.orderDate ? ' · ' + b.orderDate : ''}</option>`).join('')}</select></div>
+      <div class="fld full"><label>이슈 내용 <span class="req">*</span></label>
+        <textarea id="bi-reason" placeholder="세면대 관련 문제(파손·납기지연·규격오류·컬러상이 등)를 자세히 적어주세요" style="min-height:130px"></textarea></div>
+    </div>
+    <div class="frm-foot">
+      <button class="btn" style="flex:1" onclick="closeModal()">취소</button>
+      <button class="btn btn-pri" style="flex:2" onclick="submitBasinIssue()"><i class="ti ti-check"></i>이슈 등록</button>
+    </div>`);
+}
+async function submitBasinIssue() {
+  if (_busy) return;
+  const basinId = el('bi-basin').value;
+  const reason = el('bi-reason').value.trim();
+  if (!basinId) { toast('세면대 발주를 선택하세요'); return; }
+  if (!reason) { toast('이슈 내용을 입력하세요'); return; }
+  const b = (state.basins || []).find(x => x.id === basinId);
+  _busy = true;
+  try {
+    await Store.add('issues', { kind: 'basin', basinId, siteName: b ? basinIssueLabel(b) : '세면대 발주', reason, status: '미해결', by: me.name, createdAt: Date.now() });
+    toast('세면대 이슈 등록됨'); closeModal();
+  } finally { setTimeout(() => { _busy = false; }, 800); }
 }
 function sitesFilteredList() {
   const f = filters.sites;
@@ -3408,6 +3444,7 @@ function renderBasin() {
       <button class="btn btn-sm" style="flex:2" onclick="basinPackingUpload()"><i class="ti ti-file-spreadsheet"></i> 인보이스 업로드 → 출항</button>
       <button class="btn btn-sm" style="flex:1" onclick="openBasinStats()"><i class="ti ti-chart-bar"></i> 수주 통계</button>
     </div>
+    <button class="btn btn-sm btn-block" style="margin-bottom:10px;color:#b42318;border-color:#e6a9a9" onclick="openBasinIssueForm()"><i class="ti ti-alert-triangle"></i> 세면대 이슈 등록 <span style="color:var(--t3);font-weight:500">(파손·납기지연 등)</span></button>
     <div style="font-size:12px;color:var(--t3);margin:2px 0 8px">검색 결과 <b id="basin-count" style="color:var(--t1)">${list.length}건</b></div>
     <div class="site-grid" id="basin-list">${basinListHtml(list)}</div>`;
 }
