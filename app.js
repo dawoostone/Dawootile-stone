@@ -186,6 +186,7 @@ let _subscribed = false;
 function startSubscriptions() {
   if (_subscribed) return; _subscribed = true;
   COLLS.forEach(c => Store.watch(c, data => { state[c] = data; onData(c); }));
+  loadAppConfig();   // 출고관리 연동 수신 주소 로드
 }
 function init() {
   if (!CLOUD) {
@@ -402,7 +403,6 @@ function onData(coll) {
   if (coll === 'holdings' && me && !isCustomerRole()) { autoReleaseHolds(); maybeActivatePlanned(); }
   if (coll === 'inventory' && me && !isCustomerRole()) maybeActivatePlanned();   // 재고 변동(해제·입고·조정 등)으로 여유 생기면 예정홀딩 확보
   if (['holdings', 'inventory', 'transactions'].includes(coll) && me && !isCustomerRole()) scheduleAvailMirror();   // 고객 노출용 가용수량 미러 갱신(디바운스)
-  if (['basins', 'transactions'].includes(coll) && me && !isCustomerRole()) scheduleShipmentBridge();   // 쉽먼트 확인 연동: 발주·출고를 공용 컬렉션에 반영
   if (me) render();
 }
 /* 예정홀딩(및 일부 예정 품목)을 재고 여유가 생길 때 일정 빠른 순으로 자동 확보 — 재진입 방지 */
@@ -501,6 +501,41 @@ async function runShipmentBridge() {
 }
 /* 특정 발주/출고의 확인 상태 조회 — 배지 표시용 */
 function shipConfirm(kind, refId) { return (state.shipments || []).find(s => s.id === (kind === 'basin' ? 'B_' : 'S_') + refId) || null; }
+
+/* ===== 출고관리 앱(dawoo-chulgo, 별도 Firebase) 연동 — 수신 창구(CF)로 전송 =====
+   두 앱이 다른 Firebase라 직접 쓰기가 막혀 있어, 출고관리 앱에 만든 '수신 엔드포인트'로 POST 전송.
+   전송 규격(payload): { source:'dawoo-tile-stone', kind:'outbound'|'basin', company, client, content, qty, sender, memo, dest, refId, refDate, status:'requested' } */
+let _chulgoEndpoint = '';
+async function loadAppConfig() {
+  if (!CLOUD || !me || isCustomerRole()) return;
+  try { const d = await cref('config').doc('app').get(); if (d.exists) _chulgoEndpoint = (d.data().chulgoEndpoint || '').trim(); } catch (e) { }
+}
+async function saveChulgoEndpoint() {
+  const v = (el('chulgo-ep') && el('chulgo-ep').value || '').trim();
+  try { await cref('config').doc('app').set({ chulgoEndpoint: v }, { merge: true }); _chulgoEndpoint = v; toast('수신 주소 저장됨'); }
+  catch (e) { toast('저장 실패: ' + (e.message || e)); }
+}
+async function sendToChulgo(kind, refId) {
+  if (!_chulgoEndpoint) { toast('출고관리 수신 주소가 아직 없습니다 (설정 → 출고관리 연동에서 입력)'); return; }
+  let p;
+  if (kind === 'basin') {
+    const b = (state.basins || []).find(x => x.id === refId); if (!b) return;
+    const its = basinItems(b);
+    p = { kind: 'basin', client: b.vendor || '', content: its.map(x => `${x.stone || ''} ${x.spec || ''} ${x.qty || 0}개`).join(', '), qty: basinTotalQty(b), memo: b.note || '', dest: b.address || '', refDate: b.orderDate || '' };
+  } else {
+    const outs = (state.transactions || []).filter(t => t.type === 'out' && (t.shipId || t.id) === refId); if (!outs.length) return;
+    const t0 = outs[0];
+    p = { kind: 'outbound', client: t0.targetName || '', content: outs.map(x => `${x.itemName || ''} ${+x.jang || 0}장${x.lot ? ' 롯' + x.lot : ''}`).join(', '), qty: outs.reduce((a, b) => a + (+b.jang || 0), 0), memo: t0.note || '', dest: t0.dest || t0.factory || '', refDate: t0.date || '' };
+  }
+  const payload = Object.assign({ source: 'dawoo-tile-stone', company: '다우세라믹앤석재', sender: (me && me.name) || '', refId, sentAt: Date.now(), status: 'requested' }, p);
+  try {
+    const r = await fetch(_chulgoEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (kind === 'basin') { await Store.update('basins', refId, { sentChulgo: true, sentChulgoAt: Date.now() }); }
+    else { for (const t of (state.transactions || []).filter(t => t.type === 'out' && (t.shipId || t.id) === refId)) { try { await Store.update('transactions', t.id, { sentChulgo: true }); } catch (e) { } } }
+    toast('출고관리로 전송했습니다 ✓');
+  } catch (e) { toast('전송 실패: ' + (e.message || e) + ' (수신 주소·CORS 확인)'); }
+}
 
 /* ---------- 5. 로그인 (이메일 + 비밀번호 / Firebase 인증) ---------- */
 async function doLogin() {
@@ -3047,7 +3082,7 @@ function shipSlipListHtml() {
       </div>
       <div style="margin-top:7px;font-size:13px">${g.items.map(t => `<div style="color:var(--t2)">· ${esc(t.itemName)} <b style="color:var(--t1)">${+t.jang || 0}장</b>${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}${t.lot ? ` · 롯트 ${esc(t.lot)}` : ''}${t.pattern ? ` · 패턴 ${esc(t.pattern)}` : ''}</div>`).join('')}</div>
       ${g.items.length > 1 ? `<div style="font-size:11.5px;color:var(--t3);margin-top:6px;text-align:right">합계 ${totJang}장 · ${totHebe.toFixed(1)}㎡</div>` : ''}
-      <div style="margin-top:9px;text-align:right"><button class="btn btn-sm" onclick="printShipSlip('${g.key}')"><i class="ti ti-printer"></i>출고증 인쇄</button></div>
+      <div style="margin-top:9px;display:flex;gap:6px;justify-content:flex-end"><button class="btn btn-ghost btn-sm" onclick="sendToChulgo('out','${g.key}')" title="출고관리 앱으로 전송">${g.items.some(t => t.sentChulgo) ? '<i class="ti ti-checks" style="color:var(--gd)"></i>출고관리 전송됨' : '<i class="ti ti-send"></i>출고관리 전송'}</button><button class="btn btn-sm" onclick="printShipSlip('${g.key}')"><i class="ti ti-printer"></i>출고증 인쇄</button></div>
     </div>`;
   }).join('');
 }
@@ -3569,7 +3604,9 @@ function basinCard(b) {
       <div class="db"><div class="k">출고일</div><div class="v">${esc((done ? b.shipDate : '') || '—')}</div></div>
     </div>
     <div class="tline">${tnodes}</div>
-    <div style="display:flex;gap:6px;margin-top:11px;flex-wrap:wrap">${act}</div>
+    <div style="display:flex;gap:6px;margin-top:11px;flex-wrap:wrap">${act}
+      <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();sendToChulgo('basin','${b.id}')" title="출고관리 앱으로 전송">${b.sentChulgo ? '<i class="ti ti-checks" style="color:var(--gd)"></i>출고관리 전송됨' : '<i class="ti ti-send"></i>출고관리 전송'}</button>
+    </div>
   </div>`;
 }
 async function basinSetStage(id, stage, extra) {
@@ -4487,14 +4524,15 @@ function renderSettings() {
       <div style="font-size:11.5px;color:var(--t3);margin-top:8px"><i class="ti ti-device-mobile"></i> 아이폰: 사파리로 열고 <b>공유 → 홈 화면에 추가</b> → 홈 화면 아이콘으로 열어 등록해야 알림이 옵니다.</div>
     </div>
     ${isAdmin() ? `<div class="card">
-      <div class="card-h"><h3><i class="ti ti-plug-connected"></i>쉽먼트 확인 연동</h3></div>
-      ${(() => { const sh = state.shipments || []; const conf = sh.filter(s => s.confirmed).length; return `<div class="alert-i b" style="background:var(--gl2);border-color:var(--gbd)"><div class="ai" style="color:var(--gd)"><i class="ti ti-plug-connected"></i></div><div class="at"><b>공용 컬렉션 연동 ON · ${sh.length}건 공유 · ${conf}건 출하확인</b><span>세면대 발주·출고가 자동으로 공유됩니다</span></div></div>`; })()}
-      <div style="font-size:11.5px;color:var(--t2);margin-top:9px;line-height:1.6;background:var(--soft);border-radius:9px;padding:10px 12px">
-        <b>확인 앱(다른 프로젝트) 연결 규격</b><br>
-        · 같은 Firebase의 컬렉션 <b>teams/dawoo/shipments</b> 를 공유합니다.<br>
-        · 이 앱이 쓰는 필드: <span style="color:var(--t3)">source, kind('basin'|'out'), refId, ref, vendor, items[], date, dest, status</span><br>
-        · 확인 앱이 써넣을 필드: <b>confirmed</b>(true/false), confirmedAt, confirmedBy, confirmNote<br>
-        · 문서 id: 세면대 <b>B_&lt;발주id&gt;</b> / 출고 <b>S_&lt;shipId&gt;</b>. 확인 앱은 이 문서에 confirmed만 병합하면, 세면대·출고 화면에 <b>출하확인</b> 배지가 자동으로 뜹니다.
+      <div class="card-h"><h3><i class="ti ti-plug-connected"></i>출고관리 앱 연동</h3></div>
+      <div style="font-size:12.5px;color:var(--t2);margin-bottom:8px">출고·세면대 발주를 <b>출고관리 앱(dawoo-chulgo)</b>으로 전송합니다. 두 앱이 다른 Firebase라, 출고관리 앱에 만든 <b>수신 주소(엔드포인트)</b>로 보냅니다.</div>
+      <div class="fld"><label>출고관리 수신 주소 (엔드포인트 URL)</label><input id="chulgo-ep" value="${esc(_chulgoEndpoint || '')}" placeholder="https://...cloudfunctions.net/receiveShipment" autocomplete="off" style="width:100%;font-size:14px;padding:10px 11px;border:1.5px solid var(--bd2);border-radius:10px"></div>
+      <button class="btn btn-pri btn-sm btn-block" style="margin-top:8px" onclick="saveChulgoEndpoint()"><i class="ti ti-device-floppy"></i>수신 주소 저장</button>
+      <div style="font-size:11.5px;color:var(--t2);margin-top:10px;line-height:1.6;background:var(--soft);border-radius:9px;padding:10px 12px">
+        <b>출고관리 앱에 만들 '수신 창구' 규격</b> (그쪽 프로젝트에 추가):<br>
+        · POST로 아래 JSON을 받아 <b>chulgo_requests</b> 문서로 저장하는 함수(HTTP) 1개.<br>
+        · 받는 값: <span style="color:var(--t3)">source, kind('outbound'|'basin'), company, client, content, qty, sender, memo, dest, refId, refDate, status:'requested'</span><br>
+        · 저장 시 kind·status·createdAt 등 출고관리 양식에 맞게 매핑하면 됩니다. CORS 허용 필요.
       </div>
     </div>` : ''}
     <div class="card">
