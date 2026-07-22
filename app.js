@@ -29,7 +29,7 @@ function prefillEmail() {
 }
 function cref(name) { return db.collection('teams').doc(TEAM).collection(name); }
 
-const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients', 'issues', 'restocks', 'basins', 'holdRequests', 'shipments', 'chulgoReqs'];
+const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients', 'issues', 'restocks', 'basins', 'holdRequests', 'shipments', 'chulgoReqs', 'chulgoHandlers'];
 
 // 로컬(미리보기) 모드용 - 같은 기기의 다른 탭끼리 실시간 반영
 const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('dws') : null;
@@ -3363,7 +3363,7 @@ async function submitOutEdit(id) {
 }
 /* 출고표(출고증) 인쇄 — 회사 양식 기준. 출고 묶음(shipId) 단위로 발행 */
 const DAWOO_CO = {
-  name: '주식회사 다우세라믹 &amp; 석재',
+  name: '주식회사 다우세라믹앤석재',
   addr: '경기도 용인시 처인구 모현읍 곡현로 425, 2동',
   tel: 'Tel ) 070-8211-0144　Fax ) 0503-8379-3628',
   biztype: '건설업 도소매',
@@ -4614,6 +4614,7 @@ function chulgoDispatchGroups() {
       dispatchId: k, reqs,
       status: sts.includes('지시') ? '지시' : (sts.includes('확인') ? '확인' : '완료'),
       vehicle: rep.vehicle || '', driver: rep.driver || '', companyDispatch: !!rep.companyDispatch, loadTime: rep.loadTime || '', packing: reqs.some(r => r.packing), dispatchDest: rep.dispatchDest || '',
+      handler: (reqs.find(r => r.handler) || {}).handler || '', memos: reqs.map(r => (r.memo || '').trim()).filter(Boolean),
       dispatchedAt: rep.dispatchedAt || 0, dispatchedBy: rep.dispatchedBy || '',
       urgent: reqs.some(r => r.urgent),
       clients: [...new Set(reqs.map(r => r.client).filter(Boolean))],
@@ -4639,18 +4640,51 @@ function chulgoDispatchCard(g, forWarehouse) {
     ${packBar}
     <div style="margin-top:7px">${items}</div>
     <div class="frm-foot" style="margin-top:9px">
-      ${forWarehouse && st === '지시' ? `<button class="btn btn-pri btn-sm" style="flex:1.4" onclick="chulgoAckDispatch('${g.dispatchId}')"><i class="ti ti-check"></i>접수 (지시서 인쇄)</button>` : ''}
+      ${forWarehouse && st === '지시' ? `<button class="btn btn-pri btn-sm" style="flex:1.4" onclick="chulgoAckDispatch('${g.dispatchId}')"><i class="ti ti-check"></i>접수 (요청서 인쇄)</button>` : ''}
       ${forWarehouse && (st === '지시' || st === '확인') ? `<button class="btn btn-sm" style="flex:1" onclick="chulgoDoneDispatch('${g.dispatchId}')"><i class="ti ti-circle-check"></i>완료</button>` : ''}
-      <button class="btn btn-sm" onclick="chulgoPrintDispatch('${g.dispatchId}')"><i class="ti ti-printer"></i>지시서${forWarehouse ? ' 재인쇄' : ''}</button>
+      <button class="btn btn-sm" onclick="chulgoPrintDispatch('${g.dispatchId}')"><i class="ti ti-printer"></i>요청서${forWarehouse ? ' 재인쇄' : ''}</button>
       ${!forWarehouse && st !== '완료' ? `<button class="btn btn-sm" style="color:var(--red-t)" onclick="cancelDispatch('${g.dispatchId}')" title="출고 지시 취소 · 대기열로 되돌림"><i class="ti ti-arrow-back-up"></i></button>` : ''}
     </div>
   </div>`;
 }
-async function chulgoAckDispatch(dispatchId) {
+function chulgoHandlerNames() { return (state.chulgoHandlers || []).map(h => (h.name || h.value || '').trim()).filter(Boolean).sort((a, b) => a.localeCompare(b)); }
+function chulgoAckDispatch(dispatchId) { openChulgoAckModal(dispatchId); }
+function openChulgoAckModal(dispatchId) {
+  const names = chulgoHandlerNames();
+  openModal(`
+    <div class="sheet-h"><h3><i class="ti ti-clipboard-check"></i>출고 접수 · 담당자 선택</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="frm">
+      <div class="fld full"><label>출고 담당자 <span style="color:var(--t3);font-weight:500">— 요청서에 기록됩니다</span></label>
+        <select id="ack-handler" style="width:100%;font-size:16px;padding:10px 11px;border:1.5px solid var(--bd2);border-radius:10px">
+          <option value="">— 담당자 선택 —</option>
+          ${names.map(n => `<option>${esc(n)}</option>`).join('')}
+        </select>
+        ${!names.length ? `<div style="font-size:12px;color:var(--t3);margin-top:6px">등록된 담당자가 없습니다.${isAdmin() ? ' 아래에서 추가하세요.' : ' 관리자에게 담당자 등록을 요청하세요.'}</div>` : ''}
+      </div>
+      ${isAdmin() ? `<div class="fld full"><label>담당자 관리 <span style="color:var(--t3);font-weight:500">(관리자)</span></label>
+        <div style="display:flex;gap:6px"><input id="ack-newh" lang="ko" placeholder="담당자 이름" autocomplete="off" style="flex:1;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px"><button class="btn btn-sm" onclick="chulgoAddHandler('${dispatchId}')"><i class="ti ti-plus"></i>추가</button></div>
+        <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px">${(state.chulgoHandlers || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(h => `<span class="pill p-gray" style="display:inline-flex;align-items:center;gap:5px">${esc(h.name || '')} <i class="ti ti-x" style="cursor:pointer;color:var(--red-t)" onclick="chulgoDelHandler('${h.id}','${dispatchId}')"></i></span>`).join('') || '<span style="color:var(--t3);font-size:12px">등록된 담당자가 없습니다</span>'}</div>
+      </div>` : ''}
+    </div>
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="chulgoAckConfirm('${dispatchId}')"><i class="ti ti-check"></i>접수 · 요청서 인쇄</button></div>`);
+}
+async function chulgoAddHandler(dispatchId) {
+  const v = (el('ack-newh') && el('ack-newh').value || '').trim(); if (!v) { toast('담당자 이름을 입력하세요'); return; }
+  if (!(state.chulgoHandlers || []).some(h => (h.name || '') === v)) await Store.add('chulgoHandlers', { name: v });
+  setTimeout(() => openChulgoAckModal(dispatchId), 250);
+}
+async function chulgoDelHandler(id, dispatchId) {
+  await Store.remove('chulgoHandlers', id);
+  setTimeout(() => openChulgoAckModal(dispatchId), 250);
+}
+async function chulgoAckConfirm(dispatchId) {
+  const handler = (el('ack-handler') && el('ack-handler').value || '').trim();
+  if (!handler) { toast('출고 담당자를 선택하세요'); return; }
   const reqs = (state.chulgoReqs || []).filter(r => r.dispatchId === dispatchId && (r.status || '') === '지시');
-  for (const r of reqs) { try { await Store.update('chulgoReqs', r.id, { status: '확인', ackedBy: (me && me.name) || '', ackedAt: Date.now() }); } catch (e) { } }
-  toast('접수 처리 · 지시서 인쇄');
-  chulgoPrintDispatch(dispatchId);
+  for (const r of reqs) { try { await Store.update('chulgoReqs', r.id, { status: '확인', handler, ackedBy: (me && me.name) || '', ackedAt: Date.now() }); } catch (e) { } }
+  closeModal();
+  toast('접수 처리 · 요청서 인쇄');
+  setTimeout(() => chulgoPrintDispatch(dispatchId), 200);
 }
 async function chulgoDoneDispatch(dispatchId) {
   if (!confirm('이 출고 지시를 완료 처리할까요?')) return;
@@ -4667,26 +4701,31 @@ function chulgoPrintDispatch(dispatchId) {
   const MIN = Math.max(8, g.items.length);
   let rows = g.items.map((it, i) => `<tr><td class="c">${i + 1}</td><td class="l">${e(it.name)}</td><td class="l">${e(it.spec)}</td><td class="r">${e(it.qty)}</td><td class="c">${e(it.unit)}</td>${multi ? `<td class="l">${e(it._client)}</td>` : ''}</tr>`).join('');
   for (let i = g.items.length; i < MIN; i++) rows += `<tr><td class="c">${i + 1}</td><td></td><td></td><td></td><td></td>${multi ? '<td></td>' : ''}</tr>`;
-  const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>출고 지시서 ${e(g.clients.join(','))}</title>
-<style>*{box-sizing:border-box}body{font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#111;margin:0;padding:22px 26px}
+  const memoTxt = (g.memos || []).join('  /  ');
+  const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>출고 요청서 ${e(g.clients.join(','))}</title>
+<style>*{box-sizing:border-box}body{font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#111;margin:0;padding:22px 26px;position:relative}
 h1{text-align:center;font-size:26px;font-weight:800;letter-spacing:12px;margin:0 0 4px}.co{text-align:center;font-size:13px;color:#333;margin-bottom:14px}
+.pstamp{position:absolute;top:14px;right:20px;border:5px solid #d11;color:#d11;font-size:34px;font-weight:900;letter-spacing:8px;padding:8px 20px 10px;border-radius:12px;transform:rotate(-13deg);opacity:.92}
 table{border-collapse:collapse;width:100%}.info td{border:1px solid #444;padding:7px 9px;font-size:13px}.info .k{background:#f2f2f2;font-weight:700;text-align:center;white-space:nowrap;width:14%}
 .urg{color:#c0341d;font-weight:800}.items{margin-top:12px;table-layout:fixed}.items th{border:1px solid #444;background:#eee;padding:7px 6px;font-size:13px}.items td{border:1px solid #444;padding:6px;font-size:12.5px;height:30px}
 .items td.c{text-align:center}.items td.r{text-align:right;padding-right:9px}.items td.l{text-align:left;padding-left:9px}
-.foot{margin-top:12px}.foot td{border:1px solid #444;padding:12px 10px;font-size:12.5px}.foot .k{background:#f2f2f2;font-weight:700;text-align:center;width:16%}
+.memo{margin-top:12px;border:1px solid #444}.memo .mh{background:#f2f2f2;font-weight:700;font-size:12.5px;padding:6px 9px;border-bottom:1px solid #444}.memo .mb{padding:10px;min-height:56px;font-size:12.5px;white-space:pre-wrap}
+.foot{margin-top:12px}.foot td{border:1px solid #444;padding:14px 10px;font-size:12.5px}.foot .k{background:#f2f2f2;font-weight:700;text-align:center;width:16%}
 @media print{body{padding:8px 10px}}</style></head><body>
-  <h1>출 고 지 시 서</h1>
-  <div class="co">${e(DAWOO_CO.name)} · ${e(DAWOO_CO.tel)}</div>
+  ${g.packing ? '<div class="pstamp">포 장</div>' : ''}
+  <h1>출 고 요 청 서</h1>
+  <div class="co">${DAWOO_CO.name}</div>
   <table class="info">
     <tr><td class="k">문서번호</td><td>${e(g.docNos.join(', '))}</td><td class="k">발행일자</td><td>${e(todayStr())}</td></tr>
     <tr><td class="k">거래처</td><td>${e(g.clients.join(', '))}</td><td class="k">묶음</td><td>${g.reqs.length}건</td></tr>
-    <tr><td class="k">긴급도</td><td class="${urg !== '보통' ? 'urg' : ''}">${e(urg)}</td><td class="k">지시자</td><td>${e(g.dispatchedBy)}</td></tr>
+    <tr><td class="k">긴급도</td><td class="${urg !== '보통' ? 'urg' : ''}">${e(urg)}</td><td class="k">요청자</td><td>${e(g.dispatchedBy)}</td></tr>
     <tr><td class="k">기사 / 배차</td><td>${g.companyDispatch ? '업체 배차' : (e(g.driver) || '-')}</td><td class="k">상차 예정</td><td>${e(g.loadTime) || '-'}</td></tr>
     <tr><td class="k">출고지</td><td>${g.companyDispatch ? '업체 배차 · 직접 수령' : (e(g.dispatchDest) || '-')}</td><td class="k">포장</td><td class="${g.packing ? 'urg' : ''}">${g.packing ? '○ 포장 건' : '-'}</td></tr>
   </table>
   <table class="items"><colgroup><col style="width:7%"><col style="width:${multi ? '30%' : '40%'}"><col style="width:26%"><col style="width:12%"><col style="width:9%">${multi ? '<col style="width:16%">' : ''}</colgroup>
     <thead><tr><th>No</th><th>품목명</th><th>규격 / 롯트·패턴</th><th>수량</th><th>단위</th>${multi ? '<th>거래처</th>' : ''}</tr></thead><tbody>${rows}</tbody></table>
-  <table class="foot"><tr><td class="k">지시자</td><td></td><td class="k">출고담당</td><td></td><td class="k">확인자</td><td></td></tr></table>
+  <div class="memo"><div class="mh">특이사항 및 비고</div><div class="mb">${e(memoTxt)}</div></div>
+  <table class="foot"><tr><td class="k">출고 담당</td><td>${e(g.handler)}</td><td class="k">인수인 (서명)</td><td></td></tr></table>
 </body></html>`;
   const w = window.open('', '_blank');
   if (!w) { toast('팝업이 차단되었습니다. 팝업 허용 후 다시'); return; }
