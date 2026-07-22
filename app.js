@@ -4745,7 +4745,10 @@ function chulgoWarehouseSection() {
   const newN = dispatched.filter(g => g.status === '지시').length;
   const box = dispatched.length ? `<div id="chulgo-wh-list" data-keepscroll style="max-height:52vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:12px;padding:9px 9px 1px;background:#fff">${dispatched.map(g => chulgoDispatchCard(g, true)).join('')}</div>` : `<div class="empty"><i class="ti ti-clipboard-off"></i>들어온 출고 지시가 없습니다</div>`;
   const inBox = inbound.length ? `<div style="font-size:12px;font-weight:600;color:var(--t2);margin:14px 2px 6px"><i class="ti ti-login"></i> 입고 · 알림</div><div style="border:0.5px solid var(--bd);border-radius:12px;padding:9px 9px 1px;background:#fff">${inbound.map(r => chulgoReqCard(r, true)).join('')}</div>` : '';
-  return `<button class="btn btn-sm btn-block" style="margin-bottom:9px;background:#fff6e6;border-color:#f0c060;color:#8a5a00" onclick="chulgoPrimeAudio()"><i class="ti ti-bell-ringing"></i> 새 지시 알림 소리 켜기 <span style="font-weight:500;color:var(--t3)">(이 기기 · 한 번 눌러두면 새 지시가 오면 소리로 알려요)</span></button>
+  const alarmBtn = _chulgoArmed
+    ? `<button class="btn btn-sm btn-block" style="margin-bottom:9px;background:var(--gl2);border-color:var(--gbd);color:var(--gd)" onclick="chulgoDisarmAudio()"><i class="ti ti-bell-ringing"></i> 🔔 알림 소리 <b>켜짐</b> · 눌러서 끄기 <span style="font-weight:500;color:var(--t3)">(새 지시가 오면 접수할 때까지 울려요)</span></button>`
+    : `<button class="btn btn-sm btn-block" style="margin-bottom:9px;background:#fff6e6;border-color:#f0c060;color:#8a5a00" onclick="chulgoPrimeAudio()"><i class="ti ti-bell-off"></i> 알림 소리 <b>꺼짐</b> · 눌러서 켜기 <span style="font-weight:500;color:var(--t3)">(이 기기 · 새 지시가 오면 소리로 알려요)</span></button>`;
+  return `${alarmBtn}
     <div style="font-size:12px;color:var(--t3);margin:2px 0 8px"><span class="live-dot" style="background:#1D9E75;--pc:rgba(29,158,117,.6);width:7px;height:7px;display:inline-block;vertical-align:middle;margin-right:5px"></span>실시간 · 새 출고 지시 <b style="color:#c0341d">${newN}건</b></div>${box}${inBox}`;
 }
 function renderChulgo() {
@@ -4891,7 +4894,7 @@ function chulgoBeep(times) {
   } catch (e) { }
 }
 let _chulgoArmed = false, _chulgoAlarmTimer = null;
-function chulgoHasNewDispatch() { return (state.chulgoReqs || []).some(r => (r.status || '') === '지시' && _normName(r.dispatchedBy || r.sender) !== _normName((me && me.name) || '')); }
+function chulgoHasNewDispatch() { return (state.chulgoReqs || []).some(r => (r.status || '') === '지시'); }   // 알림 켠 기기는 접수 전 지시가 있으면 계속 울림(지시자 본인 포함 — 테스트/자체 확인 가능)
 function chulgoStartAlarmLoop() {
   if (_chulgoAlarmTimer) return;
   _chulgoAlarmTimer = setInterval(() => {
@@ -4903,8 +4906,14 @@ function chulgoPrimeAudio() {
   try { _chAudio = _chAudio || new (window.AudioContext || window.webkitAudioContext)(); if (_chAudio.state === 'suspended') _chAudio.resume(); } catch (e) { }
   try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch (e) { }
   _chulgoArmed = true; chulgoStartAlarmLoop();
-  chulgoBeep(1);
+  chulgoBeep(2);
   toast('알림 소리 켜짐 · 새 지시가 오면 접수할 때까지 소리로 알립니다');
+  try { renderChulgo(); } catch (e) { }
+}
+function chulgoDisarmAudio() {
+  _chulgoArmed = false;
+  toast('알림 소리 꺼짐');
+  try { renderChulgo(); } catch (e) { }
 }
 /* 알림은 '출고 지시' 발령 시에만 (대기열 등록 시엔 조용). 지시 문서를 처음 본 순간 소리. */
 let _chulgoDispSeen = null;
