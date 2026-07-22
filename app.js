@@ -4503,35 +4503,85 @@ function chulgoGoSide(v) { filters.chulgoSide = v; renderChulgo(); }
 let _crN = 0;
 function crItemRow(d) {
   d = d || {}; const i = _crN++;
-  return `<div class="cr-row" style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
-    <div style="flex:2.2;min-width:0">${searchBox('crm-' + i, '자재명 검색·입력', d.name || '', 'matNames', '')}</div>
-    <input class="cr-qty" inputmode="numeric" placeholder="수량" value="${esc(d.qty || '')}" style="flex:1;min-width:56px;font-size:15px;padding:10px 11px;border:1.5px solid var(--bd2);border-radius:10px">
-    <button type="button" class="btn btn-ghost btn-sm" style="flex:none" onclick="this.closest('.cr-row').remove()" aria-label="삭제"><i class="ti ti-x"></i></button>
+  return `<div class="cr-row" style="border:1px solid var(--bd2);border-radius:10px;padding:8px 9px;margin-bottom:8px">
+    <div style="display:flex;gap:6px;align-items:center">
+      <div style="flex:2.1;min-width:0">${searchBox('crm-' + i, '자재명 검색·입력', d.name || '', 'matNames', '')}</div>
+      <input class="cr-qty" inputmode="numeric" placeholder="수량" value="${esc(d.qty || '')}" style="flex:1;min-width:50px;font-size:15px;padding:9px 8px;border:1.5px solid var(--bd2);border-radius:9px">
+      <input class="cr-unit" placeholder="단위" value="${esc(d.unit || '')}" style="flex:none;width:52px;font-size:14px;padding:9px 6px;border:1.5px solid var(--bd2);border-radius:9px">
+      <button type="button" class="btn btn-ghost btn-sm" style="flex:none" onclick="this.closest('.cr-row').remove()" aria-label="삭제"><i class="ti ti-x"></i></button>
+    </div>
+    <input class="cr-spec" lang="ko" placeholder="규격/롯트·패턴(선택)" value="${esc(d.spec || '')}" style="width:100%;margin-top:6px;font-size:14px;padding:8px 9px;border:1.5px solid var(--bd2);border-radius:9px">
   </div>`;
 }
 function addCrRow() { const c = el('cr-rows'); if (c) c.insertAdjacentHTML('beforeend', crItemRow({})); }
-function collectCrItems() { const rows = []; document.querySelectorAll('#cr-rows .cr-row').forEach(r => { const inp = r.querySelector('input.sb-in'); const name = inp ? (inp.value || '').trim() : ''; const qty = parseFloat(r.querySelector('.cr-qty').value) || 0; if (name) rows.push({ name: name, qty: qty }); }); return rows; }
+function collectCrItems() { const rows = []; document.querySelectorAll('#cr-rows .cr-row').forEach(r => { const inp = r.querySelector('input.sb-in'); const name = inp ? (inp.value || '').trim() : ''; const qty = parseFloat(r.querySelector('.cr-qty').value) || 0; const unit = (r.querySelector('.cr-unit').value || '').trim(); const spec = (r.querySelector('.cr-spec').value || '').trim(); if (name) rows.push({ name: name, qty: qty, unit: unit, spec: spec }); }); return rows; }
 function chulgoNextDocNo(reqType) { const d = todayStr().replace(/-/g, ''); const n = (state.chulgoReqs || []).filter(r => (r.docNo || '').startsWith(d)).length + 1; return d + '-' + (reqType === '입고' ? 'I' : 'O') + String(n).padStart(2, '0'); }
 function chulgoReqCard(r, forWarehouse) {
   const st = r.status || '대기';
   const cls = st === '완료' ? 'p-done' : (st === '확인' ? 'p-prog' : 'p-wait');
-  const items = (r.items || []).map(it => `<div style="font-size:12.5px;color:var(--t2)">· <b style="color:var(--t1)">${esc(it.name)}</b> ${+it.qty || 0}</div>`).join('');
+  const urg = r.urgency || (r.urgent ? '긴급' : '보통');
+  const urgBadge = urg === '즉시' ? '<span class="pill" style="background:#fde8e8;color:#a01212;font-size:10px">즉시</span> ' : (urg === '긴급' ? '<span class="pill" style="background:#fde8e8;color:#c0341d;font-size:10px">긴급</span> ' : '');
+  const items = (r.items || []).map(it => `<div style="font-size:12.5px;color:var(--t2)">· <b style="color:var(--t1)">${esc(it.name)}</b> ${+it.qty || 0}${it.unit ? esc(it.unit) : ''}${it.spec ? ` <span style="color:var(--t3)">(${esc(it.spec)})</span>` : ''}</div>`).join('');
   const when = r.createdAt ? new Date(+r.createdAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  const fl = r.flags || {}; const flTxt = [fl.basin ? '세면대' : '', fl.pack ? '포장' : '', fl.pallet ? '파렛트' : ''].filter(Boolean).join(' · ');
+  const sub = [r.schedDate ? '예정 ' + r.schedDate : '', r.vehicle ? '차량 ' + r.vehicle : '', r.driver ? '기사 ' + r.driver : ''].filter(Boolean).join(' · ');
   return `<div class="card" style="margin-bottom:9px;padding:12px 14px;border-left:4px solid ${r.urgent ? '#e23b3b' : 'var(--bd2)'}">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
-      <div style="min-width:0"><div style="font-weight:700;font-size:14px">${r.urgent ? '<span class="pill" style="background:#fde8e8;color:#c0341d;font-size:10px">긴급</span> ' : ''}${esc(r.reqType || '출고')} · ${esc(r.client || '-')}</div>
+      <div style="min-width:0"><div style="font-weight:700;font-size:14px">${urgBadge}${esc(r.reqType || '출고')} · ${esc(r.client || '-')}${flTxt ? ` <span style="font-size:10.5px;color:var(--blue)">[${flTxt}]</span>` : ''}</div>
         <div style="font-size:11.5px;color:var(--t3);margin-top:2px">${esc(r.docNo || '')} · ${esc(r.sender || '')} · ${when}</div></div>
       <span class="pill ${cls}" style="flex:none">${esc(st)}</span>
     </div>
     <div style="margin-top:7px">${items}</div>
+    ${sub ? `<div style="margin-top:5px;font-size:11.5px;color:var(--t3)"><i class="ti ti-truck" style="font-size:12px"></i> ${esc(sub)}</div>` : ''}
     ${r.memo ? `<div style="margin-top:6px;font-size:12.5px;color:var(--t2);border-top:1px dashed var(--bd2);padding-top:6px"><i class="ti ti-note"></i> ${esc(r.memo)}</div>` : ''}
-    ${st === '확인' && r.ackedBy ? `<div style="margin-top:6px;font-size:11.5px;color:var(--gd)"><i class="ti ti-checks"></i> ${esc(r.ackedBy)} 확인</div>` : ''}
+    ${st !== '대기' && r.ackedBy ? `<div style="margin-top:6px;font-size:11.5px;color:var(--gd)"><i class="ti ti-checks"></i> ${esc(r.ackedBy)} 확인${r.ackedAt ? ' ' + new Date(+r.ackedAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}</div>` : ''}
     <div class="frm-foot" style="margin-top:9px">
       ${forWarehouse && st === '대기' ? `<button class="btn btn-pri btn-sm" style="flex:1" onclick="chulgoAck('${r.id}')"><i class="ti ti-check"></i>확인</button>` : ''}
       ${forWarehouse && st === '확인' ? `<button class="btn btn-sm" style="flex:1" onclick="chulgoDone('${r.id}')"><i class="ti ti-circle-check"></i>완료</button>` : ''}
+      <button class="btn btn-sm" onclick="chulgoPrint('${r.id}')"><i class="ti ti-printer"></i>지시서</button>
       ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="delChulgoReq('${r.id}')"><i class="ti ti-trash"></i></button>` : ''}
     </div>
   </div>`;
+}
+/* 출고/입고 지시서 인쇄 — 회사 레터헤드 + 품목표 + 확인란 */
+function chulgoPrint(id) {
+  const r = (state.chulgoReqs || []).find(x => x.id === id); if (!r) { toast('요청을 찾을 수 없습니다'); return; }
+  const e = s => esc(s == null ? '' : String(s));
+  const isIn = (r.reqType === '입고');
+  const title = isIn ? '입 고 지 시 서' : '출 고 지 시 서';
+  const urg = r.urgency || (r.urgent ? '긴급' : '보통');
+  const fl = r.flags || {}; const flTxt = [fl.basin ? '세면대' : '', fl.pack ? '포장' : '', fl.pallet ? '파렛트' : ''].filter(Boolean).join(' / ') || '-';
+  const items = r.items || [];
+  const MIN = Math.max(8, items.length);
+  let rows = items.map((it, i) => `<tr><td class="c">${i + 1}</td><td class="l">${e(it.name)}</td><td class="l">${e(it.spec)}</td><td class="r">${e(it.qty)}</td><td class="c">${e(it.unit)}</td></tr>`).join('');
+  for (let i = items.length; i < MIN; i++) rows += `<tr><td class="c">${i + 1}</td><td></td><td></td><td></td><td></td></tr>`;
+  const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${title} ${e(r.client)} ${e(r.docNo)}</title>
+<style>
+  *{box-sizing:border-box} body{font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#111;margin:0;padding:22px 26px}
+  h1{text-align:center;font-size:26px;font-weight:800;letter-spacing:12px;margin:0 0 4px} .co{text-align:center;font-size:13px;color:#333;margin-bottom:14px}
+  table{border-collapse:collapse;width:100%} .info td{border:1px solid #444;padding:7px 9px;font-size:13px} .info .k{background:#f2f2f2;font-weight:700;text-align:center;white-space:nowrap;width:14%}
+  .urg{color:#c0341d;font-weight:800} .items{margin-top:12px;table-layout:fixed} .items th{border:1px solid #444;background:#eee;padding:7px 6px;font-size:13px} .items td{border:1px solid #444;padding:6px;font-size:12.5px;height:30px}
+  .items td.c{text-align:center}.items td.r{text-align:right;padding-right:9px}.items td.l{text-align:left;padding-left:9px}
+  .foot{margin-top:12px} .foot td{border:1px solid #444;padding:12px 10px;font-size:12.5px} .foot .k{background:#f2f2f2;font-weight:700;text-align:center;width:16%}
+  @media print{body{padding:8px 10px}}
+</style></head><body>
+  <h1>${title}</h1>
+  <div class="co">${e(DAWOO_CO.name)} · ${e(DAWOO_CO.tel)}</div>
+  <table class="info">
+    <tr><td class="k">문서번호</td><td>${e(r.docNo)}</td><td class="k">발행일자</td><td>${e(todayStr())}</td></tr>
+    <tr><td class="k">거래처</td><td>${e(r.client)}</td><td class="k">${isIn ? '입고' : '출고'}예정일</td><td>${e(r.schedDate) || '-'}</td></tr>
+    <tr><td class="k">긴급도</td><td class="${urg !== '보통' ? 'urg' : ''}">${e(urg)}</td><td class="k">요청자</td><td>${e(r.sender)}</td></tr>
+    <tr><td class="k">차량 / 기사</td><td>${e(r.vehicle) || '-'} / ${e(r.driver) || '-'}</td><td class="k">구분표시</td><td>${e(flTxt)}</td></tr>
+  </table>
+  <table class="items"><colgroup><col style="width:8%"><col style="width:40%"><col style="width:28%"><col style="width:14%"><col style="width:10%"></colgroup>
+    <thead><tr><th>No</th><th>품목명</th><th>규격 / 롯트·패턴</th><th>수량</th><th>단위</th></tr></thead><tbody>${rows}</tbody></table>
+  ${r.memo ? `<div style="margin-top:8px;font-size:12.5px;border:1px solid #444;padding:8px 10px"><b>메모</b> : ${e(r.memo)}</div>` : ''}
+  <table class="foot"><tr><td class="k">요청자</td><td></td><td class="k">${isIn ? '입고' : '출고'}담당</td><td></td><td class="k">확인자</td><td></td></tr></table>
+</body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { toast('팝업이 차단되었습니다. 팝업 허용 후 다시'); return; }
+  w.document.write(html); w.document.close(); w.focus();
+  setTimeout(() => { try { w.print(); } catch (e) { } }, 350);
 }
 function chulgoOfficeSection() {
   const mine = (state.chulgoReqs || []).slice().sort((a, b) => (+b.createdAt || 0) - (+a.createdAt || 0));
@@ -4542,9 +4592,21 @@ function chulgoOfficeSection() {
         <div class="fld" style="flex:1"><label style="font-size:12px;color:var(--t2)">구분</label><select id="cr-type" style="width:100%;font-size:15px;padding:9px 10px;border:1.5px solid var(--bd2);border-radius:10px"><option>출고</option><option>입고</option></select></div>
         <div class="fld" style="flex:2"><label style="font-size:12px;color:var(--t2)">거래처 <span style="color:var(--red-t)">*</span></label>${searchBox('cr-client', '거래처 검색·입력', '', 'companyNames', '')}</div>
       </div>
-      <div class="fld full" style="margin-bottom:8px"><label style="font-size:12px;color:var(--t2)">품목 / 수량 <span style="color:var(--red-t)">*</span></label><div id="cr-rows">${crItemRow({})}</div><button type="button" class="btn btn-ghost btn-sm" onclick="addCrRow()"><i class="ti ti-plus"></i>자재 추가</button></div>
+      <div class="fld full" style="margin-bottom:8px"><label style="font-size:12px;color:var(--t2)">품목 / 수량 / 단위 / 규격 <span style="color:var(--red-t)">*</span></label><div id="cr-rows">${crItemRow({})}</div><button type="button" class="btn btn-ghost btn-sm" onclick="addCrRow()"><i class="ti ti-plus"></i>자재 추가</button></div>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <div class="fld" style="flex:1"><label style="font-size:12px;color:var(--t2)">긴급도</label><select id="cr-urg" style="width:100%;font-size:15px;padding:9px 10px;border:1.5px solid var(--bd2);border-radius:10px"><option>보통</option><option>긴급</option><option>즉시</option></select></div>
+        <div class="fld" style="flex:1.2"><label style="font-size:12px;color:var(--t2)">예정일</label><input type="date" id="cr-sched" style="width:100%;font-size:14px;padding:8px 10px;border:1.5px solid var(--bd2);border-radius:10px"></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <div class="fld" style="flex:1"><label style="font-size:12px;color:var(--t2)">차량</label><input id="cr-vehicle" lang="ko" placeholder="선택" style="width:100%;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px"></div>
+        <div class="fld" style="flex:1"><label style="font-size:12px;color:var(--t2)">기사명</label><input id="cr-driver" lang="ko" placeholder="선택" style="width:100%;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px"></div>
+      </div>
       <div class="fld full" style="margin-bottom:8px"><label style="font-size:12px;color:var(--t2)">메모</label><input id="cr-memo" lang="ko" placeholder="선택" style="width:100%;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px"></div>
-      <label style="display:flex;align-items:center;gap:8px;font-weight:600;color:#c0341d;margin-bottom:10px"><input type="checkbox" id="cr-urgent" style="width:18px;height:18px"> 긴급 요청</label>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;font-size:13px">
+        <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="cr-basin" style="width:17px;height:17px"> 세면대</label>
+        <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="cr-pack" style="width:17px;height:17px"> 포장</label>
+        <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="cr-pallet" style="width:17px;height:17px"> 파렛트</label>
+      </div>
       <button class="btn btn-pri btn-block" onclick="submitChulgoReq()"><i class="ti ti-send"></i>창고로 요청 보내기</button>
     </div>
     <div style="font-size:12px;font-weight:600;color:var(--t2);margin:2px 2px 6px">보낸 요청</div>${box}`;
@@ -4571,15 +4633,20 @@ async function submitChulgoReq() {
   const client = (el('cr-client') && el('cr-client').value || '').trim();
   const reqType = el('cr-type') ? el('cr-type').value : '출고';
   const items = collectCrItems();
-  const urgent = !!(el('cr-urgent') && el('cr-urgent').checked);
+  const urgency = el('cr-urg') ? el('cr-urg').value : '보통';
+  const urgent = urgency !== '보통';
+  const schedDate = el('cr-sched') ? el('cr-sched').value : '';
+  const vehicle = (el('cr-vehicle') && el('cr-vehicle').value || '').trim();
+  const driver = (el('cr-driver') && el('cr-driver').value || '').trim();
   const memo = (el('cr-memo') && el('cr-memo').value || '').trim();
+  const flags = { basin: !!(el('cr-basin') && el('cr-basin').checked), pack: !!(el('cr-pack') && el('cr-pack').checked), pallet: !!(el('cr-pallet') && el('cr-pallet').checked) };
   if (!client) { toast('거래처를 입력하세요'); return; }
   if (!items.length) { toast('품목·수량을 입력하세요'); return; }
   if (_busy) return; _busy = true;
   try {
     const docNo = chulgoNextDocNo(reqType);
     await ensureClient(client);
-    await Store.add('chulgoReqs', { docNo, reqType, client, items, urgent, memo, status: '대기', sender: (me && me.name) || '', createdAt: Date.now() });
+    await Store.add('chulgoReqs', { docNo, reqType, client, items, urgency, urgent, schedDate, vehicle, driver, memo, flags, status: '대기', sender: (me && me.name) || '', createdAt: Date.now() });
     toast('요청 등록됨 · ' + docNo);
     renderChulgo();
   } finally { setTimeout(() => { _busy = false; }, 600); }
