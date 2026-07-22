@@ -4536,6 +4536,7 @@ function chulgoReqCard(r, forWarehouse) {
     ${sub ? `<div style="margin-top:5px;font-size:11.5px;color:var(--t3)"><i class="ti ti-truck" style="font-size:12px"></i> ${esc(sub)}</div>` : ''}
     ${r.memo ? `<div style="margin-top:6px;font-size:12.5px;color:var(--t2);border-top:1px dashed var(--bd2);padding-top:6px"><i class="ti ti-note"></i> ${esc(r.memo)}</div>` : ''}
     ${st !== '대기' && r.ackedBy ? `<div style="margin-top:6px;font-size:11.5px;color:var(--gd)"><i class="ti ti-checks"></i> ${esc(r.ackedBy)} 확인${r.ackedAt ? ' ' + new Date(+r.ackedAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}</div>` : ''}
+    ${r.stockApplied ? `<div style="margin-top:4px;font-size:11.5px;color:var(--blue)"><i class="ti ti-package"></i> 실재고 반영됨 (재고 앱 ${esc(r.reqType || '출고')} 내역 기록)</div>` : ''}
     <div class="frm-foot" style="margin-top:9px">
       ${forWarehouse && st === '대기' ? `<button class="btn btn-pri btn-sm" style="flex:1" onclick="chulgoAck('${r.id}')"><i class="ti ti-check"></i>확인</button>` : ''}
       ${forWarehouse && st === '확인' ? `<button class="btn btn-sm" style="flex:1" onclick="chulgoDone('${r.id}')"><i class="ti ti-circle-check"></i>완료</button>` : ''}
@@ -4654,7 +4655,32 @@ async function submitChulgoReq() {
   } finally { setTimeout(() => { _busy = false; }, 600); }
 }
 async function chulgoAck(id) { const r = (state.chulgoReqs || []).find(x => x.id === id); if (!r) return; await Store.update('chulgoReqs', id, { status: '확인', ackedBy: (me && me.name) || '', ackedAt: Date.now() }); toast('확인 처리됨'); }
-async function chulgoDone(id) { await Store.update('chulgoReqs', id, { status: '완료', doneBy: (me && me.name) || '', doneAt: Date.now() }); toast('완료 처리됨'); }
+async function chulgoDone(id) {
+  const r = (state.chulgoReqs || []).find(x => x.id === id); if (!r) return;
+  const isAlert = r.reqType === '입고알림';
+  const applied = r.stockApplied;
+  if (!applied && !isAlert) {
+    if (!confirm(`${r.reqType} 완료 처리하고 실재고에 반영할까요?\n(${r.reqType === '입고' ? '재고 증가' : '재고 차감'} · 재고 앱 ${r.reqType} 내역에도 기록)`)) return;
+  }
+  const patch = { status: '완료', doneBy: (me && me.name) || '', doneAt: Date.now() };
+  if (!applied && !isAlert) {
+    const shipId = 'C' + Date.now();
+    for (const it of (r.items || [])) {
+      const q = +it.qty || 0; if (q <= 0) continue;
+      const inv = state.inventory.find(i => _normName(i.name) === _normName(it.name));
+      if (r.reqType === '입고') {
+        if (inv) await Store.update('inventory', inv.id, { jang: (+inv.jang || 0) + q, lastInDate: todayStr() });
+        await Store.add('transactions', { type: 'in', itemId: inv ? inv.id : '', itemName: it.name, spec: it.spec || '', jang: q, hebe: inv ? +(q * (+inv.hebePerJang || 0)).toFixed(2) : 0, vendor: r.client || '', date: todayStr(), note: '출고관리 입고 ' + (r.docNo || ''), by: (me && me.name) || '' });
+      } else {
+        if (inv) await Store.update('inventory', inv.id, { jang: Math.max(0, (+inv.jang || 0) - q) });
+        await Store.add('transactions', { type: 'out', shipId, itemId: inv ? inv.id : '', itemName: it.name, spec: it.spec || '', jang: q, hebe: inv ? +(q * (+inv.hebePerJang || 0)).toFixed(2) : 0, lot: '', targetName: r.client || '', dest: '출고관리', factory: '출고관리', date: todayStr(), note: '출고관리 ' + (r.docNo || ''), by: (me && me.name) || '' });
+      }
+    }
+    patch.stockApplied = true; patch.stockShipId = shipId;
+  }
+  await Store.update('chulgoReqs', id, patch);
+  toast('완료 처리' + (patch.stockApplied ? ' · 재고 반영됨' : ''));
+}
 async function delChulgoReq(id) { if (!guardDelete('이 요청을 삭제할까요?')) return; await Store.remove('chulgoReqs', id); toast('삭제됨'); }
 /* ── 요청별 채팅 (사무실 ↔ 창고) ── */
 let _chulgoChatOpen = '';
