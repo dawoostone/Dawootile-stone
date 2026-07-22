@@ -4889,8 +4889,29 @@ function chulgoBeep(times) {
   try {
     const ctx = _chAudio || new (window.AudioContext || window.webkitAudioContext)(); _chAudio = ctx;
     if (ctx.state === 'suspended') ctx.resume();
-    let t = ctx.currentTime;
-    for (let i = 0; i < (times || 2); i++) { const o = ctx.createOscillator(), g = ctx.createGain(); o.connect(g); g.connect(ctx.destination); o.type = 'sine'; o.frequency.value = i % 2 ? 988 : 880; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.35, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.28); o.start(t); o.stop(t + 0.3); t += 0.36; }
+    // 크고 잘 들리는 사이렌 — 컴프레서로 음압 최대화, 두 톤 교차, 배음 풍부(sawtooth)
+    let comp; try { comp = ctx.createDynamicsCompressor(); comp.threshold.value = -18; comp.knee.value = 12; comp.ratio.value = 12; comp.attack.value = 0.002; comp.release.value = 0.12; comp.connect(ctx.destination); } catch (e) { comp = ctx.destination; }
+    const master = ctx.createGain(); master.gain.value = 0.95; master.connect(comp);
+    const n = Math.max(2, times || 3);
+    let t = ctx.currentTime + 0.01;
+    const dur = 0.32, gap = 0.10;
+    for (let i = 0; i < n; i++) {
+      const hi = i % 2 === 0;
+      const f0 = hi ? 1046 : 784, f1 = hi ? 1318 : 988;   // 삑—뽀 사이렌
+      // 두 오실레이터 겹쳐서 더 크고 또렷하게 (sine + sawtooth)
+      [['sawtooth', 0.55], ['sine', 0.55]].forEach(([type, amp]) => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = type; o.connect(g); g.connect(master);
+        o.frequency.setValueAtTime(f0, t);
+        o.frequency.linearRampToValueAtTime(f1, t + dur * 0.6);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(amp, t + 0.015);
+        g.gain.setValueAtTime(amp, t + dur - 0.05);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        o.start(t); o.stop(t + dur + 0.02);
+      });
+      t += dur + gap;
+    }
   } catch (e) { }
 }
 let _chulgoArmed = false, _chulgoAlarmTimer = null;
