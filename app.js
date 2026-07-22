@@ -3628,9 +3628,15 @@ async function basinBack(id) {
 }
 async function basinShipOut(id) {
   const b = (state.basins || []).find(x => x.id === id); if (!b) return;
-  if (!confirm('출고 처리하고 완료로 옮길까요?\n출고증을 발행합니다.')) return;
+  if (!confirm('출고 처리하고 완료로 옮길까요?\n출고 대기열에 등록되고 출고증을 발행합니다.')) return;
   await basinSetStage(id, '완료', { shipDate: todayStr() });
-  toast('출고 완료 처리되었습니다');
+  // 출고 대기열(출고관리)에 등록 — 세면대 출고. 소리 알림은 '출고 지시' 낼 때만.
+  try {
+    const its = basinItems(b);
+    const qItems = its.map(it => ({ name: it.stone || '세면대', qty: (parseInt(it.qty, 10) || 0), spec: it.spec || '', unit: '개' }));
+    if (qItems.length) await Store.add('chulgoReqs', { docNo: chulgoNextDocNo('출고'), reqType: '출고', client: b.vendor || '', items: qItems, status: '대기열', stockApplied: true, sourceBasinId: b.id, dispatchDest: b.address || '', memo: b.note || '', sender: (me && me.name) || '', createdAt: Date.now() });
+  } catch (e) { }
+  toast('출고 완료 · 대기열 등록 · 출고증 인쇄');
   setTimeout(() => printBasinSlip(id), 250);
 }
 function basinStoneSelectHtml(cls, val) {
@@ -4816,7 +4822,13 @@ async function chulgoDone(id) {
 }
 /* 출고 취소: 연결된 출고 기록 삭제 + 재고 복구 + 홀딩 되돌림 */
 async function cancelChulgoStock(r) {
-  if (!r || r.reqType !== '출고' || !r.sourceShipId) return;
+  if (!r || r.reqType !== '출고') return;
+  if (r.sourceBasinId) {   // 세면대 출고 취소 — 발주를 완료 이전 단계(출항)로 되돌림
+    const b = (state.basins || []).find(x => x.id === r.sourceBasinId);
+    if (b && (b.stage || '') === '완료') { const st = BASIN_STAGES[BASIN_STAGES.length - 2] || '국내입고'; await basinSetStage(b.id, st, { shipDate: '' }); }
+    return;
+  }
+  if (!r.sourceShipId) return;
   const key = r.sourceShipId;
   const txns = (state.transactions || []).filter(t => t.type === 'out' && (t.shipId || t.id) === key);
   for (const t of txns) { if (t.itemId) { const it = state.inventory.find(i => i.id === t.itemId); if (it) await Store.update('inventory', it.id, { jang: (+it.jang || 0) + (+t.jang || 0) }); } await Store.remove('transactions', t.id); }
@@ -4824,8 +4836,9 @@ async function cancelChulgoStock(r) {
 }
 async function delChulgoReq(id) {
   const r = (state.chulgoReqs || []).find(x => x.id === id); if (!r) return;
-  const isOut = r.reqType === '출고' && r.sourceShipId;
-  if (!confirm(isOut ? '이 출고를 취소할까요?\n· 재고가 복구되고\n· 출고 내역·대기열/지시에서 함께 제거됩니다.' : '이 항목을 삭제할까요?')) return;
+  const isOut = r.reqType === '출고' && (r.sourceShipId || r.sourceBasinId);
+  const msg = r.sourceBasinId ? '이 세면대 출고를 취소할까요?\n· 발주가 완료 이전 단계로 되돌아가고\n· 대기열/지시에서 제거됩니다.' : (isOut ? '이 출고를 취소할까요?\n· 재고가 복구되고\n· 출고 내역·대기열/지시에서 함께 제거됩니다.' : '이 항목을 삭제할까요?');
+  if (!confirm(msg)) return;
   if (isOut) await cancelChulgoStock(r);
   await Store.remove('chulgoReqs', id);
   toast(isOut ? '출고 취소됨 · 재고 복구' : '삭제됨');
