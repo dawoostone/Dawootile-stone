@@ -403,7 +403,7 @@ function onData(coll) {
   if (coll === 'holdings' && me && !isCustomerRole()) { autoReleaseHolds(); maybeActivatePlanned(); }
   if (coll === 'inventory' && me && !isCustomerRole()) maybeActivatePlanned();   // 재고 변동(해제·입고·조정 등)으로 여유 생기면 예정홀딩 확보
   if (['holdings', 'inventory', 'transactions'].includes(coll) && me && !isCustomerRole()) scheduleAvailMirror();   // 고객 노출용 가용수량 미러 갱신(디바운스)
-  if (coll === 'chulgoReqs') refreshChulgoChatIfOpen();   // 채팅 모달 열려있으면 실시간 갱신
+  if (coll === 'chulgoReqs') { refreshChulgoChatIfOpen(); if (me && !isCustomerRole()) chulgoAlertNew(); }   // 채팅 실시간 갱신 + 새 지시 소리 알림
   if (me) render();
 }
 /* 예정홀딩(및 일부 예정 품목)을 재고 여유가 생길 때 일정 빠른 순으로 자동 확보 — 재진입 방지 */
@@ -4616,7 +4616,8 @@ function chulgoWarehouseSection() {
   const reqs = (state.chulgoReqs || []).slice().sort((a, b) => { const ua = (a.status || '대기') === '대기' ? 0 : 1, ub = (b.status || '대기') === '대기' ? 0 : 1; if (ua !== ub) return ua - ub; if ((a.urgent ? 0 : 1) !== (b.urgent ? 0 : 1)) return (a.urgent ? 0 : 1) - (b.urgent ? 0 : 1); return (+b.createdAt || 0) - (+a.createdAt || 0); });
   const pend = reqs.filter(r => (r.status || '대기') === '대기').length;
   const box = reqs.length ? `<div id="chulgo-wh-list" data-keepscroll style="max-height:62vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:12px;padding:9px 9px 1px;background:#fff">${reqs.map(r => chulgoReqCard(r, true)).join('')}</div>` : `<div class="empty"><i class="ti ti-clipboard-off"></i>들어온 요청이 없습니다</div>`;
-  return `<div style="font-size:12px;color:var(--t3);margin:2px 0 8px"><span class="live-dot" style="background:#1D9E75;--pc:rgba(29,158,117,.6);width:7px;height:7px;display:inline-block;vertical-align:middle;margin-right:5px"></span>실시간 · 대기 <b style="color:#c0341d">${pend}건</b></div>${box}`;
+  return `<button class="btn btn-sm btn-block" style="margin-bottom:9px;background:#fff6e6;border-color:#f0c060;color:#8a5a00" onclick="chulgoPrimeAudio()"><i class="ti ti-bell-ringing"></i> 새 지시 알림 소리 켜기 <span style="font-weight:500;color:var(--t3)">(이 기기 · 한 번 눌러두면 새 지시가 오면 소리로 알려요)</span></button>
+    <div style="font-size:12px;color:var(--t3);margin:2px 0 8px"><span class="live-dot" style="background:#1D9E75;--pc:rgba(29,158,117,.6);width:7px;height:7px;display:inline-block;vertical-align:middle;margin-right:5px"></span>실시간 · 대기 <b style="color:#c0341d">${pend}건</b></div>${box}`;
 }
 function renderChulgo() {
   const side = chulgoSide();
@@ -4710,6 +4711,37 @@ async function sendChulgoChat(id) {
   try { await Store.update('chulgoReqs', id, patch); } catch (e) { toast('전송 실패'); }
 }
 function refreshChulgoChatIfOpen() { if (!_chulgoChatOpen) return; const t = el('chulgo-chat-thread'); if (!t) return; const r = (state.chulgoReqs || []).find(x => x.id === _chulgoChatOpen); if (!r) return; const atBottom = t.scrollHeight - t.scrollTop - t.clientHeight < 40; t.innerHTML = chulgoChatThreadHtml(r); if (atBottom) t.scrollTop = t.scrollHeight; }
+/* ── 새 출고 지시 알림 (창고가 소리로 인지) ── */
+let _chAudio = null;
+function chulgoBeep(times) {
+  try {
+    const ctx = _chAudio || new (window.AudioContext || window.webkitAudioContext)(); _chAudio = ctx;
+    if (ctx.state === 'suspended') ctx.resume();
+    let t = ctx.currentTime;
+    for (let i = 0; i < (times || 2); i++) { const o = ctx.createOscillator(), g = ctx.createGain(); o.connect(g); g.connect(ctx.destination); o.type = 'sine'; o.frequency.value = i % 2 ? 988 : 880; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.35, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.28); o.start(t); o.stop(t + 0.3); t += 0.36; }
+  } catch (e) { }
+}
+function chulgoPrimeAudio() {
+  try { _chAudio = _chAudio || new (window.AudioContext || window.webkitAudioContext)(); if (_chAudio.state === 'suspended') _chAudio.resume(); } catch (e) { }
+  try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch (e) { }
+  chulgoBeep(1);
+  toast('알림 소리 켜짐 · 새 지시가 오면 소리로 알려드립니다');
+}
+let _chulgoSeen = null;
+function chulgoAlertNew() {
+  const reqs = state.chulgoReqs || [];
+  if (_chulgoSeen === null) { _chulgoSeen = new Set(reqs.map(r => r.id)); return; }   // 최초 로드: 알림 안 함
+  const now = Date.now();
+  const fresh = reqs.filter(r => !_chulgoSeen.has(r.id) && (r.status || '대기') === '대기' && (now - (+r.createdAt || 0) < 120000) && _normName(r.sender) !== _normName((me && me.name) || ''));
+  reqs.forEach(r => _chulgoSeen.add(r.id));
+  if (!fresh.length) return;
+  const urgent = fresh.some(f => f.urgent);
+  chulgoBeep(urgent ? 4 : 2);
+  try { if (navigator.vibrate) navigator.vibrate(urgent ? [200, 100, 200, 100, 200] : [200, 100, 200]); } catch (e) { }
+  const f = fresh[0];
+  toast('🔔 새 ' + (f.reqType || '출고') + ' 지시 · ' + (f.client || '') + (fresh.length > 1 ? ` 외 ${fresh.length - 1}건` : ''));
+  try { if ('Notification' in window && Notification.permission === 'granted') new Notification('새 ' + (f.reqType || '출고') + ' 지시' + (urgent ? ' ⚠️긴급' : ''), { body: (f.client || '') + ' · ' + (f.items || []).map(x => x.name).join(', '), tag: 'chulgo-' + f.id }); } catch (e) { }
+}
 function renderSettings() {
   el('pg-settings').innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-settings"></i>설정</h2><p>${esc(me.name)} 님${isAdmin() ? ' · 관리자' : ''}</p></div></div>
