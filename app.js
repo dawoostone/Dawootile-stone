@@ -403,6 +403,7 @@ function onData(coll) {
   if (coll === 'holdings' && me && !isCustomerRole()) { autoReleaseHolds(); maybeActivatePlanned(); }
   if (coll === 'inventory' && me && !isCustomerRole()) maybeActivatePlanned();   // 재고 변동(해제·입고·조정 등)으로 여유 생기면 예정홀딩 확보
   if (['holdings', 'inventory', 'transactions'].includes(coll) && me && !isCustomerRole()) scheduleAvailMirror();   // 고객 노출용 가용수량 미러 갱신(디바운스)
+  if (coll === 'chulgoReqs') refreshChulgoChatIfOpen();   // 채팅 모달 열려있으면 실시간 갱신
   if (me) render();
 }
 /* 예정홀딩(및 일부 예정 품목)을 재고 여유가 생길 때 일정 빠른 순으로 자동 확보 — 재진입 방지 */
@@ -4515,7 +4516,7 @@ function crItemRow(d) {
 }
 function addCrRow() { const c = el('cr-rows'); if (c) c.insertAdjacentHTML('beforeend', crItemRow({})); }
 function collectCrItems() { const rows = []; document.querySelectorAll('#cr-rows .cr-row').forEach(r => { const inp = r.querySelector('input.sb-in'); const name = inp ? (inp.value || '').trim() : ''; const qty = parseFloat(r.querySelector('.cr-qty').value) || 0; const unit = (r.querySelector('.cr-unit').value || '').trim(); const spec = (r.querySelector('.cr-spec').value || '').trim(); if (name) rows.push({ name: name, qty: qty, unit: unit, spec: spec }); }); return rows; }
-function chulgoNextDocNo(reqType) { const d = todayStr().replace(/-/g, ''); const n = (state.chulgoReqs || []).filter(r => (r.docNo || '').startsWith(d)).length + 1; return d + '-' + (reqType === '입고' ? 'I' : 'O') + String(n).padStart(2, '0'); }
+function chulgoNextDocNo(reqType) { const d = todayStr().replace(/-/g, ''); const n = (state.chulgoReqs || []).filter(r => (r.docNo || '').startsWith(d)).length + 1; const p = reqType === '입고' ? 'I' : (reqType === '입고알림' ? 'A' : 'O'); return d + '-' + p + String(n).padStart(2, '0'); }
 function chulgoReqCard(r, forWarehouse) {
   const st = r.status || '대기';
   const cls = st === '완료' ? 'p-done' : (st === '확인' ? 'p-prog' : 'p-wait');
@@ -4538,6 +4539,7 @@ function chulgoReqCard(r, forWarehouse) {
     <div class="frm-foot" style="margin-top:9px">
       ${forWarehouse && st === '대기' ? `<button class="btn btn-pri btn-sm" style="flex:1" onclick="chulgoAck('${r.id}')"><i class="ti ti-check"></i>확인</button>` : ''}
       ${forWarehouse && st === '확인' ? `<button class="btn btn-sm" style="flex:1" onclick="chulgoDone('${r.id}')"><i class="ti ti-circle-check"></i>완료</button>` : ''}
+      <button class="btn btn-sm" onclick="openChulgoChat('${r.id}')"><i class="ti ti-message"></i>채팅${(() => { const u = chulgoUnread(r); return u ? ` <span style="background:#e23b3b;color:#fff;border-radius:9px;padding:0 5px;font-size:10px">${u}</span>` : ((r.chats || []).length ? ` <span style="color:var(--t3)">${(r.chats || []).length}</span>` : ''); })()}</button>
       <button class="btn btn-sm" onclick="chulgoPrint('${r.id}')"><i class="ti ti-printer"></i>지시서</button>
       ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="delChulgoReq('${r.id}')"><i class="ti ti-trash"></i></button>` : ''}
     </div>
@@ -4589,7 +4591,7 @@ function chulgoOfficeSection() {
   return `<div class="card" style="padding:13px 15px;margin-bottom:12px">
       <div style="font-weight:600;font-size:14px;margin-bottom:10px"><i class="ti ti-send" style="color:var(--blue)"></i> 출고·입고 요청</div>
       <div style="display:flex;gap:8px;margin-bottom:8px">
-        <div class="fld" style="flex:1"><label style="font-size:12px;color:var(--t2)">구분</label><select id="cr-type" style="width:100%;font-size:15px;padding:9px 10px;border:1.5px solid var(--bd2);border-radius:10px"><option>출고</option><option>입고</option></select></div>
+        <div class="fld" style="flex:1"><label style="font-size:12px;color:var(--t2)">구분</label><select id="cr-type" style="width:100%;font-size:15px;padding:9px 10px;border:1.5px solid var(--bd2);border-radius:10px"><option>출고</option><option>입고</option><option>입고알림</option></select></div>
         <div class="fld" style="flex:2"><label style="font-size:12px;color:var(--t2)">거래처 <span style="color:var(--red-t)">*</span></label>${searchBox('cr-client', '거래처 검색·입력', '', 'companyNames', '')}</div>
       </div>
       <div class="fld full" style="margin-bottom:8px"><label style="font-size:12px;color:var(--t2)">품목 / 수량 / 단위 / 규격 <span style="color:var(--red-t)">*</span></label><div id="cr-rows">${crItemRow({})}</div><button type="button" class="btn btn-ghost btn-sm" onclick="addCrRow()"><i class="ti ti-plus"></i>자재 추가</button></div>
@@ -4654,6 +4656,36 @@ async function submitChulgoReq() {
 async function chulgoAck(id) { const r = (state.chulgoReqs || []).find(x => x.id === id); if (!r) return; await Store.update('chulgoReqs', id, { status: '확인', ackedBy: (me && me.name) || '', ackedAt: Date.now() }); toast('확인 처리됨'); }
 async function chulgoDone(id) { await Store.update('chulgoReqs', id, { status: '완료', doneBy: (me && me.name) || '', doneAt: Date.now() }); toast('완료 처리됨'); }
 async function delChulgoReq(id) { if (!guardDelete('이 요청을 삭제할까요?')) return; await Store.remove('chulgoReqs', id); toast('삭제됨'); }
+/* ── 요청별 채팅 (사무실 ↔ 창고) ── */
+let _chulgoChatOpen = '';
+function chulgoMineSide() { return chulgoSide() === 'warehouse' ? 'wh' : 'office'; }
+function chulgoUnread(r) { const mine = chulgoMineSide(); const other = mine === 'wh' ? 'office' : 'wh'; const rt = mine === 'wh' ? (+r.readWh || 0) : (+r.readOffice || 0); return (r.chats || []).filter(m => m.side === other && (+m.at || 0) > rt).length; }
+function chulgoChatThreadHtml(r) {
+  const mine = chulgoMineSide(); const msgs = r.chats || [];
+  if (!msgs.length) return `<div style="text-align:center;color:var(--t3);font-size:12.5px;padding:22px">아직 메시지가 없습니다. 첫 메시지를 보내보세요.</div>`;
+  return msgs.map(m => { const isMe = m.side === mine; const t = m.at ? new Date(+m.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''; return `<div style="display:flex;justify-content:${isMe ? 'flex-end' : 'flex-start'};margin:5px 6px"><div style="max-width:78%"><div style="font-size:10.5px;color:var(--t3);margin-bottom:2px;text-align:${isMe ? 'right' : 'left'}">${esc(m.name || (m.side === 'wh' ? '창고' : '사무실'))} · ${t}</div><div style="background:${isMe ? 'var(--g)' : '#fff'};color:${isMe ? '#fff' : 'var(--t1)'};padding:8px 11px;border-radius:12px;font-size:13.5px;word-break:break-word;border:${isMe ? 'none' : '1px solid var(--bd2)'}">${esc(m.text)}</div></div></div>`; }).join('');
+}
+async function openChulgoChat(id) {
+  const r = (state.chulgoReqs || []).find(x => x.id === id); if (!r) { toast('요청을 찾을 수 없습니다'); return; }
+  _chulgoChatOpen = id;
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-messages"></i>채팅 · ${esc(r.docNo || '')} ${esc(r.client || '')}</h3><button class="x" onclick="closeChulgoChat()">×</button></div>
+    <div id="chulgo-chat-thread" style="max-height:52vh;min-height:200px;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:6px 2px;background:var(--soft);border-radius:10px">${chulgoChatThreadHtml(r)}</div>
+    <div style="display:flex;gap:8px;margin-top:10px"><input id="chulgo-chat-in" lang="ko" placeholder="메시지 입력 후 Enter" autocomplete="off" style="flex:1;font-size:15px;padding:11px 12px;border:1.5px solid var(--bd2);border-radius:10px" onkeydown="if(event.key==='Enter'){event.preventDefault();sendChulgoChat('${id}');}"><button class="btn btn-pri" onclick="sendChulgoChat('${id}')"><i class="ti ti-send"></i></button></div>`);
+  chulgoMarkRead(id);
+  setTimeout(() => { const t = el('chulgo-chat-thread'); if (t) t.scrollTop = t.scrollHeight; const i = el('chulgo-chat-in'); if (i) i.focus(); }, 60);
+}
+function closeChulgoChat() { _chulgoChatOpen = ''; closeModal(); }
+async function chulgoMarkRead(id) { const mine = chulgoMineSide(); const patch = {}; if (mine === 'wh') patch.readWh = Date.now(); else patch.readOffice = Date.now(); try { await Store.update('chulgoReqs', id, patch); } catch (e) { } }
+async function sendChulgoChat(id) {
+  const inp = el('chulgo-chat-in'); const text = inp ? (inp.value || '').trim() : ''; if (!text) return;
+  const r = (state.chulgoReqs || []).find(x => x.id === id); if (!r) return;
+  const mine = chulgoMineSide();
+  const chats = (r.chats || []).slice(); chats.push({ side: mine, name: (me && me.name) || '', text: text, at: Date.now() });
+  const patch = { chats: chats }; if (mine === 'wh') patch.readWh = Date.now(); else patch.readOffice = Date.now();
+  if (inp) inp.value = '';
+  try { await Store.update('chulgoReqs', id, patch); } catch (e) { toast('전송 실패'); }
+}
+function refreshChulgoChatIfOpen() { if (!_chulgoChatOpen) return; const t = el('chulgo-chat-thread'); if (!t) return; const r = (state.chulgoReqs || []).find(x => x.id === _chulgoChatOpen); if (!r) return; const atBottom = t.scrollHeight - t.scrollTop - t.clientHeight < 40; t.innerHTML = chulgoChatThreadHtml(r); if (atBottom) t.scrollTop = t.scrollHeight; }
 function renderSettings() {
   el('pg-settings').innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-settings"></i>설정</h2><p>${esc(me.name)} 님${isAdmin() ? ' · 관리자' : ''}</p></div></div>
