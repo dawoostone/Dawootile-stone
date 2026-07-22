@@ -29,7 +29,7 @@ function prefillEmail() {
 }
 function cref(name) { return db.collection('teams').doc(TEAM).collection(name); }
 
-const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients', 'issues', 'restocks', 'basins', 'holdRequests', 'shipments'];
+const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients', 'issues', 'restocks', 'basins', 'holdRequests', 'shipments', 'chulgoReqs'];
 
 // 로컬(미리보기) 모드용 - 같은 기기의 다른 탭끼리 실시간 반영
 const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('dws') : null;
@@ -92,7 +92,7 @@ const Store = {
 if (bc) bc.onmessage = (e) => { const c = e.data; if (Store._watchers[c]) Store._watchers[c](Store.read(c)); };
 
 /* ---------- 1. 전역 상태 ---------- */
-const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [], issues: [], restocks: [], basins: [], holdRequests: [], shipments: [] };
+const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [], issues: [], restocks: [], basins: [], holdRequests: [], shipments: [], chulgoReqs: [] };
 let me = null;          // 로그인한 사용자
 let tab = 'home';
 let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all', holdArchive: false, holdDone: false, holdSearch: '', holdGroup: 'none', custSearch: '', shipSearch: '', basinSearch: '' };
@@ -719,6 +719,7 @@ function render() {
   else if (tab === 'ship') renderShip();
   else if (tab === 'hold') renderHold();
   else if (tab === 'basin') renderBasin();
+  else if (tab === 'chulgo') renderChulgo();
   else if (tab === 'settings') renderSettings();
 }
 /* ---------- 고객(거래처) 재고 조회 전용 화면 (읽기 전용) ---------- */
@@ -4496,6 +4497,96 @@ function holdToShip(id) {
 /* ===================================================================
    설정
    =================================================================== */
+/* ================= 출고관리 (사무실 요청 → 창고 확인) — 이식 1단계 ================= */
+function chulgoSide() { return filters.chulgoSide || 'office'; }
+function chulgoGoSide(v) { filters.chulgoSide = v; renderChulgo(); }
+let _crN = 0;
+function crItemRow(d) {
+  d = d || {}; const i = _crN++;
+  return `<div class="cr-row" style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+    <div style="flex:2.2;min-width:0">${searchBox('crm-' + i, '자재명 검색·입력', d.name || '', 'matNames', '')}</div>
+    <input class="cr-qty" inputmode="numeric" placeholder="수량" value="${esc(d.qty || '')}" style="flex:1;min-width:56px;font-size:15px;padding:10px 11px;border:1.5px solid var(--bd2);border-radius:10px">
+    <button type="button" class="btn btn-ghost btn-sm" style="flex:none" onclick="this.closest('.cr-row').remove()" aria-label="삭제"><i class="ti ti-x"></i></button>
+  </div>`;
+}
+function addCrRow() { const c = el('cr-rows'); if (c) c.insertAdjacentHTML('beforeend', crItemRow({})); }
+function collectCrItems() { const rows = []; document.querySelectorAll('#cr-rows .cr-row').forEach(r => { const inp = r.querySelector('input.sb-in'); const name = inp ? (inp.value || '').trim() : ''; const qty = parseFloat(r.querySelector('.cr-qty').value) || 0; if (name) rows.push({ name: name, qty: qty }); }); return rows; }
+function chulgoNextDocNo(reqType) { const d = todayStr().replace(/-/g, ''); const n = (state.chulgoReqs || []).filter(r => (r.docNo || '').startsWith(d)).length + 1; return d + '-' + (reqType === '입고' ? 'I' : 'O') + String(n).padStart(2, '0'); }
+function chulgoReqCard(r, forWarehouse) {
+  const st = r.status || '대기';
+  const cls = st === '완료' ? 'p-done' : (st === '확인' ? 'p-prog' : 'p-wait');
+  const items = (r.items || []).map(it => `<div style="font-size:12.5px;color:var(--t2)">· <b style="color:var(--t1)">${esc(it.name)}</b> ${+it.qty || 0}</div>`).join('');
+  const when = r.createdAt ? new Date(+r.createdAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  return `<div class="card" style="margin-bottom:9px;padding:12px 14px;border-left:4px solid ${r.urgent ? '#e23b3b' : 'var(--bd2)'}">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+      <div style="min-width:0"><div style="font-weight:700;font-size:14px">${r.urgent ? '<span class="pill" style="background:#fde8e8;color:#c0341d;font-size:10px">긴급</span> ' : ''}${esc(r.reqType || '출고')} · ${esc(r.client || '-')}</div>
+        <div style="font-size:11.5px;color:var(--t3);margin-top:2px">${esc(r.docNo || '')} · ${esc(r.sender || '')} · ${when}</div></div>
+      <span class="pill ${cls}" style="flex:none">${esc(st)}</span>
+    </div>
+    <div style="margin-top:7px">${items}</div>
+    ${r.memo ? `<div style="margin-top:6px;font-size:12.5px;color:var(--t2);border-top:1px dashed var(--bd2);padding-top:6px"><i class="ti ti-note"></i> ${esc(r.memo)}</div>` : ''}
+    ${st === '확인' && r.ackedBy ? `<div style="margin-top:6px;font-size:11.5px;color:var(--gd)"><i class="ti ti-checks"></i> ${esc(r.ackedBy)} 확인</div>` : ''}
+    <div class="frm-foot" style="margin-top:9px">
+      ${forWarehouse && st === '대기' ? `<button class="btn btn-pri btn-sm" style="flex:1" onclick="chulgoAck('${r.id}')"><i class="ti ti-check"></i>확인</button>` : ''}
+      ${forWarehouse && st === '확인' ? `<button class="btn btn-sm" style="flex:1" onclick="chulgoDone('${r.id}')"><i class="ti ti-circle-check"></i>완료</button>` : ''}
+      ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="delChulgoReq('${r.id}')"><i class="ti ti-trash"></i></button>` : ''}
+    </div>
+  </div>`;
+}
+function chulgoOfficeSection() {
+  const mine = (state.chulgoReqs || []).slice().sort((a, b) => (+b.createdAt || 0) - (+a.createdAt || 0));
+  const box = mine.length ? `<div id="chulgo-office-list" data-keepscroll style="max-height:52vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:12px;padding:9px 9px 1px;background:#fff">${mine.map(r => chulgoReqCard(r, false)).join('')}</div>` : `<div class="empty"><i class="ti ti-inbox"></i>보낸 요청이 없습니다</div>`;
+  return `<div class="card" style="padding:13px 15px;margin-bottom:12px">
+      <div style="font-weight:600;font-size:14px;margin-bottom:10px"><i class="ti ti-send" style="color:var(--blue)"></i> 출고·입고 요청</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <div class="fld" style="flex:1"><label style="font-size:12px;color:var(--t2)">구분</label><select id="cr-type" style="width:100%;font-size:15px;padding:9px 10px;border:1.5px solid var(--bd2);border-radius:10px"><option>출고</option><option>입고</option></select></div>
+        <div class="fld" style="flex:2"><label style="font-size:12px;color:var(--t2)">거래처 <span style="color:var(--red-t)">*</span></label>${searchBox('cr-client', '거래처 검색·입력', '', 'companyNames', '')}</div>
+      </div>
+      <div class="fld full" style="margin-bottom:8px"><label style="font-size:12px;color:var(--t2)">품목 / 수량 <span style="color:var(--red-t)">*</span></label><div id="cr-rows">${crItemRow({})}</div><button type="button" class="btn btn-ghost btn-sm" onclick="addCrRow()"><i class="ti ti-plus"></i>자재 추가</button></div>
+      <div class="fld full" style="margin-bottom:8px"><label style="font-size:12px;color:var(--t2)">메모</label><input id="cr-memo" lang="ko" placeholder="선택" style="width:100%;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px"></div>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:600;color:#c0341d;margin-bottom:10px"><input type="checkbox" id="cr-urgent" style="width:18px;height:18px"> 긴급 요청</label>
+      <button class="btn btn-pri btn-block" onclick="submitChulgoReq()"><i class="ti ti-send"></i>창고로 요청 보내기</button>
+    </div>
+    <div style="font-size:12px;font-weight:600;color:var(--t2);margin:2px 2px 6px">보낸 요청</div>${box}`;
+}
+function chulgoWarehouseSection() {
+  const reqs = (state.chulgoReqs || []).slice().sort((a, b) => { const ua = (a.status || '대기') === '대기' ? 0 : 1, ub = (b.status || '대기') === '대기' ? 0 : 1; if (ua !== ub) return ua - ub; if ((a.urgent ? 0 : 1) !== (b.urgent ? 0 : 1)) return (a.urgent ? 0 : 1) - (b.urgent ? 0 : 1); return (+b.createdAt || 0) - (+a.createdAt || 0); });
+  const pend = reqs.filter(r => (r.status || '대기') === '대기').length;
+  const box = reqs.length ? `<div id="chulgo-wh-list" data-keepscroll style="max-height:62vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:12px;padding:9px 9px 1px;background:#fff">${reqs.map(r => chulgoReqCard(r, true)).join('')}</div>` : `<div class="empty"><i class="ti ti-clipboard-off"></i>들어온 요청이 없습니다</div>`;
+  return `<div style="font-size:12px;color:var(--t3);margin:2px 0 8px"><span class="live-dot" style="background:#1D9E75;--pc:rgba(29,158,117,.6);width:7px;height:7px;display:inline-block;vertical-align:middle;margin-right:5px"></span>실시간 · 대기 <b style="color:#c0341d">${pend}건</b></div>${box}`;
+}
+function renderChulgo() {
+  const side = chulgoSide();
+  const pend = (state.chulgoReqs || []).filter(r => (r.status || '대기') === '대기').length;
+  el('pg-chulgo').innerHTML = `
+    <div class="ph"><div><h2><i class="ti ti-clipboard-list"></i>출고관리</h2><p>사무실 요청 → 창고 실시간 확인</p></div></div>
+    <div class="seg" style="margin:2px 0 12px">
+      <button type="button" class="${side === 'office' ? 'on' : ''}" onclick="chulgoGoSide('office')"><i class="ti ti-building" style="font-size:14px"></i> 사무실(요청)</button>
+      <button type="button" class="${side === 'warehouse' ? 'on' : ''}" onclick="chulgoGoSide('warehouse')"><i class="ti ti-building-warehouse" style="font-size:14px"></i> 창고(확인)${pend ? ` <b>${pend}</b>` : ''}</button>
+    </div>
+    ${side === 'office' ? chulgoOfficeSection() : chulgoWarehouseSection()}
+    <div class="banner info" style="margin-top:12px"><i class="ti ti-info-circle"></i> 이식 1단계 — 요청·확인 기본 흐름입니다. 지시서 인쇄·채팅·입고 알림·목록·엑셀은 다음 단계에서 추가됩니다.</div>`;
+}
+async function submitChulgoReq() {
+  const client = (el('cr-client') && el('cr-client').value || '').trim();
+  const reqType = el('cr-type') ? el('cr-type').value : '출고';
+  const items = collectCrItems();
+  const urgent = !!(el('cr-urgent') && el('cr-urgent').checked);
+  const memo = (el('cr-memo') && el('cr-memo').value || '').trim();
+  if (!client) { toast('거래처를 입력하세요'); return; }
+  if (!items.length) { toast('품목·수량을 입력하세요'); return; }
+  if (_busy) return; _busy = true;
+  try {
+    const docNo = chulgoNextDocNo(reqType);
+    await ensureClient(client);
+    await Store.add('chulgoReqs', { docNo, reqType, client, items, urgent, memo, status: '대기', sender: (me && me.name) || '', createdAt: Date.now() });
+    toast('요청 등록됨 · ' + docNo);
+    renderChulgo();
+  } finally { setTimeout(() => { _busy = false; }, 600); }
+}
+async function chulgoAck(id) { const r = (state.chulgoReqs || []).find(x => x.id === id); if (!r) return; await Store.update('chulgoReqs', id, { status: '확인', ackedBy: (me && me.name) || '', ackedAt: Date.now() }); toast('확인 처리됨'); }
+async function chulgoDone(id) { await Store.update('chulgoReqs', id, { status: '완료', doneBy: (me && me.name) || '', doneAt: Date.now() }); toast('완료 처리됨'); }
+async function delChulgoReq(id) { if (!guardDelete('이 요청을 삭제할까요?')) return; await Store.remove('chulgoReqs', id); toast('삭제됨'); }
 function renderSettings() {
   el('pg-settings').innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-settings"></i>설정</h2><p>${esc(me.name)} 님${isAdmin() ? ' · 관리자' : ''}</p></div></div>
