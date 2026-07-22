@@ -3084,7 +3084,7 @@ function shipSlipListHtml() {
       </div>
       <div style="margin-top:7px;font-size:13px">${g.items.map(t => `<div style="color:var(--t2)">· ${esc(t.itemName)} <b style="color:var(--t1)">${+t.jang || 0}장</b>${t.hebe ? ` (${(+t.hebe).toFixed(1)}㎡)` : ''}${t.lot ? ` · 롯트 ${esc(t.lot)}` : ''}${t.pattern ? ` · 패턴 ${esc(t.pattern)}` : ''}</div>`).join('')}</div>
       ${g.items.length > 1 ? `<div style="font-size:11.5px;color:var(--t3);margin-top:6px;text-align:right">합계 ${totJang}장 · ${totHebe.toFixed(1)}㎡</div>` : ''}
-      <div style="margin-top:9px;display:flex;gap:6px;justify-content:flex-end"><button class="btn btn-ghost btn-sm" onclick="sendToChulgo('out','${g.key}')" title="출고관리 앱으로 전송">${g.items.some(t => t.sentChulgo) ? '<i class="ti ti-checks" style="color:var(--gd)"></i>출고관리 전송됨' : '<i class="ti ti-send"></i>출고관리 전송'}</button><button class="btn btn-sm" onclick="printShipSlip('${g.key}')"><i class="ti ti-printer"></i>출고증 인쇄</button></div>
+      <div style="margin-top:9px;text-align:right"><button class="btn btn-sm" onclick="printShipSlip('${g.key}')"><i class="ti ti-printer"></i>출고증 인쇄</button></div>
     </div>`;
   }).join('');
 }
@@ -3606,9 +3606,7 @@ function basinCard(b) {
       <div class="db"><div class="k">출고일</div><div class="v">${esc((done ? b.shipDate : '') || '—')}</div></div>
     </div>
     <div class="tline">${tnodes}</div>
-    <div style="display:flex;gap:6px;margin-top:11px;flex-wrap:wrap">${act}
-      <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();sendToChulgo('basin','${b.id}')" title="출고관리 앱으로 전송">${b.sentChulgo ? '<i class="ti ti-checks" style="color:var(--gd)"></i>출고관리 전송됨' : '<i class="ti ti-send"></i>출고관리 전송'}</button>
-    </div>
+    <div style="display:flex;gap:6px;margin-top:11px;flex-wrap:wrap">${act}</div>
   </div>`;
 }
 async function basinSetStage(id, stage, extra) {
@@ -4740,16 +4738,8 @@ function renderSettings() {
       <div style="font-size:11.5px;color:var(--t3);margin-top:8px"><i class="ti ti-device-mobile"></i> 아이폰: 사파리로 열고 <b>공유 → 홈 화면에 추가</b> → 홈 화면 아이콘으로 열어 등록해야 알림이 옵니다.</div>
     </div>
     ${isAdmin() ? `<div class="card">
-      <div class="card-h"><h3><i class="ti ti-plug-connected"></i>출고관리 앱 연동</h3></div>
-      <div style="font-size:12.5px;color:var(--t2);margin-bottom:8px">출고·세면대 발주를 <b>출고관리 앱(dawoo-chulgo)</b>으로 전송합니다. 두 앱이 다른 Firebase라, 출고관리 앱에 만든 <b>수신 주소(엔드포인트)</b>로 보냅니다.</div>
-      <div class="fld"><label>출고관리 수신 주소 (엔드포인트 URL)</label><input id="chulgo-ep" value="${esc(_chulgoEndpoint || '')}" placeholder="https://...cloudfunctions.net/receiveShipment" autocomplete="off" style="width:100%;font-size:14px;padding:10px 11px;border:1.5px solid var(--bd2);border-radius:10px"></div>
-      <button class="btn btn-pri btn-sm btn-block" style="margin-top:8px" onclick="saveChulgoEndpoint()"><i class="ti ti-device-floppy"></i>수신 주소 저장</button>
-      <div style="font-size:11.5px;color:var(--t2);margin-top:10px;line-height:1.6;background:var(--soft);border-radius:9px;padding:10px 12px">
-        <b>출고관리 앱에 만들 '수신 창구' 규격</b> (그쪽 프로젝트에 추가):<br>
-        · POST로 아래 JSON을 받아 <b>chulgo_requests</b> 문서로 저장하는 함수(HTTP) 1개.<br>
-        · 받는 값: <span style="color:var(--t3)">source, kind('outbound'|'basin'), company, client, content, qty, sender, memo, dest, refId, refDate, status:'requested'</span><br>
-        · 저장 시 kind·status·createdAt 등 출고관리 양식에 맞게 매핑하면 됩니다. CORS 허용 필요.
-      </div>
+      <div class="card-h"><h3><i class="ti ti-clipboard-list"></i>출고관리</h3></div>
+      <div class="alert-i b" style="background:var(--gl2);border-color:var(--gbd)"><div class="ai" style="color:var(--gd)"><i class="ti ti-clipboard-check"></i></div><div class="at"><b>출고관리가 이 앱에 통합되었습니다</b><span>하단 메뉴 '출고관리' 탭에서 사무실 요청 → 창고 확인 → 지시서까지. 완료 시 실재고 자동 반영.</span></div></div>
     </div>` : ''}
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-cloud"></i>연결 상태</h3></div>
