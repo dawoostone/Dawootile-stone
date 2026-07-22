@@ -29,7 +29,7 @@ function prefillEmail() {
 }
 function cref(name) { return db.collection('teams').doc(TEAM).collection(name); }
 
-const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients', 'issues', 'restocks', 'basins', 'holdRequests'];
+const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients', 'issues', 'restocks', 'basins', 'holdRequests', 'shipments'];
 
 // 로컬(미리보기) 모드용 - 같은 기기의 다른 탭끼리 실시간 반영
 const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('dws') : null;
@@ -78,12 +78,21 @@ const Store = {
       let arr = this.read(coll).filter(x => x.id !== id);
       this._writeLocal(coll, arr); if (this._watchers[coll]) this._watchers[coll](arr);
     }
+  },
+  /* 지정 문서 id로 병합 업서트(다른 앱이 써넣은 필드는 보존) — 연동 브릿지용 */
+  async setMerge(coll, id, obj) {
+    if (CLOUD) { await cref(coll).doc(id).set(obj, { merge: true }); }
+    else {
+      const arr = this.read(coll); const i = arr.findIndex(x => x.id === id);
+      if (i >= 0) Object.assign(arr[i], obj); else arr.push(Object.assign({ id }, obj));
+      this._writeLocal(coll, arr); if (this._watchers[coll]) this._watchers[coll](arr);
+    }
   }
 };
 if (bc) bc.onmessage = (e) => { const c = e.data; if (Store._watchers[c]) Store._watchers[c](Store.read(c)); };
 
 /* ---------- 1. 전역 상태 ---------- */
-const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [], issues: [], restocks: [], basins: [] };
+const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [], issues: [], restocks: [], basins: [], holdRequests: [], shipments: [] };
 let me = null;          // 로그인한 사용자
 let tab = 'home';
 let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all', holdArchive: false, holdDone: false, holdSearch: '', holdGroup: 'none', custSearch: '', shipSearch: '', basinSearch: '' };
@@ -393,6 +402,7 @@ function onData(coll) {
   if (coll === 'holdings' && me && !isCustomerRole()) { autoReleaseHolds(); maybeActivatePlanned(); }
   if (coll === 'inventory' && me && !isCustomerRole()) maybeActivatePlanned();   // 재고 변동(해제·입고·조정 등)으로 여유 생기면 예정홀딩 확보
   if (['holdings', 'inventory', 'transactions'].includes(coll) && me && !isCustomerRole()) scheduleAvailMirror();   // 고객 노출용 가용수량 미러 갱신(디바운스)
+  if (['basins', 'transactions'].includes(coll) && me && !isCustomerRole()) scheduleShipmentBridge();   // 쉽먼트 확인 연동: 발주·출고를 공용 컬렉션에 반영
   if (me) render();
 }
 /* 예정홀딩(및 일부 예정 품목)을 재고 여유가 생길 때 일정 빠른 순으로 자동 확보 — 재진입 방지 */
@@ -432,6 +442,65 @@ async function runAvailMirror() {
     }
   } finally { _availBusy = false; }
 }
+
+/* ===== 쉽먼트 확인(Material Shipment Confirmation) 연동 브릿지 =====
+   같은 Firebase의 공용 컬렉션 teams/dawoo/shipments 를 두 앱이 공유.
+   · 이 앱(재고): 세면대 수입발주 + 일반 출고를 shipments 문서로 '올림'(우리 소유 필드만 병합).
+   · 확인 앱: 같은 문서에 confirmed/confirmedAt/confirmedBy/confirmNote 를 '써넣음'(우리는 읽기만).
+   문서 id 규칙: 세면대 = 'B_'+basinId, 출고묶음 = 'S_'+shipId(없으면 txnId).
+   스키마(우리가 쓰는 필드): { source:'dawoo-inventory', kind:'basin'|'out', refId, ref, vendor, items:[{name,qty,spec,orderNo}], date, dest, status, updatedAt } */
+let _shipBridgeTimer = null, _shipBridgeBusy = false;
+function scheduleShipmentBridge() {
+  if (!me || isCustomerRole() || !CLOUD) return;
+  clearTimeout(_shipBridgeTimer);
+  _shipBridgeTimer = setTimeout(runShipmentBridge, 900);
+}
+function shipmentDocFor(rec) { return (state.shipments || []).find(s => s.id === rec); }
+async function runShipmentBridge() {
+  if (!me || isCustomerRole() || !CLOUD) return;
+  if (_shipBridgeBusy) { scheduleShipmentBridge(); return; }
+  if (!_loadedColls.basins || !_loadedColls.transactions || !_loadedColls.shipments) { scheduleShipmentBridge(); return; }
+  _shipBridgeBusy = true;
+  try {
+    const want = {};   // 올려야 할 문서(우리 소유 필드)
+    // 1) 세면대 수입 발주
+    (state.basins || []).forEach(b => {
+      const its = basinItems(b);
+      want['B_' + b.id] = {
+        source: 'dawoo-inventory', kind: 'basin', refId: b.id,
+        ref: (b.vendor || '') + ' · ' + (its.map(x => x.stone).filter(Boolean).join('/') || '세면대'),
+        vendor: b.vendor || '', orderDate: b.orderDate || '', date: b.shipDate || b.orderDate || '',
+        address: b.address || '', status: b.stage || '견적',
+        items: its.map(x => ({ name: x.stone || '', qty: +x.qty || 0, spec: x.spec || '', orderNo: x.orderNo || '', quoteNo: x.quoteNo || '' })),
+        updatedAt: Date.now()
+      };
+    });
+    // 2) 일반 출고(묶음)
+    const outs = (state.transactions || []).filter(t => t.type === 'out');
+    const gmap = {};
+    outs.forEach(t => { const k = 'S_' + (t.shipId || t.id); (gmap[k] = gmap[k] || { key: k, t0: t, items: [] }).items.push(t); });
+    Object.values(gmap).forEach(g => {
+      const t = g.t0;
+      want[g.key] = {
+        source: 'dawoo-inventory', kind: 'out', refId: t.shipId || t.id,
+        ref: (t.targetName || '') + ' · ' + g.items.map(x => x.itemName).filter(Boolean).join(', '),
+        vendor: t.targetName || '', date: t.date || '', dest: t.dest || t.factory || '', status: '출고',
+        items: g.items.map(x => ({ name: x.itemName || '', qty: +x.jang || 0, spec: x.spec || '', lot: x.lot || '' })),
+        updatedAt: Date.now()
+      };
+    });
+    // 변경분만 업서트(우리 필드 해시 비교 — 확인앱이 쓴 필드는 병합 보존)
+    for (const id in want) {
+      const cur = shipmentDocFor(id);
+      const w = want[id];
+      const sig = JSON.stringify([w.ref, w.status, w.date, w.dest, w.items]);
+      const curSig = cur ? JSON.stringify([cur.ref, cur.status, cur.date, cur.dest, cur.items]) : null;
+      if (sig !== curSig) { try { await Store.setMerge('shipments', id, w); } catch (e) { } }
+    }
+  } finally { _shipBridgeBusy = false; }
+}
+/* 특정 발주/출고의 확인 상태 조회 — 배지 표시용 */
+function shipConfirm(kind, refId) { return (state.shipments || []).find(s => s.id === (kind === 'basin' ? 'B_' : 'S_') + refId) || null; }
 
 /* ---------- 5. 로그인 (이메일 + 비밀번호 / Firebase 인증) ---------- */
 async function doLogin() {
@@ -2972,7 +3041,7 @@ function shipSlipListHtml() {
     const totJang = g.items.reduce((a, b) => a + (+b.jang || 0), 0), totHebe = g.items.reduce((a, b) => a + (+b.hebe || 0), 0);
     return `<div class="card" style="margin-bottom:10px;padding:11px 13px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div><div style="font-weight:700;font-size:14px"><i class="ti ti-briefcase" style="color:var(--blue);font-size:14px"></i> ${esc(g.targetName || '-')}</div>
+        <div><div style="font-weight:700;font-size:14px"><i class="ti ti-briefcase" style="color:var(--blue);font-size:14px"></i> ${esc(g.targetName || '-')}${(() => { const sc = shipConfirm('out', g.key); return sc && sc.confirmed ? ` <span class="pill" style="background:#e8f7f0;color:#0F6E56;font-size:10px"><i class="ti ti-checks"></i> 확인</span>` : ''; })()}</div>
           <div style="font-size:12px;color:var(--t3);margin-top:2px">${esc(g.date)}${g.dest ? ' · → ' + esc(g.dest) : ''} · ${esc(g.by || '')}</div></div>
         ${isAdmin() ? `<button class="x" onclick="delShipGroup('${g.key}')" aria-label="삭제"><i class="ti ti-trash" style="font-size:16px;color:var(--red-t)"></i></button>` : ''}
       </div>
@@ -3488,7 +3557,7 @@ function basinCard(b) {
   return `<div class="site" onclick="openBasinForm('${b.id}')">
     <div class="site-top">
       <div><div class="nm">${esc(b.vendor || '(업체미정)')}</div><div class="ad">${b.address ? `<i class="ti ti-map-pin" style="font-size:13px"></i>${esc(b.address)}` : `<span style="color:var(--t3)">주소 미지정</span>`}</div></div>
-      <div style="text-align:right;flex:none">${basinPill(b.stage || '견적')}</div>
+      <div style="text-align:right;flex:none">${basinPill(b.stage || '견적')}${(() => { const sc = shipConfirm('basin', b.id); return sc && sc.confirmed ? `<div style="margin-top:5px"><span class="pill" style="background:#e8f7f0;color:#0F6E56;font-size:10px"><i class="ti ti-checks"></i> 출하확인</span></div>` : ''; })()}</div>
     </div>
     <div class="site-meta">
       <div class="mi"><i class="ti ti-stack-2"></i><span class="k">품목</span><b>${items.length}건 · 총 ${totQty}개</b></div>
@@ -4417,6 +4486,17 @@ function renderSettings() {
       })()}
       <div style="font-size:11.5px;color:var(--t3);margin-top:8px"><i class="ti ti-device-mobile"></i> 아이폰: 사파리로 열고 <b>공유 → 홈 화면에 추가</b> → 홈 화면 아이콘으로 열어 등록해야 알림이 옵니다.</div>
     </div>
+    ${isAdmin() ? `<div class="card">
+      <div class="card-h"><h3><i class="ti ti-plug-connected"></i>쉽먼트 확인 연동</h3></div>
+      ${(() => { const sh = state.shipments || []; const conf = sh.filter(s => s.confirmed).length; return `<div class="alert-i b" style="background:var(--gl2);border-color:var(--gbd)"><div class="ai" style="color:var(--gd)"><i class="ti ti-plug-connected"></i></div><div class="at"><b>공용 컬렉션 연동 ON · ${sh.length}건 공유 · ${conf}건 출하확인</b><span>세면대 발주·출고가 자동으로 공유됩니다</span></div></div>`; })()}
+      <div style="font-size:11.5px;color:var(--t2);margin-top:9px;line-height:1.6;background:var(--soft);border-radius:9px;padding:10px 12px">
+        <b>확인 앱(다른 프로젝트) 연결 규격</b><br>
+        · 같은 Firebase의 컬렉션 <b>teams/dawoo/shipments</b> 를 공유합니다.<br>
+        · 이 앱이 쓰는 필드: <span style="color:var(--t3)">source, kind('basin'|'out'), refId, ref, vendor, items[], date, dest, status</span><br>
+        · 확인 앱이 써넣을 필드: <b>confirmed</b>(true/false), confirmedAt, confirmedBy, confirmNote<br>
+        · 문서 id: 세면대 <b>B_&lt;발주id&gt;</b> / 출고 <b>S_&lt;shipId&gt;</b>. 확인 앱은 이 문서에 confirmed만 병합하면, 세면대·출고 화면에 <b>출하확인</b> 배지가 자동으로 뜹니다.
+      </div>
+    </div>` : ''}
     <div class="card">
       <div class="card-h"><h3><i class="ti ti-cloud"></i>연결 상태</h3></div>
       <div class="alert-i ${CLOUD ? 'b' : 'a'}" style="${CLOUD ? 'background:var(--gl2);border-color:var(--gbd)' : ''}">
