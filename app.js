@@ -4592,6 +4592,92 @@ function chulgoPrint(id) {
   w.document.write(html); w.document.close(); w.focus();
   setTimeout(() => { try { w.print(); } catch (e) { } }, 350);
 }
+/* ── 출고 지시 묶음(dispatch): 여러 대기열 건을 한 dispatchId로 묶어 한 건으로 처리 ── */
+function chulgoDispatchGroups() {
+  const disp = (state.chulgoReqs || []).filter(r => r.dispatchId && ['지시', '확인', '완료'].includes(r.status || ''));
+  const map = {};
+  disp.forEach(r => { (map[r.dispatchId] = map[r.dispatchId] || []).push(r); });
+  return Object.keys(map).map(k => {
+    const reqs = map[k].sort((a, b) => (+a.createdAt || 0) - (+b.createdAt || 0));
+    const rep = reqs[0]; const sts = reqs.map(r => r.status || '');
+    return {
+      dispatchId: k, reqs,
+      status: sts.includes('지시') ? '지시' : (sts.includes('확인') ? '확인' : '완료'),
+      vehicle: rep.vehicle || '', driver: rep.driver || '', dispatchDest: rep.dispatchDest || '',
+      dispatchedAt: rep.dispatchedAt || 0, dispatchedBy: rep.dispatchedBy || '',
+      urgent: reqs.some(r => r.urgent),
+      clients: [...new Set(reqs.map(r => r.client).filter(Boolean))],
+      items: [].concat(...reqs.map(r => (r.items || []).map(it => Object.assign({ _client: r.client }, it)))),
+      docNos: reqs.map(r => r.docNo).filter(Boolean)
+    };
+  }).sort((a, b) => { const ua = a.status === '지시' ? 0 : 1, ub = b.status === '지시' ? 0 : 1; if (ua !== ub) return ua - ub; return (+b.dispatchedAt || 0) - (+a.dispatchedAt || 0); });
+}
+function chulgoDispatchCard(g, forWarehouse) {
+  const st = g.status; const cls = st === '완료' ? 'p-done' : (st === '확인' ? 'p-prog' : 'p-hold');
+  const urgBadge = g.urgent ? '<span class="pill" style="background:#fde8e8;color:#c0341d;font-size:10px">긴급</span> ' : '';
+  const items = g.items.map(it => `<div style="font-size:12.5px;color:var(--t2)">· <b style="color:var(--t1)">${esc(it.name)}</b> ${+it.qty || 0}${esc(it.unit || '')}${it.spec ? ` <span style="color:var(--t3)">(${esc(it.spec)})</span>` : ''}${g.clients.length > 1 ? ` <span style="color:var(--blue);font-size:11px">${esc(it._client || '')}</span>` : ''}</div>`).join('');
+  const when = g.dispatchedAt ? new Date(+g.dispatchedAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  const veh = [g.vehicle ? '🚚 ' + g.vehicle : '', g.driver ? '기사 ' + g.driver : '', g.dispatchDest ? '→ ' + g.dispatchDest : ''].filter(Boolean).join(' · ');
+  return `<div class="card" style="margin-bottom:9px;padding:12px 14px;border-left:4px solid ${g.urgent ? '#e23b3b' : '#2f6fed'}">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+      <div style="min-width:0"><div style="font-weight:700;font-size:14px">${urgBadge}출고 지시 · ${esc(g.clients.join(', ') || '-')}${g.reqs.length > 1 ? ` <span style="font-size:11px;color:var(--t3)">(${g.reqs.length}건 묶음)</span>` : ''}</div>
+        <div style="font-size:11.5px;color:var(--t3);margin-top:2px">${esc(g.docNos.join(', '))} · ${when}${g.dispatchedBy ? ' · ' + esc(g.dispatchedBy) : ''}</div></div>
+      <span class="pill ${cls}" style="flex:none">${esc(st)}</span></div>
+    ${veh ? `<div style="margin-top:5px;font-size:12.5px;color:#2f6fed;font-weight:600">${esc(veh)}</div>` : ''}
+    <div style="margin-top:7px">${items}</div>
+    <div class="frm-foot" style="margin-top:9px">
+      ${forWarehouse && st === '지시' ? `<button class="btn btn-pri btn-sm" style="flex:1.4" onclick="chulgoAckDispatch('${g.dispatchId}')"><i class="ti ti-check"></i>접수 (지시서 인쇄)</button>` : ''}
+      ${forWarehouse && (st === '지시' || st === '확인') ? `<button class="btn btn-sm" style="flex:1" onclick="chulgoDoneDispatch('${g.dispatchId}')"><i class="ti ti-circle-check"></i>완료</button>` : ''}
+      <button class="btn btn-sm" onclick="chulgoPrintDispatch('${g.dispatchId}')"><i class="ti ti-printer"></i>지시서${forWarehouse ? ' 재인쇄' : ''}</button>
+    </div>
+  </div>`;
+}
+async function chulgoAckDispatch(dispatchId) {
+  const reqs = (state.chulgoReqs || []).filter(r => r.dispatchId === dispatchId && (r.status || '') === '지시');
+  for (const r of reqs) { try { await Store.update('chulgoReqs', r.id, { status: '확인', ackedBy: (me && me.name) || '', ackedAt: Date.now() }); } catch (e) { } }
+  toast('접수 처리 · 지시서 인쇄');
+  chulgoPrintDispatch(dispatchId);
+}
+async function chulgoDoneDispatch(dispatchId) {
+  if (!confirm('이 출고 지시를 완료 처리할까요?')) return;
+  const reqs = (state.chulgoReqs || []).filter(r => r.dispatchId === dispatchId && ['지시', '확인'].includes(r.status || ''));
+  for (const r of reqs) { try { await Store.update('chulgoReqs', r.id, { status: '완료', doneBy: (me && me.name) || '', doneAt: Date.now() }); } catch (e) { } }
+  toast('완료 처리됨');
+}
+function chulgoPrintDispatch(dispatchId) {
+  const g = chulgoDispatchGroups().find(x => x.dispatchId === dispatchId);
+  if (!g) { toast('지시를 찾을 수 없습니다'); return; }
+  const e = s => esc(s == null ? '' : String(s));
+  const urg = g.urgent ? '긴급' : '보통';
+  const multi = g.clients.length > 1;
+  const MIN = Math.max(8, g.items.length);
+  let rows = g.items.map((it, i) => `<tr><td class="c">${i + 1}</td><td class="l">${e(it.name)}</td><td class="l">${e(it.spec)}</td><td class="r">${e(it.qty)}</td><td class="c">${e(it.unit)}</td>${multi ? `<td class="l">${e(it._client)}</td>` : ''}</tr>`).join('');
+  for (let i = g.items.length; i < MIN; i++) rows += `<tr><td class="c">${i + 1}</td><td></td><td></td><td></td><td></td>${multi ? '<td></td>' : ''}</tr>`;
+  const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>출고 지시서 ${e(g.clients.join(','))}</title>
+<style>*{box-sizing:border-box}body{font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#111;margin:0;padding:22px 26px}
+h1{text-align:center;font-size:26px;font-weight:800;letter-spacing:12px;margin:0 0 4px}.co{text-align:center;font-size:13px;color:#333;margin-bottom:14px}
+table{border-collapse:collapse;width:100%}.info td{border:1px solid #444;padding:7px 9px;font-size:13px}.info .k{background:#f2f2f2;font-weight:700;text-align:center;white-space:nowrap;width:14%}
+.urg{color:#c0341d;font-weight:800}.items{margin-top:12px;table-layout:fixed}.items th{border:1px solid #444;background:#eee;padding:7px 6px;font-size:13px}.items td{border:1px solid #444;padding:6px;font-size:12.5px;height:30px}
+.items td.c{text-align:center}.items td.r{text-align:right;padding-right:9px}.items td.l{text-align:left;padding-left:9px}
+.foot{margin-top:12px}.foot td{border:1px solid #444;padding:12px 10px;font-size:12.5px}.foot .k{background:#f2f2f2;font-weight:700;text-align:center;width:16%}
+@media print{body{padding:8px 10px}}</style></head><body>
+  <h1>출 고 지 시 서</h1>
+  <div class="co">${e(DAWOO_CO.name)} · ${e(DAWOO_CO.tel)}</div>
+  <table class="info">
+    <tr><td class="k">문서번호</td><td>${e(g.docNos.join(', '))}</td><td class="k">발행일자</td><td>${e(todayStr())}</td></tr>
+    <tr><td class="k">거래처</td><td>${e(g.clients.join(', '))}</td><td class="k">묶음</td><td>${g.reqs.length}건</td></tr>
+    <tr><td class="k">긴급도</td><td class="${urg !== '보통' ? 'urg' : ''}">${e(urg)}</td><td class="k">지시자</td><td>${e(g.dispatchedBy)}</td></tr>
+    <tr><td class="k">차량 / 기사</td><td>${e(g.vehicle) || '-'} / ${e(g.driver) || '-'}</td><td class="k">출고지</td><td>${e(g.dispatchDest) || '-'}</td></tr>
+  </table>
+  <table class="items"><colgroup><col style="width:7%"><col style="width:${multi ? '30%' : '40%'}"><col style="width:26%"><col style="width:12%"><col style="width:9%">${multi ? '<col style="width:16%">' : ''}</colgroup>
+    <thead><tr><th>No</th><th>품목명</th><th>규격 / 롯트·패턴</th><th>수량</th><th>단위</th>${multi ? '<th>거래처</th>' : ''}</tr></thead><tbody>${rows}</tbody></table>
+  <table class="foot"><tr><td class="k">지시자</td><td></td><td class="k">출고담당</td><td></td><td class="k">확인자</td><td></td></tr></table>
+</body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { toast('팝업이 차단되었습니다. 팝업 허용 후 다시'); return; }
+  w.document.write(html); w.document.close(); w.focus();
+  setTimeout(() => { try { w.print(); } catch (e) { } }, 350);
+}
 function chulgoQueueRow(r) {
   const items = (r.items || []).map(it => `${esc(it.name)} ${+it.qty || 0}${esc(it.unit || '')}`).join(', ');
   return `<label class="cq-item" style="display:flex;gap:9px;align-items:flex-start;padding:9px 8px;border-bottom:0.5px solid var(--bd)">
@@ -4604,7 +4690,7 @@ function chulgoQueueRow(r) {
 }
 function chulgoOfficeSection() {
   const queue = (state.chulgoReqs || []).filter(r => r.reqType === '출고' && (r.status || '') === '대기열').sort((a, b) => (+b.createdAt || 0) - (+a.createdAt || 0));
-  const active = (state.chulgoReqs || []).filter(r => ['지시', '확인'].includes(r.status || '')).sort((a, b) => (+b.dispatchedAt || 0) - (+a.dispatchedAt || 0));
+  const active = chulgoDispatchGroups().filter(g => g.status !== '완료');
   return `
     <div class="card" style="padding:13px 15px;margin-bottom:12px">
       <div style="font-weight:700;font-size:14px;margin-bottom:3px"><i class="ti ti-list-check" style="color:var(--blue)"></i> 출고 대기열 <span style="font-size:12px;color:var(--t3)">(${queue.length}건)</span></div>
@@ -4618,7 +4704,7 @@ function chulgoOfficeSection() {
       <button class="btn btn-pri btn-block" onclick="issueDispatch()"><i class="ti ti-truck-delivery"></i>선택 항목 묶어 출고 지시 내리기 (창고 알림)</button>
     </div>
     <div style="font-size:12px;font-weight:600;color:var(--t2);margin:2px 2px 6px">진행 중 지시</div>
-    ${active.length ? `<div id="chulgo-active" data-keepscroll style="max-height:40vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:12px;padding:9px 9px 1px;background:#fff">${active.map(r => chulgoReqCard(r, false)).join('')}</div>` : `<div class="empty" style="padding:14px"><i class="ti ti-inbox"></i>진행 중 지시가 없습니다</div>`}
+    ${active.length ? `<div id="chulgo-active" data-keepscroll style="max-height:40vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:12px;padding:9px 9px 1px;background:#fff">${active.map(g => chulgoDispatchCard(g, false)).join('')}</div>` : `<div class="empty" style="padding:14px"><i class="ti ti-inbox"></i>진행 중 지시가 없습니다</div>`}
     <details style="margin-top:14px"><summary style="font-size:13px;color:var(--t2);cursor:pointer;padding:6px 2px"><i class="ti ti-plus"></i> 입고 · 입고알림 직접 등록</summary>
       <div class="card" style="padding:13px 15px;margin-top:8px">
         <div style="display:flex;gap:8px;margin-bottom:8px">
@@ -4642,10 +4728,10 @@ function chulgoOfficeSection() {
     </details>`;
 }
 function chulgoWarehouseSection() {
-  const dispatched = (state.chulgoReqs || []).filter(r => ['지시', '확인'].includes(r.status || '')).sort((a, b) => { const ua = (a.status === '지시') ? 0 : 1, ub = (b.status === '지시') ? 0 : 1; if (ua !== ub) return ua - ub; return (+b.dispatchedAt || 0) - (+a.dispatchedAt || 0); });
+  const dispatched = chulgoDispatchGroups().filter(g => g.status !== '완료');
   const inbound = (state.chulgoReqs || []).filter(r => ['입고', '입고알림'].includes(r.reqType) && (r.status || '') === '대기열').sort((a, b) => (+b.createdAt || 0) - (+a.createdAt || 0));
-  const newN = dispatched.filter(r => r.status === '지시').length;
-  const box = dispatched.length ? `<div id="chulgo-wh-list" data-keepscroll style="max-height:52vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:12px;padding:9px 9px 1px;background:#fff">${dispatched.map(r => chulgoReqCard(r, true)).join('')}</div>` : `<div class="empty"><i class="ti ti-clipboard-off"></i>들어온 출고 지시가 없습니다</div>`;
+  const newN = dispatched.filter(g => g.status === '지시').length;
+  const box = dispatched.length ? `<div id="chulgo-wh-list" data-keepscroll style="max-height:52vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:12px;padding:9px 9px 1px;background:#fff">${dispatched.map(g => chulgoDispatchCard(g, true)).join('')}</div>` : `<div class="empty"><i class="ti ti-clipboard-off"></i>들어온 출고 지시가 없습니다</div>`;
   const inBox = inbound.length ? `<div style="font-size:12px;font-weight:600;color:var(--t2);margin:14px 2px 6px"><i class="ti ti-login"></i> 입고 · 알림</div><div style="border:0.5px solid var(--bd);border-radius:12px;padding:9px 9px 1px;background:#fff">${inbound.map(r => chulgoReqCard(r, true)).join('')}</div>` : '';
   return `<button class="btn btn-sm btn-block" style="margin-bottom:9px;background:#fff6e6;border-color:#f0c060;color:#8a5a00" onclick="chulgoPrimeAudio()"><i class="ti ti-bell-ringing"></i> 새 지시 알림 소리 켜기 <span style="font-weight:500;color:var(--t3)">(이 기기 · 한 번 눌러두면 새 지시가 오면 소리로 알려요)</span></button>
     <div style="font-size:12px;color:var(--t3);margin:2px 0 8px"><span class="live-dot" style="background:#1D9E75;--pc:rgba(29,158,117,.6);width:7px;height:7px;display:inline-block;vertical-align:middle;margin-right:5px"></span>실시간 · 새 출고 지시 <b style="color:#c0341d">${newN}건</b></div>${box}${inBox}`;
@@ -4763,11 +4849,21 @@ function chulgoBeep(times) {
     for (let i = 0; i < (times || 2); i++) { const o = ctx.createOscillator(), g = ctx.createGain(); o.connect(g); g.connect(ctx.destination); o.type = 'sine'; o.frequency.value = i % 2 ? 988 : 880; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.35, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.28); o.start(t); o.stop(t + 0.3); t += 0.36; }
   } catch (e) { }
 }
+let _chulgoArmed = false, _chulgoAlarmTimer = null;
+function chulgoHasNewDispatch() { return (state.chulgoReqs || []).some(r => (r.status || '') === '지시' && _normName(r.dispatchedBy || r.sender) !== _normName((me && me.name) || '')); }
+function chulgoStartAlarmLoop() {
+  if (_chulgoAlarmTimer) return;
+  _chulgoAlarmTimer = setInterval(() => {
+    if (!_chulgoArmed) return;
+    if (chulgoHasNewDispatch()) { chulgoBeep(1); try { if (navigator.vibrate) navigator.vibrate(180); } catch (e) { } }   // 접수 전까지 반복
+  }, 4000);
+}
 function chulgoPrimeAudio() {
   try { _chAudio = _chAudio || new (window.AudioContext || window.webkitAudioContext)(); if (_chAudio.state === 'suspended') _chAudio.resume(); } catch (e) { }
   try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch (e) { }
+  _chulgoArmed = true; chulgoStartAlarmLoop();
   chulgoBeep(1);
-  toast('알림 소리 켜짐 · 새 지시가 오면 소리로 알려드립니다');
+  toast('알림 소리 켜짐 · 새 지시가 오면 접수할 때까지 소리로 알립니다');
 }
 /* 알림은 '출고 지시' 발령 시에만 (대기열 등록 시엔 조용). 지시 문서를 처음 본 순간 소리. */
 let _chulgoDispSeen = null;
