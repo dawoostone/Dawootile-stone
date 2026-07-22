@@ -4748,7 +4748,12 @@ function chulgoWarehouseSection() {
   const alarmBtn = _chulgoArmed
     ? `<button class="btn btn-sm btn-block" style="margin-bottom:9px;background:var(--gl2);border-color:var(--gbd);color:var(--gd)" onclick="chulgoDisarmAudio()"><i class="ti ti-bell-ringing"></i> 🔔 알림 소리 <b>켜짐</b> · 눌러서 끄기 <span style="font-weight:500;color:var(--t3)">(새 지시가 오면 접수할 때까지 울려요)</span></button>`
     : `<button class="btn btn-sm btn-block" style="margin-bottom:9px;background:#fff6e6;border-color:#f0c060;color:#8a5a00" onclick="chulgoPrimeAudio()"><i class="ti ti-bell-off"></i> 알림 소리 <b>꺼짐</b> · 눌러서 켜기 <span style="font-weight:500;color:var(--t3)">(이 기기 · 새 지시가 오면 소리로 알려요)</span></button>`;
-  return `${alarmBtn}
+  const tonePick = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+    <span style="font-size:11.5px;color:var(--t3);font-weight:600">알림음</span>
+    ${CH_ALARM_TONES.map(([k, label]) => `<button class="btn btn-sm ${_chAlarmTone === k ? 'btn-pri' : ''}" style="flex:none;padding:5px 10px;font-size:12px" onclick="chSetAlarmTone('${k}')">${_chAlarmTone === k ? '<i class="ti ti-check"></i> ' : ''}${label}</button>`).join('')}
+    <button class="btn btn-ghost btn-sm" style="flex:none;padding:5px 10px;font-size:12px" onclick="chulgoPreviewTone()"><i class="ti ti-volume"></i> 미리듣기</button>
+  </div>`;
+  return `${alarmBtn}${tonePick}
     <div style="font-size:12px;color:var(--t3);margin:2px 0 8px"><span class="live-dot" style="background:#1D9E75;--pc:rgba(29,158,117,.6);width:7px;height:7px;display:inline-block;vertical-align:middle;margin-right:5px"></span>실시간 · 새 출고 지시 <b style="color:#c0341d">${newN}건</b></div>${box}${inBox}`;
 }
 function renderChulgo() {
@@ -4885,35 +4890,50 @@ async function sendChulgoChat(id) {
 function refreshChulgoChatIfOpen() { if (!_chulgoChatOpen) return; const t = el('chulgo-chat-thread'); if (!t) return; const r = (state.chulgoReqs || []).find(x => x.id === _chulgoChatOpen); if (!r) return; const atBottom = t.scrollHeight - t.scrollTop - t.clientHeight < 40; t.innerHTML = chulgoChatThreadHtml(r); if (atBottom) t.scrollTop = t.scrollHeight; }
 /* ── 새 출고 지시 알림 (창고가 소리로 인지) ── */
 let _chAudio = null;
+/* 알림음 종류 — 사용자가 미리듣고 고름(이 기기에 저장) */
+let _chAlarmTone = (function () { try { return localStorage.getItem('chAlarmTone') || 'siren'; } catch (e) { return 'siren'; } })();
+const CH_ALARM_TONES = [['siren', '사이렌'], ['dingdong', '딩동벨'], ['ringring', '전화벨'], ['buzzer', '경보 부저']];
+function _chMaster(ctx) {
+  let comp; try { comp = ctx.createDynamicsCompressor(); comp.threshold.value = -16; comp.knee.value = 10; comp.ratio.value = 12; comp.attack.value = 0.002; comp.release.value = 0.12; comp.connect(ctx.destination); } catch (e) { comp = ctx.destination; }
+  const master = ctx.createGain(); master.gain.value = 0.98; master.connect(comp); return master;
+}
+function _chToneUnit(ctx, master, tone, i, t) {
+  const beep = (type, freq, freq2, t0, dur, amp) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = type; o.connect(g); g.connect(master); o.frequency.setValueAtTime(freq, t0); if (freq2) o.frequency.linearRampToValueAtTime(freq2, t0 + dur * 0.6); g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(amp, t0 + 0.012); g.gain.setValueAtTime(amp, t0 + dur - 0.04); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur); o.start(t0); o.stop(t0 + dur + 0.02); };
+  if (tone === 'dingdong') {
+    const f = i % 2 === 0 ? 1318 : 988, dur = 0.5, gap = 0.05;   // 딩—동 종소리
+    const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sine'; o.frequency.value = f; o.connect(g); g.connect(master);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.95, t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + dur); o.start(t); o.stop(t + dur);
+    const o2 = ctx.createOscillator(), g2 = ctx.createGain(); o2.type = 'sine'; o2.frequency.value = f * 2.01; o2.connect(g2); g2.connect(master);
+    g2.gain.setValueAtTime(0.0001, t); g2.gain.exponentialRampToValueAtTime(0.3, t + 0.008); g2.gain.exponentialRampToValueAtTime(0.0001, t + dur * 0.6); o2.start(t); o2.stop(t + dur * 0.6);
+    return t + dur + gap;
+  }
+  if (tone === 'ringring') {
+    const dur = 0.42, gap = 0.18, seg = 0.032; let tt = t;   // 전화벨 트릴
+    while (tt < t + dur - 0.001) { const hi = Math.round((tt - t) / seg) % 2 === 0; beep('sine', hi ? 1150 : 900, 0, tt, seg, 0.9); tt += seg; }
+    return t + dur + gap;
+  }
+  if (tone === 'buzzer') {
+    const dur = 0.3, gap = 0.12;   // 낮고 거친 경보 부저
+    beep('square', 220, 0, t, dur, 0.72); beep('square', 440, 0, t, dur, 0.26);
+    return t + dur + gap;
+  }
+  // siren (기본) — 삑—뽀 오르내림, sine+sawtooth 겹침
+  const hi = i % 2 === 0, f0 = hi ? 1046 : 784, f1 = hi ? 1318 : 988, dur = 0.32, gap = 0.1;
+  beep('sawtooth', f0, f1, t, dur, 0.5); beep('sine', f0, f1, t, dur, 0.5);
+  return t + dur + gap;
+}
 function chulgoBeep(times) {
   try {
     const ctx = _chAudio || new (window.AudioContext || window.webkitAudioContext)(); _chAudio = ctx;
     if (ctx.state === 'suspended') ctx.resume();
-    // 크고 잘 들리는 사이렌 — 컴프레서로 음압 최대화, 두 톤 교차, 배음 풍부(sawtooth)
-    let comp; try { comp = ctx.createDynamicsCompressor(); comp.threshold.value = -18; comp.knee.value = 12; comp.ratio.value = 12; comp.attack.value = 0.002; comp.release.value = 0.12; comp.connect(ctx.destination); } catch (e) { comp = ctx.destination; }
-    const master = ctx.createGain(); master.gain.value = 0.95; master.connect(comp);
+    const master = _chMaster(ctx);
     const n = Math.max(2, times || 3);
     let t = ctx.currentTime + 0.01;
-    const dur = 0.32, gap = 0.10;
-    for (let i = 0; i < n; i++) {
-      const hi = i % 2 === 0;
-      const f0 = hi ? 1046 : 784, f1 = hi ? 1318 : 988;   // 삑—뽀 사이렌
-      // 두 오실레이터 겹쳐서 더 크고 또렷하게 (sine + sawtooth)
-      [['sawtooth', 0.55], ['sine', 0.55]].forEach(([type, amp]) => {
-        const o = ctx.createOscillator(), g = ctx.createGain();
-        o.type = type; o.connect(g); g.connect(master);
-        o.frequency.setValueAtTime(f0, t);
-        o.frequency.linearRampToValueAtTime(f1, t + dur * 0.6);
-        g.gain.setValueAtTime(0.0001, t);
-        g.gain.exponentialRampToValueAtTime(amp, t + 0.015);
-        g.gain.setValueAtTime(amp, t + dur - 0.05);
-        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-        o.start(t); o.stop(t + dur + 0.02);
-      });
-      t += dur + gap;
-    }
+    for (let i = 0; i < n; i++) t = _chToneUnit(ctx, master, _chAlarmTone, i, t);
   } catch (e) { }
 }
+function chulgoPreviewTone() { try { _chAudio = _chAudio || new (window.AudioContext || window.webkitAudioContext)(); if (_chAudio.state === 'suspended') _chAudio.resume(); } catch (e) { } chulgoBeep(2); }
+function chSetAlarmTone(v) { _chAlarmTone = v; try { localStorage.setItem('chAlarmTone', v); } catch (e) { } chulgoPreviewTone(); try { renderChulgo(); } catch (e) { } }
 let _chulgoArmed = false, _chulgoAlarmTimer = null;
 function chulgoHasNewDispatch() { return (state.chulgoReqs || []).some(r => (r.status || '') === '지시'); }   // 알림 켠 기기는 접수 전 지시가 있으면 계속 울림(지시자 본인 포함 — 테스트/자체 확인 가능)
 function chulgoStartAlarmLoop() {
