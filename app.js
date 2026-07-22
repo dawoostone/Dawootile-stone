@@ -4541,7 +4541,7 @@ function chulgoReqCard(r, forWarehouse) {
   const items = (r.items || []).map(it => `<div style="font-size:12.5px;color:var(--t2)">· <b style="color:var(--t1)">${esc(it.name)}</b> ${+it.qty || 0}${it.unit ? esc(it.unit) : ''}${it.spec ? ` <span style="color:var(--t3)">(${esc(it.spec)})</span>` : ''}</div>`).join('');
   const when = r.createdAt ? new Date(+r.createdAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
   const fl = r.flags || {}; const flTxt = [fl.basin ? '세면대' : '', fl.pack ? '포장' : '', fl.pallet ? '파렛트' : ''].filter(Boolean).join(' · ');
-  const sub = [r.schedDate ? '예정 ' + r.schedDate : '', r.vehicle ? '🚚 ' + r.vehicle : '', r.driver ? '기사 ' + r.driver : '', r.dispatchDest ? '→ ' + r.dispatchDest : ''].filter(Boolean).join(' · ');
+  const sub = [r.schedDate ? '예정 ' + r.schedDate : '', r.companyDispatch ? '🚚 업체 배차' : (r.driver ? '기사 ' + r.driver : ''), r.loadTime ? '상차 ' + r.loadTime : '', r.dispatchDest ? '→ ' + r.dispatchDest : ''].filter(Boolean).join(' · ');
   return `<div class="card" style="margin-bottom:9px;padding:12px 14px;border-left:4px solid ${r.urgent ? '#e23b3b' : 'var(--bd2)'}">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
       <div style="min-width:0"><div style="font-weight:700;font-size:14px">${urgBadge}${esc(r.reqType || '출고')} · ${esc(r.client || '-')}${flTxt ? ` <span style="font-size:10.5px;color:var(--blue)">[${flTxt}]</span>` : ''}</div>
@@ -4590,7 +4590,7 @@ function chulgoPrint(id) {
     <tr><td class="k">문서번호</td><td>${e(r.docNo)}</td><td class="k">발행일자</td><td>${e(todayStr())}</td></tr>
     <tr><td class="k">거래처</td><td>${e(r.client)}</td><td class="k">${isIn ? '입고' : '출고'}예정일</td><td>${e(r.schedDate) || '-'}</td></tr>
     <tr><td class="k">긴급도</td><td class="${urg !== '보통' ? 'urg' : ''}">${e(urg)}</td><td class="k">요청자</td><td>${e(r.sender)}</td></tr>
-    <tr><td class="k">차량 / 기사</td><td>${e(r.vehicle) || '-'} / ${e(r.driver) || '-'}</td><td class="k">구분표시</td><td>${e(flTxt)}</td></tr>
+    <tr><td class="k">기사 / 배차</td><td>${r.companyDispatch ? '업체 배차' : (e(r.driver) || '-')}${r.loadTime ? ' · 상차 ' + e(r.loadTime) : ''}</td><td class="k">구분표시</td><td>${e(flTxt)}</td></tr>
   </table>
   <table class="items"><colgroup><col style="width:8%"><col style="width:40%"><col style="width:28%"><col style="width:14%"><col style="width:10%"></colgroup>
     <thead><tr><th>No</th><th>품목명</th><th>규격 / 롯트·패턴</th><th>수량</th><th>단위</th></tr></thead><tbody>${rows}</tbody></table>
@@ -4613,7 +4613,7 @@ function chulgoDispatchGroups() {
     return {
       dispatchId: k, reqs,
       status: sts.includes('지시') ? '지시' : (sts.includes('확인') ? '확인' : '완료'),
-      vehicle: rep.vehicle || '', driver: rep.driver || '', dispatchDest: rep.dispatchDest || '',
+      vehicle: rep.vehicle || '', driver: rep.driver || '', companyDispatch: !!rep.companyDispatch, loadTime: rep.loadTime || '', dispatchDest: rep.dispatchDest || '',
       dispatchedAt: rep.dispatchedAt || 0, dispatchedBy: rep.dispatchedBy || '',
       urgent: reqs.some(r => r.urgent),
       clients: [...new Set(reqs.map(r => r.client).filter(Boolean))],
@@ -4627,7 +4627,7 @@ function chulgoDispatchCard(g, forWarehouse) {
   const urgBadge = g.urgent ? '<span class="pill" style="background:#fde8e8;color:#c0341d;font-size:10px">긴급</span> ' : '';
   const items = g.items.map(it => `<div style="font-size:12.5px;color:var(--t2)">· <b style="color:var(--t1)">${esc(it.name)}</b> ${+it.qty || 0}${esc(it.unit || '')}${it.spec ? ` <span style="color:var(--t3)">(${esc(it.spec)})</span>` : ''}${g.clients.length > 1 ? ` <span style="color:var(--blue);font-size:11px">${esc(it._client || '')}</span>` : ''}</div>`).join('');
   const when = g.dispatchedAt ? new Date(+g.dispatchedAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-  const veh = [g.vehicle ? '🚚 ' + g.vehicle : '', g.driver ? '기사 ' + g.driver : '', g.dispatchDest ? '→ ' + g.dispatchDest : ''].filter(Boolean).join(' · ');
+  const veh = [g.companyDispatch ? '🚚 업체 배차' : (g.driver ? '기사 ' + g.driver : ''), g.loadTime ? '상차 ' + g.loadTime : '', g.dispatchDest ? '→ ' + g.dispatchDest : ''].filter(Boolean).join(' · ');
   return `<div class="card" style="margin-bottom:9px;padding:12px 14px;border-left:4px solid ${g.urgent ? '#e23b3b' : '#2f6fed'}">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
       <div style="min-width:0"><div style="font-weight:700;font-size:14px">${urgBadge}출고 지시 · ${esc(g.clients.join(', ') || '-')}${g.reqs.length > 1 ? ` <span style="font-size:11px;color:var(--t3)">(${g.reqs.length}건 묶음)</span>` : ''}</div>
@@ -4678,7 +4678,8 @@ table{border-collapse:collapse;width:100%}.info td{border:1px solid #444;padding
     <tr><td class="k">문서번호</td><td>${e(g.docNos.join(', '))}</td><td class="k">발행일자</td><td>${e(todayStr())}</td></tr>
     <tr><td class="k">거래처</td><td>${e(g.clients.join(', '))}</td><td class="k">묶음</td><td>${g.reqs.length}건</td></tr>
     <tr><td class="k">긴급도</td><td class="${urg !== '보통' ? 'urg' : ''}">${e(urg)}</td><td class="k">지시자</td><td>${e(g.dispatchedBy)}</td></tr>
-    <tr><td class="k">차량 / 기사</td><td>${e(g.vehicle) || '-'} / ${e(g.driver) || '-'}</td><td class="k">출고지</td><td>${e(g.dispatchDest) || '-'}</td></tr>
+    <tr><td class="k">기사 / 배차</td><td>${g.companyDispatch ? '업체 배차' : (e(g.driver) || '-')}</td><td class="k">상차 예정</td><td>${e(g.loadTime) || '-'}</td></tr>
+    <tr><td class="k">출고지</td><td colspan="3">${g.companyDispatch ? '업체 배차 · 직접 수령' : (e(g.dispatchDest) || '-')}</td></tr>
   </table>
   <table class="items"><colgroup><col style="width:7%"><col style="width:${multi ? '30%' : '40%'}"><col style="width:26%"><col style="width:12%"><col style="width:9%">${multi ? '<col style="width:16%">' : ''}</colgroup>
     <thead><tr><th>No</th><th>품목명</th><th>규격 / 롯트·패턴</th><th>수량</th><th>단위</th>${multi ? '<th>거래처</th>' : ''}</tr></thead><tbody>${rows}</tbody></table>
@@ -4700,19 +4701,38 @@ function chulgoQueueRow(r) {
     <button class="btn btn-ghost btn-sm" style="flex:none;color:var(--red-t)" onclick="event.preventDefault();delChulgoReq('${r.id}')" title="출고 취소(재고 복구)"><i class="ti ti-x"></i></button>
   </label>`;
 }
+function chulgoDispatchDrivers() { return [...new Set((state.chulgoReqs || []).map(r => (r.driver || '').trim()).filter(d => d && d !== '업체 배차'))].sort((a, b) => a.localeCompare(b)); }
+function chulgoDispatchDests() { return [...new Set((state.chulgoReqs || []).map(r => (r.dispatchDest || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)); }
+function chulgoDriverChanged() {
+  const sel = el('dsp-driver-sel'); if (!sel) return; const v = sel.value;
+  const other = el('dsp-driver-other'); if (other) { if (v === '__other') { other.classList.remove('hidden'); try { other.focus(); } catch (e) { } } else { other.classList.add('hidden'); other.value = ''; } }
+  const dest = el('dsp-dest'); if (dest) { if (v === '__company') { dest.placeholder = '출고지 (업체 배차 — 생략 가능)'; dest.style.borderColor = 'var(--bd2)'; } else { dest.placeholder = '출고지 (현장/공장) · 필수'; dest.style.borderColor = '#f0b0b0'; } }
+}
 function chulgoOfficeSection() {
   const queue = (state.chulgoReqs || []).filter(r => r.reqType === '출고' && (r.status || '') === '대기열').sort((a, b) => (+b.createdAt || 0) - (+a.createdAt || 0));
   const active = chulgoDispatchGroups().filter(g => g.status !== '완료');
+  const drivers = chulgoDispatchDrivers(), dests = chulgoDispatchDests();
+  const times = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
   return `
     <div class="card" style="padding:13px 15px;margin-bottom:12px">
       <div style="font-weight:700;font-size:14px;margin-bottom:3px"><i class="ti ti-list-check" style="color:var(--blue)"></i> 출고 대기열 <span style="font-size:12px;color:var(--t3)">(${queue.length}건)</span></div>
       <div style="font-size:11.5px;color:var(--t3);margin-bottom:9px">출고 탭에서 출고를 등록하면 여기에 쌓입니다. 묶을 항목을 체크하고 배차 정보를 넣어 <b>출고 지시</b>를 내리면 창고에 소리로 알림이 갑니다.</div>
       <div id="chulgo-queue" data-keepscroll style="max-height:38vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:10px;margin-bottom:10px">${queue.length ? queue.map(chulgoQueueRow).join('') : `<div style="padding:18px;text-align:center;color:var(--t3);font-size:12.5px">대기열이 비어 있습니다.<br>출고 탭 → 출고 등록을 하면 여기로 올라옵니다.</div>`}</div>
       <div style="display:flex;gap:8px;margin-bottom:8px">
-        <input id="dsp-vehicle" lang="ko" placeholder="차량" style="flex:1;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px">
-        <input id="dsp-driver" lang="ko" placeholder="기사명" style="flex:1;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px">
+        <select id="dsp-driver-sel" onchange="chulgoDriverChanged()" style="flex:1.3;min-width:0;font-size:15px;padding:9px 10px;border:1.5px solid var(--bd2);border-radius:10px">
+          <option value="">기사 선택</option>
+          <option value="__company">🚚 업체 배차 (출고지 생략 가능)</option>
+          ${drivers.map(d => `<option value="${esc(d)}">${esc(d)}</option>`).join('')}
+          <option value="__other">＋ 기타 (직접 입력)</option>
+        </select>
+        <select id="dsp-time" style="flex:1;min-width:0;font-size:15px;padding:9px 10px;border:1.5px solid var(--bd2);border-radius:10px">
+          <option value="">상차 시간</option>
+          ${times.map(h => `<option>${h}</option>`).join('')}
+        </select>
       </div>
-      <input id="dsp-dest" lang="ko" placeholder="출고지(선택)" style="width:100%;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px;margin-bottom:10px">
+      <input id="dsp-driver-other" lang="ko" placeholder="기사명 직접 입력" class="hidden" style="width:100%;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:10px;margin-bottom:8px">
+      <input id="dsp-dest" lang="ko" list="dsp-dest-list" placeholder="출고지 (현장/공장) · 필수" style="width:100%;font-size:15px;padding:9px 11px;border:1.5px solid #f0b0b0;border-radius:10px;margin-bottom:10px">
+      <datalist id="dsp-dest-list">${dests.map(d => `<option value="${esc(d)}"></option>`).join('')}</datalist>
       <button class="btn btn-pri btn-block" onclick="issueDispatch()"><i class="ti ti-truck-delivery"></i>선택 항목 묶어 출고 지시 내리기 (창고 알림)</button>
     </div>
     <div style="font-size:12px;font-weight:600;color:var(--t2);margin:2px 2px 6px">진행 중 지시</div>
@@ -4765,13 +4785,20 @@ function renderChulgo() {
 async function issueDispatch() {
   const ids = [...document.querySelectorAll('#chulgo-queue input.cq-chk:checked')].map(c => c.value);
   if (!ids.length) { toast('출고 지시할 항목을 체크하세요'); return; }
-  const vehicle = (el('dsp-vehicle') && el('dsp-vehicle').value || '').trim();
-  const driver = (el('dsp-driver') && el('dsp-driver').value || '').trim();
+  const sel = (el('dsp-driver-sel') && el('dsp-driver-sel').value) || '';
+  const company = sel === '__company';
+  let driver = '';
+  if (company) driver = '업체 배차';
+  else if (sel === '__other') driver = (el('dsp-driver-other') && el('dsp-driver-other').value || '').trim();
+  else driver = sel;
+  const loadTime = (el('dsp-time') && el('dsp-time').value || '').trim();
   const dest = (el('dsp-dest') && el('dsp-dest').value || '').trim();
+  if (sel === '__other' && !driver) { toast('기사명을 입력하세요'); return; }
+  if (!company && !dest) { toast('출고지를 입력하세요 (업체 배차는 생략 가능)'); return; }
   if (_busy) return; _busy = true;
   try {
     const dispatchId = 'D' + Date.now();
-    for (const id of ids) { await Store.update('chulgoReqs', id, { status: '지시', dispatchId, vehicle, driver, dispatchDest: dest, dispatchedAt: Date.now(), dispatchedBy: (me && me.name) || '' }); }
+    for (const id of ids) { await Store.update('chulgoReqs', id, { status: '지시', dispatchId, vehicle: '', driver, companyDispatch: company, loadTime, dispatchDest: dest, dispatchedAt: Date.now(), dispatchedBy: (me && me.name) || '' }); }
     toast('출고 지시 ' + ids.length + '건 발령 · 창고에 알림 🔔');
     renderChulgo();
   } finally { setTimeout(() => { _busy = false; }, 600); }
@@ -4933,7 +4960,7 @@ function chulgoAlertNew() {
   const urgent = fresh.some(f => f.urgent);
   chulgoBeep(urgent ? 4 : 2);
   try { if (navigator.vibrate) navigator.vibrate(urgent ? [200, 100, 200, 100, 200] : [200, 100, 200]); } catch (e) { }
-  const f = fresh[0]; const veh = f.vehicle ? ' · 🚚' + f.vehicle : '';
+  const f = fresh[0]; const veh = f.companyDispatch ? ' · 🚚업체배차' : (f.driver ? ' · 기사 ' + f.driver : '');
   toast('🔔 새 출고 지시 · ' + (f.client || '') + veh + (fresh.length > 1 ? ` 외 ${fresh.length - 1}건` : ''));
   try { if ('Notification' in window && Notification.permission === 'granted') new Notification('새 출고 지시' + (urgent ? ' ⚠️긴급' : ''), { body: (f.client || '') + ' · ' + (f.items || []).map(x => x.name).join(', ') + veh, tag: 'chulgo-' + (f.dispatchId || f.id) }); } catch (e) { }
 }
