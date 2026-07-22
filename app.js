@@ -4642,7 +4642,7 @@ function chulgoDispatchCard(g, forWarehouse) {
       ${forWarehouse && st === '지시' ? `<button class="btn btn-pri btn-sm" style="flex:1.4" onclick="chulgoAckDispatch('${g.dispatchId}')"><i class="ti ti-check"></i>접수 (지시서 인쇄)</button>` : ''}
       ${forWarehouse && (st === '지시' || st === '확인') ? `<button class="btn btn-sm" style="flex:1" onclick="chulgoDoneDispatch('${g.dispatchId}')"><i class="ti ti-circle-check"></i>완료</button>` : ''}
       <button class="btn btn-sm" onclick="chulgoPrintDispatch('${g.dispatchId}')"><i class="ti ti-printer"></i>지시서${forWarehouse ? ' 재인쇄' : ''}</button>
-      ${!forWarehouse && st !== '완료' ? `<button class="btn btn-danger btn-sm" onclick="cancelDispatch('${g.dispatchId}')" title="출고 지시 취소(재고 복구)"><i class="ti ti-x"></i></button>` : ''}
+      ${!forWarehouse && st !== '완료' ? `<button class="btn btn-sm" style="color:var(--red-t)" onclick="cancelDispatch('${g.dispatchId}')" title="출고 지시 취소 · 대기열로 되돌림"><i class="ti ti-arrow-back-up"></i></button>` : ''}
     </div>
   </div>`;
 }
@@ -4886,9 +4886,9 @@ async function delChulgoReq(id) {
 async function cancelDispatch(dispatchId) {
   const reqs = (state.chulgoReqs || []).filter(r => r.dispatchId === dispatchId && (r.status || '') !== '완료');
   if (!reqs.length) { toast('취소할 지시가 없습니다'); return; }
-  if (!confirm(`이 출고 지시(${reqs.length}건)를 전체 취소할까요?\n· 재고가 복구되고\n· 출고 내역·지시에서 제거됩니다.`)) return;
-  for (const r of reqs) { await cancelChulgoStock(r); await Store.remove('chulgoReqs', r.id); }
-  toast('출고 지시 취소됨 · 재고 복구'); renderChulgo();
+  if (!confirm(`이 출고 지시(${reqs.length}건)를 취소하고 대기열로 되돌릴까요?\n· 재고는 그대로 유지됩니다\n· 대기열에서 다시 배차해 지시할 수 있습니다`)) return;
+  for (const r of reqs) { await Store.update('chulgoReqs', r.id, { status: '대기열', dispatchId: '', dispatchedAt: 0, dispatchedBy: '', driver: '', companyDispatch: false, loadTime: '', packing: false, dispatchDest: '' }); }
+  toast('출고 지시 취소 · 대기열로 이동'); renderChulgo();
 }
 /* ── 요청별 채팅 (사무실 ↔ 창고) ── */
 let _chulgoChatOpen = '';
