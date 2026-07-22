@@ -4089,8 +4089,11 @@ async function delShip(id) {
   if (t.itemId) { const it = state.inventory.find(i => i.id === t.itemId); if (it) await Store.update('inventory', it.id, { jang: (+it.jang || 0) + (+t.jang || 0) }); }
   await Store.remove('transactions', id);
   const key = t.shipId || t.id;
-  // 같은 출고건이 더 없으면, 이 출고로 '확정'된 홀딩을 홀딩 상태로 되돌림(출고완료 해제)
-  if (!state.transactions.some(x => x.id !== id && x.type === 'out' && (x.shipId || x.id) === key)) await revertHoldsForShip(key);
+  // 같은 출고건이 더 없으면, 이 출고로 '확정'된 홀딩을 홀딩 상태로 되돌림(출고완료 해제) + 출고관리 항목 제거
+  if (!state.transactions.some(x => x.id !== id && x.type === 'out' && (x.shipId || x.id) === key)) {
+    await revertHoldsForShip(key);
+    for (const cr of (state.chulgoReqs || []).filter(r => r.sourceShipId === key)) { try { await Store.remove('chulgoReqs', cr.id); } catch (e) { } }
+  }
   toast('출고 삭제됨 (재고 복구)');
 }
 /* 이 출고(shipId)로 확정됐던 홀딩을 되돌림 — 출고완료 해제 → 홀딩 */
@@ -4110,6 +4113,7 @@ async function delShipGroup(key) {
     await Store.remove('transactions', t.id);
   }
   await revertHoldsForShip(key); // 출고완료됐던 홀딩 되돌리기
+  for (const cr of (state.chulgoReqs || []).filter(r => r.sourceShipId === key)) { try { await Store.remove('chulgoReqs', cr.id); } catch (e) { } }   // 출고관리 대기열/지시도 함께 제거
   toast(`출고 ${list.length}건 삭제됨 (재고 복구)`);
 }
 /* 입고 삭제 (관리자) — 오입고 정정: 재고에서 그만큼 차감(되돌림) */
@@ -4629,6 +4633,7 @@ function chulgoDispatchCard(g, forWarehouse) {
       ${forWarehouse && st === '지시' ? `<button class="btn btn-pri btn-sm" style="flex:1.4" onclick="chulgoAckDispatch('${g.dispatchId}')"><i class="ti ti-check"></i>접수 (지시서 인쇄)</button>` : ''}
       ${forWarehouse && (st === '지시' || st === '확인') ? `<button class="btn btn-sm" style="flex:1" onclick="chulgoDoneDispatch('${g.dispatchId}')"><i class="ti ti-circle-check"></i>완료</button>` : ''}
       <button class="btn btn-sm" onclick="chulgoPrintDispatch('${g.dispatchId}')"><i class="ti ti-printer"></i>지시서${forWarehouse ? ' 재인쇄' : ''}</button>
+      ${!forWarehouse && st !== '완료' ? `<button class="btn btn-danger btn-sm" onclick="cancelDispatch('${g.dispatchId}')" title="출고 지시 취소(재고 복구)"><i class="ti ti-x"></i></button>` : ''}
     </div>
   </div>`;
 }
@@ -4686,6 +4691,7 @@ function chulgoQueueRow(r) {
       <div style="font-size:12px;color:var(--t2);margin-top:2px;word-break:break-word">${items}</div>
       <div style="font-size:10.5px;color:var(--t3);margin-top:2px">${esc(r.docNo || '')} · ${esc(r.sender || '')}</div></div>
     <button class="btn btn-ghost btn-sm" style="flex:none" onclick="event.preventDefault();chulgoPrint('${r.id}')" title="출고증/지시서"><i class="ti ti-printer"></i></button>
+    <button class="btn btn-ghost btn-sm" style="flex:none;color:var(--red-t)" onclick="event.preventDefault();delChulgoReq('${r.id}')" title="출고 취소(재고 복구)"><i class="ti ti-x"></i></button>
   </label>`;
 }
 function chulgoOfficeSection() {
@@ -4808,7 +4814,29 @@ async function chulgoDone(id) {
   await Store.update('chulgoReqs', id, patch);
   toast('완료 처리' + (patch.stockApplied ? ' · 재고 반영됨' : ''));
 }
-async function delChulgoReq(id) { if (!guardDelete('이 요청을 삭제할까요?')) return; await Store.remove('chulgoReqs', id); toast('삭제됨'); }
+/* 출고 취소: 연결된 출고 기록 삭제 + 재고 복구 + 홀딩 되돌림 */
+async function cancelChulgoStock(r) {
+  if (!r || r.reqType !== '출고' || !r.sourceShipId) return;
+  const key = r.sourceShipId;
+  const txns = (state.transactions || []).filter(t => t.type === 'out' && (t.shipId || t.id) === key);
+  for (const t of txns) { if (t.itemId) { const it = state.inventory.find(i => i.id === t.itemId); if (it) await Store.update('inventory', it.id, { jang: (+it.jang || 0) + (+t.jang || 0) }); } await Store.remove('transactions', t.id); }
+  try { await revertHoldsForShip(key); } catch (e) { }
+}
+async function delChulgoReq(id) {
+  const r = (state.chulgoReqs || []).find(x => x.id === id); if (!r) return;
+  const isOut = r.reqType === '출고' && r.sourceShipId;
+  if (!confirm(isOut ? '이 출고를 취소할까요?\n· 재고가 복구되고\n· 출고 내역·대기열/지시에서 함께 제거됩니다.' : '이 항목을 삭제할까요?')) return;
+  if (isOut) await cancelChulgoStock(r);
+  await Store.remove('chulgoReqs', id);
+  toast(isOut ? '출고 취소됨 · 재고 복구' : '삭제됨');
+}
+async function cancelDispatch(dispatchId) {
+  const reqs = (state.chulgoReqs || []).filter(r => r.dispatchId === dispatchId && (r.status || '') !== '완료');
+  if (!reqs.length) { toast('취소할 지시가 없습니다'); return; }
+  if (!confirm(`이 출고 지시(${reqs.length}건)를 전체 취소할까요?\n· 재고가 복구되고\n· 출고 내역·지시에서 제거됩니다.`)) return;
+  for (const r of reqs) { await cancelChulgoStock(r); await Store.remove('chulgoReqs', r.id); }
+  toast('출고 지시 취소됨 · 재고 복구'); renderChulgo();
+}
 /* ── 요청별 채팅 (사무실 ↔ 창고) ── */
 let _chulgoChatOpen = '';
 function chulgoMineSide() { return chulgoSide() === 'warehouse' ? 'wh' : 'office'; }
