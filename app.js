@@ -41,8 +41,13 @@ function ctypeKey(t) { return t === '유통' ? 'dist' : (t === '인테리어' ? 
    읽을 때마다 qcatNorm() 을 거쳐 '세라믹' 으로 바꿔서 본다 (데이터는 그대로 둔다). */
 const QCATS = ['세라믹', '세면대', '석재', '통관비용'];
 const QCAT_LEGACY = { '세라믹+세면대': '세라믹' };
-const QCAT_ICON = { '세라믹': 'grid-dots', '세면대': 'bath', '석재': 'diamond', '통관비용': 'ship' };
-const QCAT_COL = { '세라믹': 'var(--gd)', '세면대': '#0e7490', '석재': '#7c3aed', '통관비용': '#b45309' };
+/* ★ 2026-09-08 — «견적서 머리글 분류»(QCATS, 4개)와 «매출 집계 분류»(LCATS, 7개)를 나눴다.
+   예전엔 둘이 같아서 재단비·타공·시공비·운송비가 전부 «세라믹 매출»로 잡혔다 (실측 약 5억).
+   자재를 판 돈과 가공·시공·운송으로 번 돈이 한 덩어리라 분류별 매출이 의미가 없었다.
+   ★ 저장된 데이터는 손대지 않는다 — «볼 때만» 나눠서 보여준다. 되돌리려면 LCATS 를 QCATS 로 되돌리면 끝. */
+const LCATS = ['세라믹', '세면대', '석재', '세라믹 가공', '시공', '운송', '통관비용'];
+const QCAT_ICON = { '세라믹': 'grid-dots', '세면대': 'bath', '석재': 'diamond', '통관비용': 'ship', '세라믹 가공': 'tools', '시공': 'hammer', '운송': 'truck' };
+const QCAT_COL = { '세라믹': 'var(--gd)', '세면대': '#0e7490', '석재': '#7c3aed', '통관비용': '#b45309', '세라믹 가공': '#c2410c', '시공': '#1b4fb0', '운송': '#6b7280' };
 function qcatNorm(c) { const s = String(c == null ? '' : c).trim(); return QCAT_LEGACY[s] || s; }
 const CUSTOMS_LINES = ['관세', '부가가치세', '지원가산세', '통관수수료', 'D/O CHG (선사비용)', '적출료', 'SHUTTLE CHG', '경과보관료', '제주선임', '운송료', '취급수수료', '기타경비'];
 /* ★ 2026-09-07 속도 — 품목 하나의 분류를 알아낼 때마다 단가표 225줄을 처음부터 훑고 있었다.
@@ -65,19 +70,26 @@ function itemCategory(name) {
   if (hit !== undefined) return hit;
   let out = '';
   const pc = ix.plc.get(key);
-  if (pc) { const c = qcatNorm(pc); if (QCATS.indexOf(c) >= 0) out = c; }
+  if (pc) { const c = qcatNorm(pc); if (LCATS.indexOf(c) >= 0) out = c; }   // 단가표에서 손으로 지정한 분류가 최우선
   if (!out) {
     const t = (name || '').replace(/\s/g, '');
-    /* 통관 → 세면대(본체·브라켓·폽업 부속 포함) → 석재(돌 이름·석재 가공 용어) → 나머지는 세라믹.
-       실측으로 오판 0개를 확인한 순서다. */
+    /* 통관 → 세면대(본체·브라켓·폽업 부속 포함) → 석재(돌 이름·석재 가공 용어)
+       → ★ 시공·운송·가공(일한 값) → 나머지는 세라믹(파는 물건).
+       ★ 세면대·석재를 «먼저» 본다 — 「600 라운드 세면대 (타공)」 같은 이름이
+         '타공' 때문에 가공으로 새지 않게 하려는 것. 순서를 바꾸지 말 것. */
     if (/통관|관세|clearance/i.test(t)) out = '통관비용';
     else if (/세면대|세면볼|폽업|팝업/.test(t)) out = '세면대';
     else if (/석재|대리석|화강|천연석|현무암|점판암|사비석|고흥석|고홍석|포천석|디딤석|잔석|잔다듬|버너|혼드|물갈기|정다듬|도드락/i.test(t)) out = '석재';
+    else if (/시공|실측|설치/.test(t)) out = '시공';
+    else if (/운송|배송|운반|파렛트|팔레트|팔렛|파레트|빠렛/.test(t)) out = '운송';
+    else if (/가공비|재단|타공|따내기|따냄|보링|고스라|뒷도메|뒷도|배면연마|워터젯|사선|모서리가공|북매치|수가공|연마|코너|덮개제작/.test(t)) out = '세라믹 가공';
     else out = '세라믹';
   }
   ix.memo.set(key, out);
   return out;
 }
+/* 「자재를 판 매출」인지 — 재고·마진 계산에서 «물건» 분류만 골라낼 때 */
+function isGoodsCat(c) { return c === '세라믹' || c === '세면대' || c === '석재'; }
 
 /* ── 견적 한 건을 분류별 금액으로 쪼갠다 ──
    → { '세라믹': {sup, tot}, '세면대': {sup, tot}, … }  (그 견적에 있는 분류만 들어간다)
@@ -5868,7 +5880,11 @@ function quoteCancelOrder(id) {
 function quoteRegister(id) {
   const q = (state.quotes || []).find(x => x.id === id); if (!q) return;
   const isOrderBasin = n => (n || '').includes('세면대') && /주문제작|비규격/.test(n || '');   // 주문제작·비규격 세면대만 발주. 그 외 재고 세면대는 바로 출고
-  const items = (q.items || []).filter(it => (+it.qty || 0) > 0 && (marginCat(it.name) === '자재' || ((it.name || '').includes('세면대') && !isOrderBasin(it.name)))).map(it => ({ name: it.name, qty: it.qty, lot: '', pattern: '' }));   // 출고엔 자재 + 재고 세면대 (가공·운송·주문제작세면대·환불행 제외)
+  /* ★ 2026-09-08 — 예전엔 여기서 marginCat 으로 «자재»를 다시 골랐다. 그런데 「따내기」처럼
+     어느 규칙에도 안 걸리는 부대비용은 자재로 판정돼 현장·홀딩까지 따라갔다.
+     이제 홀딩·출고와 «똑같은» 판정(quoteMaterialItems)을 쓴다 — 견적 「부대비용·가공」 칸에
+     등록된 항목은 이름이 무엇이든 전부 빠진다. 앞으로 항목을 새로 추가해도 자동으로 막힌다. */
+  const items = quoteMaterialItems(q).map(it => ({ name: it.name, qty: it.qty, lot: '', pattern: '' }));
   const hasBasinOrder = (q.items || []).some(it => isOrderBasin(it.name));
   const hasGagong = (q.items || []).some(it => marginCat(it.name) === '가공' && !(it.name || '').includes('세면대'));
   if (hasBasinOrder) {
@@ -5968,8 +5984,13 @@ function quoteMaterialItems(q) {
     if (it.extra) return false;                      // 부대비용·가공 칸에서 입력된 항목
     if (extraSet.has(_normName(nm))) return false;   // 부대비용 항목명과 같음(예전 견적 호환)
     if (isOrderBasin(nm)) return false;              // 주문제작 세면대는 재고 아님
+    /* ★ 2026-09-08 — 「시공」·「운송비」가 단가표에 품목으로 등록돼 있어서 아래 matSet 검사를
+       통과해 홀딩·출고 목록에 끼어들었다. 시공·운송은 «일»이지 «물건»이 아니므로 먼저 막는다.
+       (석재 연마품처럼 이름에 '연마'가 들어가는 진짜 자재는 matSet 이 살려 준다) */
+    const _mc = marginCat(nm);
+    if (_mc === '시공' || _mc === '운송') return false;
     if (matSet.has(_normName(nm))) return true;      // 재고·단가표에 있는 실제 자재
-    return marginCat(nm) === '자재';                 // 목록에 없으면 이름으로 보조 판정
+    return _mc === '자재';                           // 목록에 없으면 이름으로 보조 판정
   });
 }
 function quoteToHold(id) {
@@ -7029,12 +7050,12 @@ function renderLedger() {
   const sc = (v, l) => `<button class="chip ${(filters.ledgerSort || 'rem') === v ? 'active' : ''}" onclick="ledgerSetSort('${v}')">${l}</button>`;
   const pmN = bankNoClientCount();
   /* 확정 매출을 분류(세라믹·세면대·석재·통관비용)로 쪼갠 총합 — 한 견적에 섞여 있으면 품목 금액 비율대로 */
-  const lgCat = {}; QCATS.forEach(c => lgCat[c] = { sum: 0, n: 0 });
+  const lgCat = {}; LCATS.forEach(c => lgCat[c] = { sum: 0, n: 0 });
   (state.quotes || []).forEach(q => { if (!q.ordered) return; const sp = quoteCatSplit(q); Object.keys(sp).forEach(c => { if (lgCat[c]) { lgCat[c].sum += sp[c].tot; lgCat[c].n++; } }); });
   const lgCatBar = `<div class="card" style="margin-bottom:10px;padding:11px 13px">
     <div style="font-size:11.5px;color:var(--t3);font-weight:700;margin-bottom:8px"><i class="ti ti-chart-pie"></i> 분류별 확정 매출 <span style="font-weight:500">· 품목 기준 (한 견적에 섞여 있으면 나눠서 셉니다)</span></div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px">
-      ${QCATS.map(c => `<div style="padding:9px 8px;background:var(--soft);border-radius:10px;text-align:center">
+      ${LCATS.map(c => `<div style="padding:9px 8px;background:var(--soft);border-radius:10px;text-align:center">
         <div style="font-size:11px;color:var(--t2);margin-bottom:3px"><i class="ti ti-${QCAT_ICON[c] || 'tag'}"></i> ${esc(c)}</div>
         <div style="font-size:16px;font-weight:800;color:${QCAT_COL[c]}">${fmtWon(lgCat[c].sum)}</div>
         <div style="font-size:10.5px;color:var(--t3);margin-top:2px">${lgCat[c].n}건</div>
@@ -7092,7 +7113,7 @@ function _ledgerListInner(A) {
 function ledgerDetailHtml(client) {
   const R = ledgerRange();
   const CAT = filters.ledgerCat || 'all';
-  const catOn = CAT !== 'all' && QCATS.indexOf(CAT) >= 0;
+  const catOn = CAT !== 'all' && LCATS.indexOf(CAT) >= 0;
   const full = ledgerRows(client);                       // 전체 (요약·미수는 늘 전체 기준)
   const all = catOn ? ledgerRows(client, CAT) : full;
   const M = clientMoneyOf(client);
@@ -7105,12 +7126,12 @@ function ledgerDetailHtml(client) {
   const openBal = (!catOn && before.length) ? before[before.length - 1].bal : 0;
   /* ── 분류별 매출 (세라믹 / 세면대 / 석재 / 통관비용) ──
      한 견적에 세라믹과 세면대가 같이 있으면 품목 금액 비율대로 나눠 담는다. */
-  const cSplit = {}; QCATS.forEach(c => cSplit[c] = { sum: 0, n: 0 });
+  const cSplit = {}; LCATS.forEach(c => cSplit[c] = { sum: 0, n: 0 });
   (state.quotes || []).filter(q => !!q.ordered && (q.client || '').trim() === client).forEach(q => {
     const sp = quoteCatSplit(q);
     Object.keys(sp).forEach(c => { if (cSplit[c]) { cSplit[c].sum += sp[c].tot; cSplit[c].n++; } });
   });
-  const catsHere = QCATS.filter(c => cSplit[c].n > 0);
+  const catsHere = LCATS.filter(c => cSplit[c].n > 0);
   const kc = (v, l, o) => { const on = CAT === v, col = on ? 'inherit' : QCAT_COL[v], sub = on ? 'inherit' : 'var(--t3)';
     return `<button class="chip ${on ? 'active' : ''}" onclick="ledgerSetCat('${v}')">${o ? `<i class="ti ti-${QCAT_ICON[v] || 'tag'}" style="color:${col}"></i> ` : ''}${l}${o ? ` <b style="color:${col}">${fmtWon(o.sum)}</b> <span style="color:${sub}">${o.n}건</span>` : ` <b>${fmtWon(sale)}</b>`}</button>`; };
   const catChips = catsHere.length > 1 ? `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:9px">
@@ -8423,7 +8444,7 @@ function _qsPriceRowsHtml() {
   const inp = 'width:100%;font-size:13px;padding:7px 4px;border:1.5px solid var(--bd2);border-radius:8px;text-align:right';
   const cols = adm ? 7 : 6;   // 「별도」 열을 뺐다 (거래처 전용 단가로 옮김)
   return mats.slice(0, 150).map(i => { const pl = (state.priceList || []).find(p => _normName(p.itemName) === _normName(i.name)) || {}; const nm = esc(i.name).replace(/'/g, "\\'");
-    const _cat = itemCategory(i.name); return `<tr class="qs-prow" data-nm="${esc(i.name)}"><td style="text-align:left"><b>${esc(i.name)}</b>${i.spec ? `<div style="font-size:10.5px;color:var(--t3)">${esc(i.spec)}</div>` : ''}<select onchange="saveItemCat('${nm}',this.value)" style="margin-top:3px;font-size:10.5px;padding:2px 4px;border:1px solid var(--bd2);border-radius:6px;color:var(--t2)">${QCATS.map(cc => `<option ${_cat === cc ? 'selected' : ''}>${cc}</option>`).join('')}</select></td>
+    const _cat = itemCategory(i.name); return `<tr class="qs-prow" data-nm="${esc(i.name)}"><td style="text-align:left"><b>${esc(i.name)}</b>${i.spec ? `<div style="font-size:10.5px;color:var(--t3)">${esc(i.spec)}</div>` : ''}<select onchange="saveItemCat('${nm}',this.value)" style="margin-top:3px;font-size:10.5px;padding:2px 4px;border:1px solid var(--bd2);border-radius:6px;color:var(--t2)">${LCATS.map(cc => `<option ${_cat === cc ? 'selected' : ''}>${cc}</option>`).join('')}</select></td>
       <td><input class="qsp-dist" inputmode="numeric" value="${esc(pl.dist || '')}" onchange="savePriceRow('${nm}')" style="${inp}"></td>
       <td><input class="qsp-agy" inputmode="numeric" value="${esc(pl.agency || '')}" onchange="savePriceRow('${nm}')" style="${inp}"></td>
       <td><input class="qsp-int" inputmode="numeric" value="${esc(pl.interior || '')}" onchange="savePriceRow('${nm}')" style="${inp}"></td>
@@ -8789,7 +8810,18 @@ function openQuoteView(id) {
 }
 let _costSupply = 0;
 let _costRev = { mat: 0, proc: 0, cons: 0, trans: 0 };
-function marginCat(name) { const n = name || ''; if (/운송|배송|운반|파렛트|팔레트|팔렛|파레트|빠렛/.test(n)) return '운송'; if (/재단|타공|고스라|뒷도|배면|워터젯|사선|모서리|가공|연마|코너/.test(n)) return '가공'; if (/시공|실측|설치/.test(n)) return '시공'; return '자재'; }
+/* ★ 2026-09-08 — 「따내기」가 어느 규칙에도 안 걸려 «자재»로 판정됐다.
+   그래서 견적을 현장·홀딩으로 넘길 때 자재인 척 따라다녔다. 따내기·보링·수가공을 가공에 넣는다.
+   ※ 세면대는 이름에 '타공'이 들어가도 파는 물건이므로 «자재»로 남긴다 (600 라운드 세면대 (타공) 등).
+     이 줄이 맨 앞에 있어야 한다 — 순서를 바꾸면 세면대가 가공으로 샌다. */
+function marginCat(name) {
+  const n = name || '';
+  if (/세면대|세면볼/.test(n)) return '자재';
+  if (/운송|배송|운반|파렛트|팔레트|팔렛|파레트|빠렛/.test(n)) return '운송';
+  if (/재단|타공|따내기|따냄|보링|수가공|고스라|뒷도|배면|워터젯|사선|모서리|가공|연마|코너|덮개\s*제작/.test(n)) return '가공';
+  if (/시공|실측|설치/.test(n)) return '시공';
+  return '자재';
+}
 function quoteMarginBreakdown(q) {
   const rev = { 자재: 0, 가공: 0, 시공: 0, 운송: 0 };
   (q.items || []).forEach(it => { rev[marginCat(it.name)] += Math.round(+it.amt || 0); });
@@ -10544,9 +10576,9 @@ function renderQuote() {
   const unpaidConf = _confUnpaidList.reduce((a, q) => a + _remQ(q), 0);
   const noTax = all.filter(q => !q.taxInvoice).length;
   const monthSum = all.filter(q => (q.date || '').startsWith(ym)).reduce((a, b) => a + (+b.total || 0), 0);
-  const catAgg = {}; QCATS.forEach(c => catAgg[c] = { sum: 0, cnt: 0 });
+  const catAgg = {}; LCATS.forEach(c => catAgg[c] = { sum: 0, cnt: 0 });
   all.forEach(q => { const sp = quoteCatSplit(q); Object.keys(sp).forEach(c => { if (catAgg[c]) { catAgg[c].sum += sp[c].sup; catAgg[c].cnt++; } }); });
-  const catBreak = `<div class="card" style="margin-bottom:12px;padding:11px 14px"><div style="font-size:11.5px;color:var(--t3);font-weight:700;margin-bottom:8px"><i class="ti ti-chart-pie"></i> 분류별 매출 · 견적건 <span style="font-weight:500">· 품목 기준</span></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:8px">${QCATS.map(c => `<div style="text-align:center;padding:7px 4px;background:var(--soft);border-radius:9px"><div style="font-size:10.5px;color:var(--t2);margin-bottom:2px"><i class="ti ti-${QCAT_ICON[c]}"></i> ${c}</div><div style="font-size:14.5px;font-weight:800;color:${QCAT_COL[c]}">${fmtWon(catAgg[c].sum)}</div><div style="font-size:10px;color:var(--t3)">${catAgg[c].cnt}건</div></div>`).join('')}</div></div>`;
+  const catBreak = `<div class="card" style="margin-bottom:12px;padding:11px 14px"><div style="font-size:11.5px;color:var(--t3);font-weight:700;margin-bottom:8px"><i class="ti ti-chart-pie"></i> 분류별 매출 · 견적건 <span style="font-weight:500">· 품목 기준</span></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:8px">${LCATS.map(c => `<div style="text-align:center;padding:7px 4px;background:var(--soft);border-radius:9px"><div style="font-size:10.5px;color:var(--t2);margin-bottom:2px"><i class="ti ti-${QCAT_ICON[c]}"></i> ${c}</div><div style="font-size:14.5px;font-weight:800;color:${QCAT_COL[c]}">${fmtWon(catAgg[c].sum)}</div><div style="font-size:10px;color:var(--t3)">${catAgg[c].cnt}건</div></div>`).join('')}</div></div>`;
   const view = filters.quoteView || 'all';
   const _selQs = filters.quoteBundle ? (state.quotes || []).filter(x => _qSel.has(x.id)) : [];
   const _selTotal = _selQs.reduce((a, q) => a + (+q.total || 0), 0);
@@ -10714,7 +10746,7 @@ function _quoteListInner() {
        세라믹과 세면대가 같이 든 견적은 두 칩 어디를 눌러도 나온다 — 빠지는 게 없다.
        그래서 칩의 건수를 다 더하면 전체 건수보다 조금 많을 수 있다(섞인 견적이 두 번 세어져서). */
   const fCat = filters.qCat || 'all';
-  const cCat = {}; QCATS.forEach(c => cCat[c] = 0);
+  const cCat = {}; LCATS.forEach(c => cCat[c] = 0);
   baseForStat.forEach(q => quoteCatSet(q).forEach(c => { if (cCat[c] != null) cCat[c]++; }));
   if (fCat !== 'all') list = list.filter(q => quoteCatSet(q).indexOf(fCat) >= 0);
   _qShownIds = list.map(q => q.id);   // 지금 화면(검색·필터 반영)에 뜬 견적 — 묶음청구 [전체 선택] 이 이걸 쓴다
@@ -10736,7 +10768,7 @@ function _quoteListInner() {
   const statChips = `
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
       <span style="font-size:11px;color:var(--t3);width:38px;flex:none">분류</span>
-      ${chipK('all', '전체')}${QCATS.map(c => chipK(c, c, cCat[c])).join('')}
+      ${chipK('all', '전체')}${LCATS.map(c => chipK(c, c, cCat[c])).join('')}
     </div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
       <span style="font-size:11px;color:var(--t3);width:38px;flex:none">주문</span>
@@ -10754,7 +10786,7 @@ function _quoteListInner() {
   /* ── 분류별 금액 카드 — 금액은 품목 하나하나를 보고 나눈다 ──
      견적서의 분류칸은 한 건에 하나뿐이라, 석재와 세라믹이 같이 든 견적은
      분류칸만 보면 한쪽으로 몰린다. 그래서 금액만은 품목 기준으로 쪼갠다. */
-  const catAmt = {}; QCATS.forEach(c => catAmt[c] = { sup: 0, tot: 0, n: 0 });
+  const catAmt = {}; LCATS.forEach(c => catAmt[c] = { sup: 0, tot: 0, n: 0 });
   list.forEach(q => {
     const sp = quoteCatSplit(q);
     Object.keys(sp).forEach(c => { if (!catAmt[c]) return; catAmt[c].sup += sp[c].sup; catAmt[c].tot += sp[c].tot; catAmt[c].n++; });
@@ -10762,7 +10794,7 @@ function _quoteListInner() {
   const catBar = `<div class="card" style="margin-bottom:10px;padding:11px 13px">
     <div style="font-size:11.5px;color:var(--t3);font-weight:700;margin-bottom:8px"><i class="ti ti-chart-pie"></i> 분류별 금액 <span style="font-weight:500">· 품목 기준 (한 견적에 섞여 있으면 나눠서 셉니다)</span></div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">
-      ${QCATS.map(c => `<div style="padding:9px 8px;background:var(--soft);border-radius:10px;text-align:center">
+      ${LCATS.map(c => `<div style="padding:9px 8px;background:var(--soft);border-radius:10px;text-align:center">
         <div style="font-size:11px;color:var(--t2);margin-bottom:3px"><i class="ti ti-${QCAT_ICON[c] || 'tag'}"></i> ${esc(c)}</div>
         <div style="font-size:16px;font-weight:800;color:${QCAT_COL[c]}">${fmtWon(catAmt[c].tot)}</div>
         <div style="font-size:10.5px;color:var(--t3);margin-top:2px">공급가 ${fmtWon(catAmt[c].sup)} · ${catAmt[c].n}건</div>
