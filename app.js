@@ -6996,20 +6996,39 @@ function _moneyBuild() {
     const o = get(c); o.sale += Math.round(+q.total || 0); o.qn++;
     (byC[c] || (byC[c] = [])).push(q);
   });
+  const insC = {};
   (state.banktx || []).forEach(t => {
     if (!txIsIn(t)) return; const c = txClientOf(t); if (!c) return;
     get(c).paid += txMoney(t);
+    (insC[c] || (insC[c] = [])).push({ d: String(t.date || ''), left: txMoney(t) });
   });
+  /* ★ 2026-09-08 — «날짜 순서»를 지킨다.
+     예전엔 거래처 입금 총액을 오래된 견적부터 그냥 흘려보냈다. 그런데 통장 입금(13.4억)이
+     앱 확정 매출(7.8억)보다 훨씬 많아서(앱에 안 올린 거래 대금이 섞여 있다) 거래처에 돈이
+     남아돌면 **오늘 새로 만든 견적까지 바로 「결제 완료」**가 됐다.
+     실측: 「마지막 입금일보다 나중에 만든 견적인데 결제 완료」가 62건 · 1억 758만원.
+     이제 **그 견적을 만든 날 이후에 들어온 입금만** 그 견적에 배분한다.
+     ※ 선입금을 먼저 받고 나중에 주문하는 거래처는 거의 없다고 확인함(2026-09-08). */
   Object.keys(M).forEach(c => {
     const o = M[c];
-    o.applied = Math.min(o.sale, o.paid);       // 매출까지만 상계
-    o.rem = o.sale - o.applied;                 // 미수 (0 밑으로 안 내려감)
-    o.extra = o.paid - o.applied;               // 선입금 · 앱 밖 거래 대금
-    // 그 거래처에 들어온 돈을 오래된 견적부터 흘려보내 «이 견적은 받았다»를 계산한다
-    let left = o.applied;
+    const ins = (insC[c] || []).slice().sort((a, b) => a.d.localeCompare(b.d));
+    let applied = 0;
     (byC[c] || []).slice()
       .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.docNo || '').localeCompare(b.docNo || ''))
-      .forEach(q => { const t = Math.round(+q.total || 0); const add = Math.min(left, t); P[q.id] = add; left -= add; });
+      .forEach(q => {
+        const tot = Math.round(+q.total || 0); const qd = String(q.date || '');
+        let need = tot, got = 0;
+        for (const i of ins) {
+          if (need <= 0) break;
+          if (i.left <= 0) continue;
+          if (i.d && qd && i.d < qd) continue;   // 견적보다 먼저 들어온 돈은 이 견적 대금이 아니다
+          const use = Math.min(need, i.left); i.left -= use; need -= use; got += use;
+        }
+        P[q.id] = got; applied += got;
+      });
+    o.applied = applied;                        // 실제로 견적에 붙은 돈
+    o.rem = Math.max(0, o.sale - applied);      // 미수 (0 밑으로 안 내려감)
+    o.extra = Math.max(0, o.paid - applied);    // 아직 어느 견적에도 안 붙은 돈 (선입금 · 앱 밖 거래 대금)
   });
   _cmAt = Date.now(); _cmCache = M; _qpCache = P;
 }
