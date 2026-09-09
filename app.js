@@ -13497,8 +13497,17 @@ function holdListTableHtml(list) {
   list.forEach(h => holdItems(h).forEach(it => rows.push({ h, it })));
   if (!rows.length) return `<div class="empty"><i class="ti ti-lock-off"></i>${(filters.holdSearch || '').trim() ? '검색 결과가 없습니다' : '홀딩이 없습니다'}</div>`;
   const stColor = st => st === '예정' ? 'var(--amber-t)' : (st === '출고완료' ? 'var(--gd)' : (st === '해제' ? 'var(--t3)' : 'var(--blue)'));
+  /* ★ 2026-09-09 — 표 보기에도 「비고」를 보여준다 (전체 316건 중 145건에 내용이 있다).
+     비고는 «홀딩 한 건»에 붙는 값인데 자재가 여러 개면 줄이 나뉘므로,
+     같은 홀딩의 둘째 줄부터는 비우고 첫 줄에만 적는다 (세면대 표의 출고증 열과 같은 방식). */
+  let _prevH = '';
   const body = rows.map(({ h, it }) => {
     const st = it.planned && (h.status || '홀딩') === '홀딩' ? '예정' : holdStatusText(h);   // 품목별 예정 반영
+    const same = _prevH === h.id; _prevH = h.id;
+    const nt = String(h.note || '').trim();
+    const noteTd = same ? '' : (nt
+      ? `<span title="${esc(nt)}" style="display:block;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(nt)}</span>`
+      : '<span style="color:var(--t3)">—</span>');
     return `<tr onclick="openHoldDetail('${h.id}')" style="cursor:pointer">
       <td>${esc(h.useDate || '-')}</td>
       <td><b>${esc(h.vendor || '-')}</b></td>
@@ -13507,10 +13516,11 @@ function holdListTableHtml(list) {
       <td style="text-align:right">${(+it.hebe || 0).toFixed(1)}</td>
       <td>${esc(h.forSiteName || '-')}</td>
       <td style="color:${stColor(st)};font-weight:700">${esc(st)}</td>
+      <td style="font-size:12px;color:var(--t2)">${noteTd}</td>
     </tr>`;
   }).join('');
   return `<div class="tbl-wrap" id="holdlist-wrap" data-keepscroll style="max-height:calc(100vh - 320px);overflow:auto">
-    <table class="tbl"><thead><tr><th>예정일</th><th>거래처</th><th>자재</th><th>장수</th><th>헤베</th><th>현장</th><th>상태</th></tr></thead><tbody>${body}</tbody></table>
+    <table class="tbl" style="min-width:920px"><thead><tr><th>예정일</th><th>거래처</th><th>자재</th><th>장수</th><th>헤베</th><th>현장</th><th>상태</th><th>비고</th></tr></thead><tbody>${body}</tbody></table>
   </div>`;
 }
 /* 홀딩 목록 본문만 계산 (검색 시 이 부분만 갱신 → 입력 포커스 유지) */
