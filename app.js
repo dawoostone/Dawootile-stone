@@ -8058,9 +8058,31 @@ function cutSheetSvg(sh, Ws, Hs, n) {
     return `<g><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="${c}" stroke="#555" stroke-width="0.7"/>` +
       (w > 40 && h > 16 ? `<text x="${(x + w / 2).toFixed(1)}" y="${(y + h / 2 + 3).toFixed(1)}" text-anchor="middle" font-size="10" fill="#333">${pc.l}×${pc.w}${pc.idx ? ' #' + pc.idx : ''}</text>` : '') + `</g>`;
   }).join('');
+  /* ★ 2026-09-09 — 「남는 부분(자투리) 치수도 표기해줘」
+     배치가 끝나고 남은 빈 자리(sh.free)를 회색 빗금으로 칠하고 «가로×세로»를 적는다.
+     가장 큰 한 장은 초록으로 구분한다 — 다음에 다시 쓸 수 있는 조각이라 눈에 띄어야 한다.
+     ※ sh.free 는 톱날(3mm)을 이미 뺀 «실제로 쓸 수 있는» 크기다. */
+  const frees = (sh.free || []).filter(f => f.w > 1 && f.h > 1).slice().sort((a, b) => (b.w * b.h) - (a.w * a.h));
+  const pid = 'hx' + n;
+  const scrapSvg = frees.map((f, i) => {
+    const x = f.x * sc, y = f.y * sc, w = f.w * sc, h = f.h * sc;
+    const big = i === 0 && f.w >= 200 && f.h >= 200;                  // 가장 큰 자투리(쓸 만한 크기일 때만 강조)
+    const col = big ? '#2e7d5b' : '#8a8f98';
+    const txt = Math.round(f.w) + '×' + Math.round(f.h);
+    let label = '';
+    if (w >= 44 && h >= 15) label = `<text x="${(x + w / 2).toFixed(1)}" y="${(y + h / 2 + 3.5).toFixed(1)}" text-anchor="middle" font-size="${big ? 11 : 10}" font-weight="${big ? 700 : 600}" fill="${col}">${txt}</text>`;
+    else if (h >= 44 && w >= 15) label = `<text transform="translate(${(x + w / 2).toFixed(1)},${(y + h / 2).toFixed(1)}) rotate(-90)" text-anchor="middle" font-size="${big ? 11 : 10}" font-weight="${big ? 700 : 600}" fill="${col}" dy="3.5">${txt}</text>`;
+    return `<g><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="url(#${pid})" stroke="${col}" stroke-width="${big ? 1.4 : 1}" stroke-dasharray="4 3" opacity="${big ? .95 : .8}"/>${label}</g>`;
+  }).join('');
+  // 그림에 글씨가 안 들어가는 작은 자투리까지 빠짐없이 보이도록 아래에 한 줄로 적는다
+  const scrapList = frees.length
+    ? `<div style="font-size:11.5px;color:var(--t2);margin-top:3px;line-height:1.6"><b style="color:#2e7d5b">남는 부분</b> ${frees.map((f, i) => `<span style="display:inline-block;background:${i === 0 && f.w >= 200 && f.h >= 200 ? '#e7f3ed' : 'var(--soft)'};border:1px solid ${i === 0 && f.w >= 200 && f.h >= 200 ? '#bcdccd' : 'var(--bd2)'};border-radius:7px;padding:1px 7px;margin:2px 3px 0 0;font-weight:${i === 0 ? 700 : 500}">${Math.round(f.w)}×${Math.round(f.h)}<span style="color:var(--t3);font-weight:500"> · ${((f.w * f.h) / 1e6).toFixed(2)}㎡</span></span>`).join('')}</div>`
+    : `<div style="font-size:11.5px;color:var(--t3);margin-top:3px">남는 부분 없음 — 판재를 다 썼습니다</div>`;
   // 톱질 선 — 한 번 들어가면 그 조각 끝까지 쭉 나가는 직선만 그린다
   const cuts = (sh.cuts || []).map(c => `<line x1="${(c.x1 * sc).toFixed(1)}" y1="${(c.y1 * sc).toFixed(1)}" x2="${(c.x2 * sc).toFixed(1)}" y2="${(c.y2 * sc).toFixed(1)}" stroke="#d94a3d" stroke-width="1.1" stroke-dasharray="6 4" opacity=".85"/>`).join('');
-  return `<div style="margin-bottom:10px"><div style="font-size:12px;color:var(--t3);margin-bottom:3px">판재 ${n} · ${Ws}×${Hs} <span style="color:#d94a3d">— 빨간 점선 = 톱질 선</span></div><svg viewBox="0 0 ${W.toFixed(1)} ${H.toFixed(1)}" style="width:100%;max-width:${W.toFixed(0)}px;border:1px solid #999;background:#fff">${rects}${cuts}<rect x="0.5" y="0.5" width="${(W - 1).toFixed(1)}" height="${(H - 1).toFixed(1)}" fill="none" stroke="#333" stroke-width="1"/></svg></div>`;
+  return `<div style="margin-bottom:12px"><div style="font-size:12px;color:var(--t3);margin-bottom:3px">판재 ${n} · ${Ws}×${Hs} <span style="color:#d94a3d">— 빨간 점선 = 톱질 선</span> <span style="color:#2e7d5b">· 빗금 = 남는 부분</span></div><svg viewBox="0 0 ${W.toFixed(1)} ${H.toFixed(1)}" style="width:100%;max-width:${W.toFixed(0)}px;border:1px solid #999;background:#fff">
+    <defs><pattern id="${pid}" width="7" height="7" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><rect width="7" height="7" fill="#f7f8f9"/><line x1="0" y1="0" x2="0" y2="7" stroke="#c9ced6" stroke-width="1.6"/></pattern></defs>
+    ${scrapSvg}${rects}${cuts}<rect x="0.5" y="0.5" width="${(W - 1).toFixed(1)}" height="${(H - 1).toFixed(1)}" fill="none" stroke="#333" stroke-width="1"/></svg>${scrapList}</div>`;
 }
 /* ── 실제 톱질 길이 (2026-09-08 수정) ─────────────────────────
    예전 「재단 미터수」는 부재 4면 둘레를 그냥 다 더한 값이었다. 그래서
