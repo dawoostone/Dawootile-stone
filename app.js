@@ -5890,7 +5890,7 @@ function quoteRegister(id) {
   if (hasBasinOrder) {
     let bi = (q.items || []).filter(it => isOrderBasin(it.name) && (+it.qty || 0) > 0).map(it => ({ stone: it.stone || '', spec: it.spec || '', qty: it.qty || '', quoteNo: q.docNo || '' }));
     if (!bi.length) bi = (q.items || []).map(it => ({ stone: it.name, spec: it.spec || '', qty: it.qty || '' }));
-    go('basin'); setTimeout(() => { try { openBasinForm(null, { vendor: q.client, items: bi, quoteId: id }); } catch (e) { } }, 90);
+    go('basin'); setTimeout(() => { try { openBasinForm(null, { vendor: q.client, items: bi, quoteId: id, draws: basinDrawsOf(q) }); } catch (e) { } }, 90);
     toast('세면대 발주로 불러왔습니다');
   } else if (hasGagong) {
     // ★ 견적 화면에 그대로 머문 채 현장 등록창만 띄운다 (예전엔 현장 탭으로 넘어갔다)
@@ -6008,7 +6008,7 @@ function quoteToOrder(id) {
   if (hasBasin) {
     let bi = (q.items || []).filter(it => (it.name || '').includes('세면대')).map(it => ({ stone: it.stone || '', spec: it.spec || '', qty: it.qty || '', quoteNo: q.docNo || '' }));
     if (!bi.length) bi = (q.items || []).map(it => ({ stone: it.name, spec: it.spec || '', qty: it.qty || '' }));
-    go('basin'); setTimeout(() => { try { openBasinForm(null, { vendor: q.client, items: bi, quoteId: id }); } catch (e) { } }, 90);
+    go('basin'); setTimeout(() => { try { openBasinForm(null, { vendor: q.client, items: bi, quoteId: id, draws: basinDrawsOf(q) }); } catch (e) { } }, 90);
     toast('확정 · 세면대 발주로 불러왔습니다');
   } else if ((q.siteAddr || '').trim()) {
     go('sites'); setTimeout(() => { try { openSiteForm(null, { name: q.client, address: q.siteAddr, quoteId: id }); } catch (e) { } }, 90);
@@ -8770,7 +8770,7 @@ function quoteCardHtml(q) {
            <div style="font-size:10.5px;color:var(--t3);margin-top:3px;white-space:nowrap;border-top:1px dashed var(--bd);padding-top:3px">${_rem > 0 ? `이 건 미수 ${fmtWon(_rem)}` : (_pa > 0 ? '<span style="color:var(--gd);font-weight:700">이 건 결제완료</span>' : '이 건 미결제')}</div>`
         : (_pa > 0 ? `<div style="font-size:12px;font-weight:700;color:var(--gd);margin-top:6px"><i class="ti ti-check"></i> 결제완료</div>` : (_rem > 0 ? `<div style="font-size:13.5px;font-weight:800;color:var(--red-t);margin-top:6px">미수 ${fmtWon(_rem)}</div>` : ''))}</div>
       </div>
-      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px">${catBadge}${paidPill}${taxPill}${depBadge}${shipBadge}${siteBadge}${basinBadge}${doneBadge}${canLedger() && _cRem > 0 ? `<button class="pill p-issue" style="border:none;cursor:pointer" onclick="openLedgerFor(${JSON.stringify(q.client || '').replace(/"/g, '&quot;')})" title="이 거래처 원장 보기"><i class="ti ti-book"></i> 거래처 미수 ${fmtWon(_cRem)}</button>` : ''}</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px">${catBadge}${paidPill}${taxPill}${depBadge}${shipBadge}${siteBadge}${basinBadge}${basinDrawsOf(q).length ? `<button class="pill" style="border:none;cursor:pointer;background:#eef4ff;color:#1b4fb0" onclick="event.stopPropagation();openQuoteDraw('${q.id}','${esc(basinDrawsOf(q)[0].id)}')" title="세면대 도면 보기"><i class="ti ti-ruler-2"></i> 도면 ${basinDrawsOf(q).length}</button>` : ''}${doneBadge}${canLedger() && _cRem > 0 ? `<button class="pill p-issue" style="border:none;cursor:pointer" onclick="openLedgerFor(${JSON.stringify(q.client || '').replace(/"/g, '&quot;')})" title="이 거래처 원장 보기"><i class="ti ti-book"></i> 거래처 미수 ${fmtWon(_cRem)}</button>` : ''}</div>
       <div class="frm-foot" style="margin-top:9px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
         ${(q.shipped || q.siteDone || q.basinDone) ? '' : (q.manualDone ? (isAdmin() ? `<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteUnmarkDone('${q.id}')" title="완료 취소"><i class="ti ti-arrow-back-up"></i>완료 취소</button>` : '') : (q.ordered ? `<button class="btn btn-sm btn-pri" onclick="quoteRegister('${q.id}')"><i class="ti ${_regIcon}"></i>${_regLabel}</button><button class="btn btn-sm" onclick="quoteLinkSite('${q.id}')" title="이미 등록된 현장에 연결"><i class="ti ti-link"></i>현장 연결</button>${isAdmin() ? `<button class="btn btn-sm" style="color:#0f766e;border-color:#0f766e" onclick="quoteMarkDone('${q.id}')" title="바로 완료 처리 (관리자)"><i class="ti ti-checks"></i>완료 처리</button>` : ''}<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteCancelOrder('${q.id}')" title="확정 주문 취소"><i class="ti ti-arrow-back-up"></i>확정취소</button>` : `<button class="btn btn-sm btn-pri" onclick="quoteConfirmOrder('${q.id}')"><i class="ti ti-clipboard-check"></i>확정주문</button>`))}
         <button class="btn btn-sm" onclick="openQuoteInline('${q.id}')"><i class="ti ti-edit"></i>수정</button>
@@ -8843,6 +8843,7 @@ function openQuoteView(id) {
       ${_cRem > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0 0;margin-top:5px;border-top:1px dashed var(--bd2)"><span style="font-size:11.5px;color:var(--t3)">이 거래처 총 미수 <span style="color:var(--t2)">(원장 기준)</span></span><span style="display:flex;gap:6px;align-items:center"><span style="font-size:14px;font-weight:800;color:var(--red-t)">${fmtWon(_cRem)}원</span>${canLedger() ? `<button class="btn btn-sm" style="padding:2px 7px;font-size:11px" onclick="openLedgerFor(${JSON.stringify(q.client || '').replace(/"/g, '&quot;')})"><i class="ti ti-book"></i>원장</button>` : ''}</span></div>` : ''}
     </div>
     ${(q.memo || '').trim() ? `<div class="sec-label"><i class="ti ti-notes"></i>비고</div><div style="font-size:12.5px;color:var(--t2);white-space:pre-wrap;background:var(--soft);border-radius:10px;padding:10px 12px;margin-bottom:12px">${esc(q.memo)}</div>` : ''}
+    <div style="padding:0 2px">${basinDrawListHtml(q, 'quotes')}</div>
     <div class="frm-foot" style="display:flex;gap:6px;flex-wrap:wrap">
       <button class="btn" onclick="closeModal()">닫기</button>
       <button class="btn" onclick="closeModal();openQuoteInline('${q.id}')"><i class="ti ti-edit"></i>수정</button>
@@ -12604,19 +12605,37 @@ function basinDrawSvg(d, lang) {
 }
 
 /* ── 도면 편집 화면 ───────────────────────────────────────────── */
-let _bdCur = null, _bdBasinId = '';
+/* ★ 2026-09-09 — 「발주는 견적서에서」 → 도면도 **견적서에서 그린다.**
+   그래서 도면은 견적(quotes)·세면대발주(basins) **어느 쪽에도 붙을 수 있게** 만들었다.
+   견적에서 그린 도면은 그 견적으로 세면대 발주를 낼 때 **발주 건으로 그대로 따라간다**. */
+let _bdCur = null, _bdColl = '', _bdDocId = '';
 function basinDrawsOf(b) { return (b && Array.isArray(b.draws)) ? b.draws : []; }
-function openBasinDraw(basinId, drawId) {
+/* 규격 문자열에서 기장·폭·높이 뽑기 — '1060*473*550' / '1060x473' 둘 다 */
+function _bdParseSpec(spec) {
+  const m = String(spec || '').match(/(\d{2,5})\s*[*xX×]\s*(\d{2,5})(?:\s*[*xX×]\s*(\d{2,5}))?/);
+  return m ? { L: +m[1], W: +m[2], H: m[3] ? +m[3] : 0 } : null;
+}
+function openBasinDraw(basinId, drawId) { _openDrawFor('basins', basinId, drawId); }
+function openQuoteDraw(quoteId, drawId) { _openDrawFor('quotes', quoteId, drawId); }
+function _openDrawFor(coll, docId, drawId) {
   if (isCustomerRole()) { toast('권한이 없습니다'); return; }
-  const b = (state.basins || []).find(x => x.id === basinId) || null;
-  _bdBasinId = basinId || '';
-  const old = b ? basinDrawsOf(b).find(x => x.id === drawId) : null;
+  const doc = docId ? (state[coll] || []).find(x => x.id === docId) : null;
+  _bdColl = doc ? coll : ''; _bdDocId = doc ? docId : '';
+  const old = doc ? basinDrawsOf(doc).find(x => x.id === drawId) : null;
   _bdCur = old ? Object.assign(basinDrawNew(), old) : basinDrawNew();
-  if (b && !old) {   // 새 도면은 발주 건의 값을 미리 채워 준다
-    const it = (basinItems(b) || [])[0] || {};
-    _bdCur.stone = it.stone || b.stone || '';
-    _bdCur.client = b.vendor || '';
-    _bdCur.orderNo = it.orderNo || b.orderNo || '';
+  if (doc && !old && coll === 'basins') {        // 새 도면 — 발주 건의 값을 미리 채운다
+    const it = (basinItems(doc) || [])[0] || {};
+    _bdCur.stone = it.stone || doc.stone || '';
+    _bdCur.client = doc.vendor || '';
+    _bdCur.orderNo = it.orderNo || doc.orderNo || '';
+    const sp = _bdParseSpec(it.spec); if (sp) { _bdCur.L = sp.L; _bdCur.W = sp.W; if (sp.H) _bdCur.H = sp.H; }
+  } else if (doc && !old && coll === 'quotes') {  // 새 도면 — 견적서의 세면대 항목에서 미리 채운다
+    _bdCur.client = doc.client || '';
+    _bdCur.orderNo = doc.docNo || '';
+    const bi = (doc.items || []).find(x => (x.name || '').includes('세면대')) || (doc.items || [])[0] || {};
+    const st = BASIN_STONES.find(s => String(bi.stone || bi.name || '').includes(s.k));
+    if (st) _bdCur.stone = st.k; else if (bi.stone) _bdCur.stone = bi.stone;
+    const sp = _bdParseSpec(bi.spec) || _bdParseSpec(bi.name); if (sp) { _bdCur.L = sp.L; _bdCur.W = sp.W; if (sp.H) _bdCur.H = sp.H; }
   }
   const inp = 'width:100%;font-size:15px;padding:8px 10px;border:1.5px solid var(--bd2);border-radius:9px';
   const moldOpts = BASIN_MOLD_GROUPS.map(g => `<optgroup label="${g.ko} ${g.cn}">`
@@ -12740,28 +12759,31 @@ function basinDrawPng(lang) {
   img.src = url;
 }
 async function basinDrawSave() {
-  if (!_bdBasinId) { toast('발주 건이 없습니다'); return; }
-  const b = (state.basins || []).find(x => x.id === _bdBasinId); if (!b) { toast('발주 건을 찾을 수 없습니다'); return; }
+  if (!_bdColl || !_bdDocId) { toast('저장할 곳이 없습니다 — 먼저 저장한 뒤 다시 열어 주세요'); return; }
+  const doc = (state[_bdColl] || []).find(x => x.id === _bdDocId); if (!doc) { toast('원본을 찾을 수 없습니다'); return; }
   const d = basinDrawRead();
   const row = Object.assign({}, d, { at: Date.now(), by: (me && me.name) || '' });
-  const list = basinDrawsOf(b).slice();
+  const list = basinDrawsOf(doc).slice();
   const i = list.findIndex(x => x.id === row.id);
   if (i >= 0) list[i] = row; else list.push(row);
-  await Store.update('basins', _bdBasinId, { draws: list });
+  await Store.update(_bdColl, _bdDocId, { draws: list });
   toast('도면 저장됨 (' + list.length + '장)');
   closeModal();
+  if (_bdColl === 'quotes') { try { renderQuote(); } catch (e) { } }
 }
-async function basinDrawDel(basinId, drawId) {
-  const b = (state.basins || []).find(x => x.id === basinId); if (!b) return;
+async function basinDrawDel(coll, docId, drawId) {
+  const doc = (state[coll] || []).find(x => x.id === docId); if (!doc) return;
   if (!confirm('이 도면을 지울까요?')) return;
-  await Store.update('basins', basinId, { draws: basinDrawsOf(b).filter(x => x.id !== drawId) });
+  await Store.update(coll, docId, { draws: basinDrawsOf(doc).filter(x => x.id !== drawId) });
   toast('도면 삭제됨');
 }
-/* 발주 상세에 붙는 도면 목록 */
-function basinDrawListHtml(b) {
-  const ds = basinDrawsOf(b);
+/* 도면 목록 카드 — 견적서·세면대 발주 양쪽에서 쓴다 */
+function basinDrawListHtml(doc, coll) {
+  coll = coll || 'basins';
+  const ds = basinDrawsOf(doc);
+  const openFn = coll === 'quotes' ? 'openQuoteDraw' : 'openBasinDraw';
   return `<div class="sec-label" style="margin-top:10px"><i class="ti ti-ruler-2"></i>세면대 도면 ${ds.length ? `<span style="color:var(--gd)">${ds.length}</span>` : ''}
-      <button class="btn btn-sm btn-pri" style="float:right" onclick="openBasinDraw('${b.id}')"><i class="ti ti-plus"></i>도면 그리기</button></div>
+      <button class="btn btn-sm btn-pri" style="float:right" onclick="${openFn}('${doc.id}')"><i class="ti ti-plus"></i>도면 그리기</button></div>
     ${ds.length ? ds.map(d => {
     const M = basinMoldOf(d.mold);
     return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--bd2);border-radius:10px;margin-bottom:6px">
@@ -12769,8 +12791,8 @@ function basinDrawListHtml(b) {
         <div style="font-weight:700;font-size:13.5px">${esc(d.L)}×${esc(d.W)}×${esc(d.H)} <span style="font-weight:500;color:var(--t3)">· ${esc(M.ko)} ${M.l}×${M.w}${+d.bowls === 2 ? ' ×2' : ''}</span></div>
         <div style="font-size:11.5px;color:var(--t3)">${esc(basinSkirtText(d, 'ko'))} · ${d.tap ? '수전타공 Ø' + esc(d.tapDia) : '매립수전(타공X)'}${d.stone ? ' · ' + esc(d.stone) : ''}</div>
       </div>
-      <button class="btn btn-sm" onclick="openBasinDraw('${b.id}','${d.id}')"><i class="ti ti-edit"></i></button>
-      <button class="btn btn-sm" style="color:var(--red-t)" onclick="basinDrawDel('${b.id}','${d.id}')"><i class="ti ti-trash"></i></button>
+      <button class="btn btn-sm" onclick="${openFn}('${doc.id}','${d.id}')"><i class="ti ti-edit"></i></button>
+      <button class="btn btn-sm" style="color:var(--red-t)" onclick="basinDrawDel('${coll}','${doc.id}','${d.id}')"><i class="ti ti-trash"></i></button>
     </div>`; }).join('')
       : '<div style="font-size:12px;color:var(--t3);padding:8px 2px">아직 도면이 없습니다 — 「도면 그리기」로 만드세요.</div>'}`;
 }
@@ -12999,9 +13021,11 @@ function collectBasinItems() {
   });
   return items;
 }
-let _basinFromQuote = '';
+let _basinFromQuote = '', _basinCarryDraws = null;
 function openBasinForm(id, pre) {
   _basinFromQuote = (pre && pre.quoteId) || '';
+  // ★ 견적서에서 그린 도면을 발주 건으로 그대로 옮겨 붙인다 (다시 그릴 필요 없게)
+  _basinCarryDraws = (pre && Array.isArray(pre.draws) && pre.draws.length) ? pre.draws.slice() : null;
   const b = id ? (state.basins || []).find(x => x.id === id) : null;
   const v = b || pre || {};
   const rows = basinItems(v);
@@ -13020,7 +13044,10 @@ function openBasinForm(id, pre) {
       <div class="fld full"><label>현장 주소 <span style="color:var(--t3);font-weight:500">(출고증에 표시)</span></label><input id="b-address" lang="ko" placeholder="현장 주소지" value="${esc(v.address || '')}"></div>
       <div class="fld full"><label>비고</label><input id="b-note" lang="ko" placeholder="선택" value="${esc(v.note || '')}"></div>
       ${b ? `<div class="fld full">${basinDrawListHtml(b)}</div>`
-      : `<div class="fld full"><div style="font-size:12px;color:var(--t2);background:var(--soft);border-radius:9px;padding:9px 11px;line-height:1.6"><i class="ti ti-ruler-2"></i> <b>세면대 도면</b>은 이 발주를 <b>저장한 뒤</b> 다시 열면 이 자리에서 그릴 수 있습니다.<br><button type="button" class="btn btn-sm" style="margin-top:6px" onclick="openBasinDraw('')"><i class="ti ti-ruler-2"></i>먼저 그려보기 (저장 없이)</button></div></div>`}
+      : `<div class="fld full"><div style="font-size:12px;color:var(--t2);background:var(--soft);border-radius:9px;padding:9px 11px;line-height:1.6">
+          ${_basinCarryDraws ? `<span style="color:var(--gd);font-weight:700"><i class="ti ti-ruler-2"></i> 견적서에서 그린 도면 ${_basinCarryDraws.length}장이 같이 넘어왔습니다</span> — 저장하면 이 발주 건에 붙습니다.`
+        : `<i class="ti ti-ruler-2"></i> <b>세면대 도면</b>은 이 발주를 <b>저장한 뒤</b> 다시 열면 이 자리에서 그릴 수 있습니다. 견적서에서 미리 그려 두면 발주로 <b>자동으로 따라옵니다.</b>`}
+          <br><button type="button" class="btn btn-sm" style="margin-top:6px" onclick="openBasinDraw('')"><i class="ti ti-ruler-2"></i>지금 그려보기 (저장 없이)</button></div></div>`}
       <div class="fld full" style="font-size:11.5px;color:var(--t3);line-height:1.5;background:var(--soft);border-radius:9px;padding:9px 11px"><i class="ti ti-info-circle"></i> 납기 약 30~33일 · 세면대 1개당 브라켓 1SET 포함(팝업·수전·트랩 별도) · 발주 후 수정 불가</div>
     </div>
     ${b && basinStageIndex(b) >= 4 ? `<div style="padding:0 16px 10px">${(b.stage || '') === '완료'
@@ -13076,10 +13103,13 @@ async function submitBasin(id) {
   };
   if (stage === '완료') obj.shipDate = (cur && cur.shipDate) ? cur.shipDate : todayStr();
   else obj.shipDate = '';
+  // 견적서에서 그려 온 도면 — 이 발주에 아직 도면이 없을 때만 옮겨 붙인다(덮어쓰지 않는다)
+  if (_basinCarryDraws && !basinDrawsOf(cur).length) obj.draws = _basinCarryDraws;
   await ensureClient(vendor);   // 신규 거래처 자동 등록
   if (id) await Store.update('basins', id, obj);
   else await Store.add('basins', obj);
   if (_basinFromQuote) { try { await Store.update('quotes', _basinFromQuote, { basinDone: true, basinDoneAt: Date.now() }); } catch (e) { } _basinFromQuote = ''; }
+  _basinCarryDraws = null;
   closeModal();
   toast(id ? '수정되었습니다' : '세면대 발주가 등록되었습니다');
 }
