@@ -12338,6 +12338,439 @@ const BASIN_STONES = [
   { k: '아스팬라이트그레이', c: '塞浦路斯', t: '', maxLen: 1500 },
   { k: '알래스카 화이트', c: '阿拉斯加白', t: '12mm', maxLen: 1500 }
 ];
+/* ═══════════════════════════════════════════════════════════════════
+   세면대 도면 (2026-09-09)
+   사용자: "이런 식의 세면대 도면을 전산 프로그램에서 그릴 수 있었으면 함 …
+            이걸 그리면 중국 현지에 전달해서 바로 알아볼 수 있었으면 함"
+   중국 협력공장(金岩坊建材)이 보내주는 도면과 같은 형식으로 그린다.
+   ★ 한글본 / 중문본을 따로 뽑는다 — 중문본만 중국에 보내면 번역 없이 바로 읽힌다.
+   ═══════════════════════════════════════════════════════════════════ */
+/* 볼 금형 목록 — 「세면볼 디자인 규격(CURRENT BASIN LINER)」 카탈로그 그대로.
+   깊이는 전부 150 기본 (도면의 «方盆550*350*150» 세 번째 숫자). 필요하면 화면에서 고친다. */
+const BASIN_MOLDS = [
+  { g: 'oval', ko: '타원형', cn: '椭圆盆', l: 700, w: 350 },
+  { g: 'oval', ko: '타원형', cn: '椭圆盆', l: 550, w: 350 },
+  { g: 'oval', ko: '타원형', cn: '椭圆盆', l: 500, w: 300 },
+  { g: 'square', ko: '사각형', cn: '方盆', l: 700, w: 350 },
+  { g: 'square', ko: '사각형', cn: '方盆', l: 550, w: 350 },
+  { g: 'square', ko: '사각형', cn: '方盆', l: 500, w: 300 },
+  { g: 'square', ko: '사각형', cn: '方盆', l: 450, w: 300 },
+  { g: 'square', ko: '사각형', cn: '方盆', l: 600, w: 380 },
+  { g: 'drop', ko: '물방울형', cn: '水滴盆', l: 800, w: 350 },
+  { g: 'drop', ko: '물방울형', cn: '水滴盆', l: 650, w: 350 },
+  { g: 'round', ko: '원형', cn: '圆盆', l: 645, w: 355 },
+  { g: 'round', ko: '원형', cn: '圆盆', l: 360, w: 360 }
+];
+const BASIN_MOLD_GROUPS = [
+  { g: 'oval', ko: '타원형', cn: '椭圆盆' }, { g: 'square', ko: '사각형', cn: '方盆' },
+  { g: 'drop', ko: '물방울형', cn: '水滴盆' }, { g: 'round', ko: '원형', cn: '圆盆' }
+];
+const BD_FONT = "'Malgun Gothic','맑은 고딕','Microsoft YaHei','SimSun','Apple SD Gothic Neo',sans-serif";
+function basinMoldKey(m) { return m.g + '-' + m.l + 'x' + m.w; }
+function basinMoldOf(key) { return BASIN_MOLDS.find(m => basinMoldKey(m) === key) || BASIN_MOLDS[4]; }
+/* 석종 한글 → 중문 (BASIN_STONES 표를 그대로 쓴다) */
+function basinStoneCn(k) { const s = basinStoneMeta(k); return (s && s.c) ? s.c : (k || ''); }
+
+function basinDrawNew() {
+  return {
+    id: 'BD' + Date.now(), title: '', stone: '',
+    L: 1200, W: 550, H: 170,
+    sl: false, sr: false, sf: true,          // 치마 — 좌 / 우 / 전
+    mold: 'square-550x350', moldD: 150, bowls: 1,
+    offL: '', offR: '', offF: '', offB: '', offMid: '',   // 비우면 센터
+    tap: true, tapDia: 35, tapGap: 50,
+    note: ''
+  };
+}
+/* 치마 면 표기 — 「3면 치마」 / 「좌·전 2면 치마」 / 「전면 치마」 / 「치마 없음」 */
+function basinSkirtText(d, lang) {
+  const on = [];
+  if (d.sl) on.push(lang === 'cn' ? '左' : '좌');
+  if (d.sr) on.push(lang === 'cn' ? '右' : '우');
+  if (d.sf) on.push(lang === 'cn' ? '前' : '전');
+  if (!on.length) return lang === 'cn' ? '无裙边' : '치마 없음';
+  if (on.length === 3) return lang === 'cn' ? '三面裙边' : '3면 치마';
+  if (on.length === 2) return lang === 'cn' ? (on.join('+') + ' 两面裙边') : (on.join('·') + ' 2면 치마');
+  return lang === 'cn' ? (on[0] + '裙边') : (on[0] + '면 치마');
+}
+/* ── 배치 계산 ────────────────────────────────────────────────
+   앞뒤좌우 띄움값을 안 넣으면 센터. 넣으면 그 값을 지키고 나머지를 계산한다.
+   볼 2개는  좌여백 m + 볼 + 사이간격 g + 볼 + 우여백 m  (m·g 중 하나를 주면 나머지가 정해짐) */
+function basinDrawLayout(d) {
+  const M = basinMoldOf(d.mold);
+  const L = +d.L || 0, W = +d.W || 0, bl = M.l, bw = M.w, n = (+d.bowls === 2) ? 2 : 1;
+  const num = v => { const s = String(v == null ? '' : v).trim(); return s === '' ? null : (+s || 0); };
+  // 앞뒤(폭 방향)
+  let back;
+  const ob = num(d.offB), of = num(d.offF);
+  if (ob != null) back = ob; else if (of != null) back = W - bw - of; else back = (W - bw) / 2;
+  const front = W - bw - back;
+  // 좌우(기장 방향)
+  let m, gap;
+  const ol = num(d.offL), or = num(d.offR), om = num(d.offMid);
+  if (n === 2) {
+    if (ol != null) { m = ol; gap = L - 2 * m - 2 * bl; }
+    else if (or != null) { m = or; gap = L - 2 * m - 2 * bl; }
+    else if (om != null) { gap = om; m = (L - gap - 2 * bl) / 2; }
+    else { m = gap = (L - 2 * bl) / 3; }
+  } else {
+    if (ol != null) m = ol; else if (or != null) m = L - bl - or; else m = (L - bl) / 2;
+    gap = 0;
+  }
+  const xs = n === 2 ? [m, m + bl + gap] : [m];
+  const right = L - (xs[xs.length - 1] + bl);
+  return { M, L, W, bl, bw, n, back, front, m, gap, xs, right };
+}
+/* ── SVG 조각 도우미 ─────────────────────────────────────────── */
+function _bdT(x, y, s, o) {
+  o = o || {};
+  return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-family="${BD_FONT}" font-size="${o.fs || 12}" fill="${o.c || '#111'}"`
+    + ` text-anchor="${o.a || 'middle'}"${o.w ? ` font-weight="${o.w}"` : ''}${o.rot ? ` transform="rotate(${o.rot} ${x.toFixed(1)} ${y.toFixed(1)})"` : ''}>${esc(s)}</text>`;
+}
+function _bdL(x1, y1, x2, y2, o) {
+  o = o || {};
+  return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${o.c || '#111'}" stroke-width="${o.w || 0.8}"${o.d ? ` stroke-dasharray="${o.d}"` : ''}/>`;
+}
+/* 가로 치수선 — 양 끝에 짧은 세로 눈금, 가운데 위에 숫자 */
+function _bdDimH(x1, x2, y, label, o) {
+  o = o || {};
+  const t = 4;
+  return _bdL(x1, y, x2, y) + _bdL(x1, y - t, x1, y + t) + _bdL(x2, y - t, x2, y + t)
+    + _bdT((x1 + x2) / 2, y - 4, label, { fs: o.fs || 12.5 });
+}
+/* 세로 치수선 — 숫자는 90° 돌려서 적는다 (원본 도면과 같은 방식) */
+function _bdDimV(y1, y2, x, label, o) {
+  o = o || {};
+  const t = 4;
+  return _bdL(x, y1, x, y2) + _bdL(x - t, y1, x + t, y1) + _bdL(x - t, y2, x + t, y2)
+    + _bdT(x - 4, (y1 + y2) / 2, label, { fs: o.fs || 12.5, rot: -90 });
+}
+/* 치마 표시 — 그 변을 따라 물결선을 그린다 (원본 도면과 같은 기호) */
+function _bdWave(x1, y1, x2, y2, amp, step) {
+  amp = amp || 4; step = step || 7;
+  const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy); if (len < 1) return '';
+  const ux = dx / len, uy = dy / len, nx = -uy, ny = ux;
+  let p = `M${x1.toFixed(1)},${y1.toFixed(1)}`;
+  for (let s = step, k = 1; s <= len; s += step, k++) {
+    const cx = x1 + ux * (s - step / 2) + nx * amp * (k % 2 ? 1 : -1);
+    const cy = y1 + uy * (s - step / 2) + ny * amp * (k % 2 ? 1 : -1);
+    p += ` Q${cx.toFixed(1)},${cy.toFixed(1)} ${(x1 + ux * s).toFixed(1)},${(y1 + uy * s).toFixed(1)}`;
+  }
+  return `<path d="${p}" fill="none" stroke="#111" stroke-width="0.9"/>`;
+}
+/* 볼 모양 — 금형 종류대로 */
+function _bdBowl(x, y, w, h, g, rpx) {
+  const st = ' fill="none" stroke="#111" stroke-width="1.1"';
+  if (g === 'oval') return `<ellipse cx="${(x + w / 2).toFixed(1)}" cy="${(y + h / 2).toFixed(1)}" rx="${(w / 2).toFixed(1)}" ry="${(h / 2).toFixed(1)}"${st}/>`;
+  if (g === 'round') {
+    if (Math.abs(w - h) < 2) return `<circle cx="${(x + w / 2).toFixed(1)}" cy="${(y + h / 2).toFixed(1)}" r="${(w / 2).toFixed(1)}"${st}/>`;
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="${(h / 2).toFixed(1)}" ry="${(h / 2).toFixed(1)}"${st}/>`;
+  }
+  if (g === 'drop') {   // 물방울 — 왼쪽이 둥글고 오른쪽으로 뾰족하게
+    const cy = y + h / 2, r = h / 2;
+    return `<path d="M${(x + r).toFixed(1)},${y.toFixed(1)} A${r.toFixed(1)},${r.toFixed(1)} 0 0 0 ${(x + r).toFixed(1)},${(y + h).toFixed(1)}`
+      + ` C${(x + w * 0.55).toFixed(1)},${(y + h).toFixed(1)} ${(x + w * 0.9).toFixed(1)},${(cy + h * 0.22).toFixed(1)} ${(x + w).toFixed(1)},${(cy + h * 0.06).toFixed(1)}`
+      + ` L${(x + w).toFixed(1)},${(cy - h * 0.06).toFixed(1)}`
+      + ` C${(x + w * 0.9).toFixed(1)},${(cy - h * 0.22).toFixed(1)} ${(x + w * 0.55).toFixed(1)},${y.toFixed(1)} ${(x + r).toFixed(1)},${y.toFixed(1)} Z"${st}/>`;
+  }
+  // square — 모서리 반지름은 «실치수 60mm» 기준. 화면 배율에 맞춰 들어온다(rpx)
+  const rr = Math.max(2, Math.min(rpx || 12, w / 3, h / 3));
+  return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="${rr.toFixed(1)}" ry="${rr.toFixed(1)}"${st}/>`;
+}
+
+/* ══ 도면 SVG 한 장 ══ lang: 'ko' | 'cn' ══ */
+function basinDrawSvg(d, lang) {
+  const cn = lang === 'cn';
+  const A = basinDrawLayout(d), M = A.M;
+  const Wc = 1170, Hc = 820;
+  const T = (k) => ({
+    order: cn ? '订单编号' : '주문번호', client: cn ? '客 户' : '거 래 처', mat: cn ? '材 料' : '재 료',
+    mold: cn ? '盆 型' : '볼 금형', spec: cn ? '规 格' : '규 격', memo: cn ? '备 注' : '비 고',
+    maker: cn ? '金岩坊建材' : '다우세라믹앤석재', no: cn ? '编 号' : '번 호',
+    cname: cn ? '客 户 名 称' : '거래처명', mname: cn ? '材 料 名 称' : '재료명',
+    draw: cn ? '制 图' : '제 도', odate: cn ? '下 单 日 期' : '발주일',
+    ir: cn ? '红 外 线' : '적외선', wj: cn ? '水 刀' : '워터젯', hand: cn ? '手 加 工' : '수가공',
+    qc: cn ? '验 收' : '검수', pack: cn ? '包 装 要 求' : '포장요구', ddate: cn ? '交 货 日 期' : '납기',
+    page: cn ? '第 1 页  共 1 页' : '1 / 1',
+    sign: cn ? '示：' : '표시:', tapL: cn ? '龙头孔' : '수전타공', noTap: cn ? '暗装龙头 · 不开孔' : '매립수전 · 타공 없음'
+  })[k];
+
+  let s = `<svg xmlns="http://www.w3.org/2000/svg" width="${Wc}" height="${Hc}" viewBox="0 0 ${Wc} ${Hc}">`;
+  s += `<rect width="${Wc}" height="${Hc}" fill="#fff"/>`;
+  s += `<rect x="8" y="8" width="${Wc - 16}" height="${Hc - 16}" fill="none" stroke="#111" stroke-width="1.6"/>`;
+
+  /* ── 오른쪽 공정칸 ── */
+  const sx = 1015, sw = Wc - 8 - sx;
+  const sideRows = [T('maker'), T('no'), T('cname'), T('mname'), T('draw'), T('odate'), T('ir'), T('wj'), T('hand'), T('qc'), T('pack'), T('ddate'), ''];
+  const shRow = (Hc - 16 - 26) / sideRows.length;
+  s += _bdL(sx, 8, sx, Hc - 8, { w: 1.2 });
+  sideRows.forEach((r, i) => {
+    const y = 8 + i * shRow;
+    if (i) s += _bdL(sx, y, Wc - 8, y);
+    if (r) s += _bdT(sx + 10, y + 20, r, { a: 'start', fs: 13.5 });
+  });
+  s += _bdL(sx, Hc - 8 - 26, Wc - 8, Hc - 8 - 26);
+  s += _bdT(sx + sw / 2, Hc - 8 - 9, T('page'), { fs: 11 });
+
+  /* ── 표제란 ── */
+  const tx = 613, tw = 1010 - 613, ty = 20, trh = 49;
+  const molds = `${cn ? M.cn : M.ko}${M.l}*${M.w}*${+d.moldD || 150}` + (A.n === 2 ? (cn ? ' ×2' : ' 2개') : '');
+  const rows = [
+    [T('order'), esc(d.orderNo || '')],
+    [T('client'), esc(cn ? (d.clientCn || '主恩石材') : (d.client || '다우세라믹앤석재'))],
+    [T('mat'), esc(cn ? basinStoneCn(d.stone) : (d.stone || ''))],
+    [T('mold'), molds],
+    [T('spec'), `${A.L}*${A.W}*${+d.H || 0}`],
+    [T('memo'), esc((d.note || '').trim() || (cn ? '平板下挂需过炉' : '평판 하부 매달기 · 가마 통과'))]
+  ];
+  s += `<rect x="${tx}" y="${ty}" width="${tw}" height="${trh * rows.length}" fill="none" stroke="#111" stroke-width="1.2"/>`;
+  const tcx = tx + 118;
+  s += _bdL(tcx, ty, tcx, ty + trh * rows.length, { w: 1.2 });
+  rows.forEach((r, i) => {
+    const y = ty + i * trh;
+    if (i) s += _bdL(tx, y, tx + tw, y);
+    s += _bdT(tx + 59, y + trh / 2 + 6, r[0], { fs: 15 });
+    s += _bdT(tcx + (tw - 118) / 2, y + trh / 2 + 6, r[1], { fs: 15 });
+  });
+
+  /* ── 평면도 ── */
+  const boxX = 150, boxY = 380, boxW = 740, boxH = 300;
+  const sc = Math.min(boxW / A.L, boxH / A.W, 0.42);
+  const pw = A.L * sc, ph = A.W * sc;
+  const px = boxX + (boxW - pw) / 2, py = boxY + (boxH - ph) / 2;
+  s += `<rect x="${px.toFixed(1)}" y="${py.toFixed(1)}" width="${pw.toFixed(1)}" height="${ph.toFixed(1)}" fill="none" stroke="#111" stroke-width="1.3"/>`;
+  // 치마 물결선
+  if (d.sf) s += _bdWave(px, py + ph, px + pw, py + ph);
+  if (d.sl) s += _bdWave(px, py, px, py + ph);
+  if (d.sr) s += _bdWave(px + pw, py, px + pw, py + ph);
+  // 볼 + 배수구 + 수전타공
+  const by = py + A.back * sc, bh = A.bw * sc, bwid = A.bl * sc;
+  A.xs.forEach(bx0 => {
+    const bx = px + bx0 * sc;
+    s += _bdBowl(bx, by, bwid, bh, M.g, 60 * sc);
+    const dcx = bx + bwid / 2, dcy = by + bh / 2;               // 배수구 (항상 볼 가운데)
+    s += `<circle cx="${dcx.toFixed(1)}" cy="${dcy.toFixed(1)}" r="6" fill="none" stroke="#111" stroke-width="1"/>`;
+    s += `<circle cx="${dcx.toFixed(1)}" cy="${dcy.toFixed(1)}" r="3.4" fill="none" stroke="#111" stroke-width="0.8"/>`;
+    if (d.tap) {                                                 // 수전타공 — 볼 뒤쪽 데크에
+      const gp = Math.max(0, +d.tapGap || 0);
+      const ty2 = by - gp * sc;
+      s += `<circle cx="${dcx.toFixed(1)}" cy="${ty2.toFixed(1)}" r="5" fill="none" stroke="#111" stroke-width="1.1"/>`;
+    }
+  });
+  // 위쪽 치수 — 전체 기장 + 구간
+  const dy1 = py - 62, dy2 = py - 30;
+  s += _bdDimH(px, px + pw, dy1, String(A.L), { fs: 14 });
+  const seg = [];
+  if (A.n === 2) seg.push([0, A.m], [A.m, A.m + A.bl], [A.m + A.bl, A.m + A.bl + A.gap], [A.m + A.bl + A.gap, A.m + A.bl + A.gap + A.bl], [A.L - A.right, A.L]);
+  else seg.push([0, A.m], [A.m, A.m + A.bl], [A.m + A.bl, A.L]);
+  seg.forEach(([a, b]) => { if (b - a > 0.5) s += _bdDimH(px + a * sc, px + b * sc, dy2, String(Math.round(b - a))); });
+  // 왼쪽 치수 — 전체 폭 / 뒤 / 볼 / 앞
+  s += _bdDimV(py, py + ph, px - 62, String(A.W), { fs: 14 });
+  if (A.back > 0.5) s += _bdDimV(py, by, px - 26, String(Math.round(A.back)));
+  s += _bdDimV(by, by + bh, px - 26, String(A.bw));
+  if (A.front > 0.5) s += _bdDimV(by + bh, py + ph, px - 26, String(Math.round(A.front)));
+  // 수전 위치 — 옆면에서 수전 중심까지
+  if (d.tap) {
+    const fx = px + (A.xs[0] + A.bl / 2) * sc, fy = by + bh * 0.62;
+    s += _bdL(px, fy, fx, fy) + _bdL(px, fy - 4, px, fy + 4) + _bdL(fx, fy - 4, fx, fy + 4);
+    s += _bdT((px + fx) / 2, fy - 4, String(Math.round(A.xs[0] + A.bl / 2)), { fs: 12.5 });
+    if (A.n === 2) {
+      const fx2 = px + (A.xs[1] + A.bl / 2) * sc, rr = px + pw;
+      s += _bdL(fx2, fy, rr, fy) + _bdL(fx2, fy - 4, fx2, fy + 4) + _bdL(rr, fy - 4, rr, fy + 4);
+      s += _bdT((fx2 + rr) / 2, fy - 4, String(Math.round(A.L - (A.xs[1] + A.bl / 2))), { fs: 12.5 });
+    }
+    // 타공 지름 + 볼 뒤 간격
+    const tcx2 = px + (A.xs[0] + A.bl / 2) * sc, tcy = by - (+d.tapGap || 0) * sc;
+    s += _bdL(tcx2 + 6, tcy, tcx2 + 54, tcy);
+    s += _bdT(tcx2 + 58, tcy + 4, 'Ø' + (+d.tapDia || 35), { a: 'start', fs: 12.5 });
+    if ((+d.tapGap || 0) > 0) s += _bdDimV(tcy, by, px + (A.xs[0] + A.bl / 2) * sc - 40, String(Math.round(+d.tapGap || 0)), { fs: 11.5 });
+  } else {
+    s += _bdT(px + pw / 2, py + ph + 40, T('noTap'), { fs: 13, c: '#b42318' });
+  }
+
+  /* ── 아래 범례: 물결선 = 치마, 단면과 높이 ── */
+  const lx = 700, ly = 742;
+  s += _bdWave(lx, ly, lx + 78, ly);
+  s += _bdT(lx + 92, ly + 6, T('sign'), { a: 'start', fs: 15 });
+  const gx = lx + 150, gy = ly - 34, gw = 96, gh = 62, th = 11;
+  s += `<defs><pattern id="bdh" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="#fff"/><line x1="0" y1="0" x2="0" y2="6" stroke="#111" stroke-width="1"/></pattern></defs>`;
+  s += `<path d="M${gx},${gy} h${gw} v${th} h-${gw - th} v${gh - th} h-${th} Z" fill="url(#bdh)" stroke="#111" stroke-width="1"/>`;
+  s += _bdL(gx + gw + 8, gy, gx + gw + 8, gy + gh, { d: '4 3' });
+  s += _bdDimV(gy, gy + gh, gx + gw + 26, String(+d.H || 0), { fs: 12.5 });
+  s += _bdT(lx + 92, ly + 26, basinSkirtText(d, lang), { a: 'start', fs: 13, w: 700 });
+
+  s += '</svg>';
+  return s;
+}
+
+/* ── 도면 편집 화면 ───────────────────────────────────────────── */
+let _bdCur = null, _bdBasinId = '';
+function basinDrawsOf(b) { return (b && Array.isArray(b.draws)) ? b.draws : []; }
+function openBasinDraw(basinId, drawId) {
+  if (isCustomerRole()) { toast('권한이 없습니다'); return; }
+  const b = (state.basins || []).find(x => x.id === basinId) || null;
+  _bdBasinId = basinId || '';
+  const old = b ? basinDrawsOf(b).find(x => x.id === drawId) : null;
+  _bdCur = old ? Object.assign(basinDrawNew(), old) : basinDrawNew();
+  if (b && !old) {   // 새 도면은 발주 건의 값을 미리 채워 준다
+    const it = (basinItems(b) || [])[0] || {};
+    _bdCur.stone = it.stone || b.stone || '';
+    _bdCur.client = b.vendor || '';
+    _bdCur.orderNo = it.orderNo || b.orderNo || '';
+  }
+  const inp = 'width:100%;font-size:15px;padding:8px 10px;border:1.5px solid var(--bd2);border-radius:9px';
+  const moldOpts = BASIN_MOLD_GROUPS.map(g => `<optgroup label="${g.ko} ${g.cn}">`
+    + BASIN_MOLDS.filter(m => m.g === g.g).map(m => `<option value="${basinMoldKey(m)}" ${_bdCur.mold === basinMoldKey(m) ? 'selected' : ''}>${m.l}×${m.w}</option>`).join('')
+    + '</optgroup>').join('');
+  const stoneOpts = '<option value="">— 선택 —</option>' + BASIN_STONES.map(st =>
+    `<option value="${esc(st.k)}" ${_bdCur.stone === st.k ? 'selected' : ''}>${esc(st.k)}${st.c ? ' · ' + esc(st.c) : ''}</option>`).join('');
+  const ck = (id, on, label) => `<label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:14px;font-weight:600"><input type="checkbox" id="${id}" ${on ? 'checked' : ''} oninput="basinDrawPreview()" style="width:18px;height:18px">${label}</label>`;
+  openModal(`
+    <div class="sheet-h"><h3><i class="ti ti-ruler-2"></i>세면대 도면</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:11.5px;color:var(--t2);background:var(--soft);border-radius:9px;padding:9px 11px;margin:0 2px 11px;line-height:1.6">
+      중국 공장에서 보내주는 도면과 <b>같은 형식</b>으로 그립니다. <b>중문본</b>을 그대로 보내면 번역 없이 읽힙니다.<br>
+      <span style="color:var(--t3)">앞뒤좌우 띄움값을 <b>비워 두면 가운데</b>로 놓입니다.</span>
+    </div>
+    <div class="frm">
+      <div class="fld"><label>기장 (길이)<span class="req">*</span></label><input id="bd-L" inputmode="numeric" value="${esc(_bdCur.L)}" oninput="basinDrawPreview()" style="${inp}"></div>
+      <div class="fld"><label>폭<span class="req">*</span></label><input id="bd-W" inputmode="numeric" value="${esc(_bdCur.W)}" oninput="basinDrawPreview()" style="${inp}"></div>
+      <div class="fld"><label>치마 높이</label><input id="bd-H" inputmode="numeric" value="${esc(_bdCur.H)}" oninput="basinDrawPreview()" style="${inp}"></div>
+      <div class="fld"><label>재료 (석종)</label><select id="bd-stone" onchange="basinDrawPreview()" style="${inp}">${stoneOpts}</select></div>
+      <div class="fld full" style="background:#fff8e6;border:1.5px solid #f0d48a;border-radius:11px;padding:10px 12px">
+        <label style="color:#8a5a00">치마 있는 면 <span style="font-weight:500;color:#a07a2a">— 고른 면에 물결선이 그려집니다</span></label>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:6px">
+          ${ck('bd-sl', _bdCur.sl, '좌측')}${ck('bd-sr', _bdCur.sr, '우측')}${ck('bd-sf', _bdCur.sf, '전면')}
+        </div>
+      </div>
+      <div class="fld"><label>볼 금형<span class="req">*</span></label><select id="bd-mold" onchange="basinDrawPreview()" style="${inp}">${moldOpts}</select></div>
+      <div class="fld"><label>볼 개수</label><select id="bd-bowls" onchange="basinDrawPreview()" style="${inp}"><option value="1" ${+_bdCur.bowls !== 2 ? 'selected' : ''}>1개</option><option value="2" ${+_bdCur.bowls === 2 ? 'selected' : ''}>2개 (쌍볼)</option></select></div>
+      <div class="fld"><label>금형 깊이</label><input id="bd-moldD" inputmode="numeric" value="${esc(_bdCur.moldD)}" oninput="basinDrawPreview()" style="${inp}"></div>
+      <div class="fld full"><label>볼 위치 띄움 <span style="color:var(--t3);font-weight:500">(비우면 가운데)</span></label>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:7px">
+          <input id="bd-offL" inputmode="numeric" placeholder="좌측 여백" value="${esc(_bdCur.offL)}" oninput="basinDrawPreview()" style="${inp}">
+          <input id="bd-offR" inputmode="numeric" placeholder="우측 여백" value="${esc(_bdCur.offR)}" oninput="basinDrawPreview()" style="${inp}">
+          <input id="bd-offB" inputmode="numeric" placeholder="뒤쪽 여백" value="${esc(_bdCur.offB)}" oninput="basinDrawPreview()" style="${inp}">
+          <input id="bd-offF" inputmode="numeric" placeholder="앞쪽 여백" value="${esc(_bdCur.offF)}" oninput="basinDrawPreview()" style="${inp}">
+          <input id="bd-offMid" inputmode="numeric" placeholder="볼 사이 (쌍볼)" value="${esc(_bdCur.offMid)}" oninput="basinDrawPreview()" style="${inp}">
+        </div>
+      </div>
+      <div class="fld full" style="background:#eef4ff;border:1.5px solid #c3d6f5;border-radius:11px;padding:10px 12px">
+        <label style="color:#1b4fb0">수전 타공</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px">
+          <select id="bd-tap" onchange="basinDrawPreview()" style="flex:1.4;min-width:180px;${inp}">
+            <option value="1" ${_bdCur.tap ? 'selected' : ''}>타공 있음</option>
+            <option value="0" ${!_bdCur.tap ? 'selected' : ''}>매립수전 — 타공 없음</option>
+          </select>
+          <input id="bd-tapDia" inputmode="numeric" value="${esc(_bdCur.tapDia)}" oninput="basinDrawPreview()" placeholder="지름" style="flex:1;min-width:92px;${inp}">
+          <input id="bd-tapGap" inputmode="numeric" value="${esc(_bdCur.tapGap)}" oninput="basinDrawPreview()" placeholder="볼 뒤 간격" style="flex:1;min-width:110px;${inp}">
+        </div>
+        <div style="font-size:11px;color:#1b4fb0;margin-top:5px">지름(기본 35) · 볼 뒤쪽 모서리에서 수전 중심까지의 간격</div>
+      </div>
+      <div class="fld full"><label>비고 <span style="color:var(--t3);font-weight:500">(비우면 「平板下挂需过炉」)</span></label><input id="bd-note" lang="ko" value="${esc(_bdCur.note)}" oninput="basinDrawPreview()" style="${inp}"></div>
+    </div>
+    <div style="display:flex;gap:7px;margin:4px 2px 8px;flex-wrap:wrap">
+      <button class="btn btn-sm ${(_bdCur._lang || 'ko') === 'ko' ? 'btn-pri' : ''}" id="bd-tab-ko" onclick="basinDrawLang('ko')">한글본</button>
+      <button class="btn btn-sm ${_bdCur._lang === 'cn' ? 'btn-pri' : ''}" id="bd-tab-cn" onclick="basinDrawLang('cn')">중문본 (中文)</button>
+      <span style="flex:1"></span>
+      <button class="btn btn-sm" onclick="basinDrawPng('ko')"><i class="ti ti-download"></i>한글본 PNG</button>
+      <button class="btn btn-sm" onclick="basinDrawPng('cn')"><i class="ti ti-download"></i>중문본 PNG</button>
+    </div>
+    <div id="bd-prev" style="overflow:auto;border:1px solid var(--bd2);border-radius:10px;background:#fff;padding:6px"></div>
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">닫기</button>${basinId ? `<button class="btn btn-pri" style="flex:2" onclick="basinDrawSave()"><i class="ti ti-check"></i>이 발주 건에 저장</button>` : ''}</div>`);
+  basinDrawPreview();
+}
+function basinDrawLang(v) {
+  _bdCur._lang = v;
+  const a = el('bd-tab-ko'), b = el('bd-tab-cn');
+  if (a) a.classList.toggle('btn-pri', v === 'ko');
+  if (b) b.classList.toggle('btn-pri', v === 'cn');
+  basinDrawPreview();
+}
+/* 화면 입력 → 도면 객체 */
+function basinDrawRead() {
+  const g = id => { const e2 = el(id); return e2 ? e2.value : ''; };
+  const d = _bdCur || (_bdCur = basinDrawNew());
+  d.L = _numv(g('bd-L')) || 0; d.W = _numv(g('bd-W')) || 0; d.H = _numv(g('bd-H')) || 0;
+  d.stone = g('bd-stone'); d.mold = g('bd-mold') || d.mold;
+  d.bowls = +g('bd-bowls') === 2 ? 2 : 1; d.moldD = _numv(g('bd-moldD')) || 150;
+  d.sl = !!(el('bd-sl') && el('bd-sl').checked); d.sr = !!(el('bd-sr') && el('bd-sr').checked); d.sf = !!(el('bd-sf') && el('bd-sf').checked);
+  ['offL', 'offR', 'offF', 'offB', 'offMid'].forEach(k => { d[k] = String(g('bd-' + k) || '').trim(); });
+  d.tap = g('bd-tap') !== '0'; d.tapDia = _numv(g('bd-tapDia')) || 35; d.tapGap = _numv(g('bd-tapGap')) || 0;
+  d.note = g('bd-note') || '';
+  return d;
+}
+function basinDrawPreview() {
+  const d = basinDrawRead(); const box = el('bd-prev'); if (!box) return;
+  const A = basinDrawLayout(d);
+  const bad = [];
+  if (!(A.L > 0) || !(A.W > 0)) bad.push('기장·폭을 입력하세요');
+  if (A.bl * A.n > A.L) bad.push(`볼이 판보다 깁니다 (볼 ${A.bl}${A.n === 2 ? '×2' : ''} > 기장 ${A.L})`);
+  if (A.bw > A.W) bad.push(`볼이 판보다 넓습니다 (볼 ${A.bw} > 폭 ${A.W})`);
+  if (A.back < 0 || A.front < 0) bad.push('앞뒤 띄움값이 판을 벗어납니다');
+  if (A.m < 0 || A.gap < 0) bad.push('좌우·사이 띄움값이 판을 벗어납니다');
+  if (bad.length) { box.innerHTML = `<div style="padding:22px;text-align:center;color:var(--red-t);font-size:13.5px;line-height:1.8"><i class="ti ti-alert-triangle"></i> ${bad.map(esc).join('<br>')}</div>`; return; }
+  box.innerHTML = `<div style="min-width:820px">${basinDrawSvg(d, _bdCur._lang === 'cn' ? 'cn' : 'ko')}</div>`;
+}
+/* SVG → PNG 내려받기 (위챗·카톡으로 바로 보낼 수 있게) */
+function basinDrawPng(lang) {
+  const d = basinDrawRead();
+  const svg = basinDrawSvg(d, lang === 'cn' ? 'cn' : 'ko');
+  const img = new Image();
+  const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  img.onload = function () {
+    const S = 2;   // 2배로 떠서 글씨가 또렷하게
+    const cv = document.createElement('canvas'); cv.width = 1170 * S; cv.height = 820 * S;
+    const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height);
+    cx.drawImage(img, 0, 0, cv.width, cv.height);
+    URL.revokeObjectURL(url);
+    cv.toBlob(function (bb) {
+      const a = document.createElement('a'); a.href = URL.createObjectURL(bb);
+      const nm = [(d.client || '세면대'), d.L + 'x' + d.W, lang === 'cn' ? '中文' : '한글', todayStr()].join('_');
+      a.download = nm + '.png'; document.body.appendChild(a); a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 200);
+      toast('도면 PNG 저장됨 · ' + (lang === 'cn' ? '중문본' : '한글본'));
+    }, 'image/png');
+  };
+  img.onerror = function () { URL.revokeObjectURL(url); toast('도면을 그림으로 바꾸지 못했습니다'); };
+  img.src = url;
+}
+async function basinDrawSave() {
+  if (!_bdBasinId) { toast('발주 건이 없습니다'); return; }
+  const b = (state.basins || []).find(x => x.id === _bdBasinId); if (!b) { toast('발주 건을 찾을 수 없습니다'); return; }
+  const d = basinDrawRead();
+  const row = Object.assign({}, d, { at: Date.now(), by: (me && me.name) || '' });
+  const list = basinDrawsOf(b).slice();
+  const i = list.findIndex(x => x.id === row.id);
+  if (i >= 0) list[i] = row; else list.push(row);
+  await Store.update('basins', _bdBasinId, { draws: list });
+  toast('도면 저장됨 (' + list.length + '장)');
+  closeModal();
+}
+async function basinDrawDel(basinId, drawId) {
+  const b = (state.basins || []).find(x => x.id === basinId); if (!b) return;
+  if (!confirm('이 도면을 지울까요?')) return;
+  await Store.update('basins', basinId, { draws: basinDrawsOf(b).filter(x => x.id !== drawId) });
+  toast('도면 삭제됨');
+}
+/* 발주 상세에 붙는 도면 목록 */
+function basinDrawListHtml(b) {
+  const ds = basinDrawsOf(b);
+  return `<div class="sec-label" style="margin-top:10px"><i class="ti ti-ruler-2"></i>세면대 도면 ${ds.length ? `<span style="color:var(--gd)">${ds.length}</span>` : ''}
+      <button class="btn btn-sm btn-pri" style="float:right" onclick="openBasinDraw('${b.id}')"><i class="ti ti-plus"></i>도면 그리기</button></div>
+    ${ds.length ? ds.map(d => {
+    const M = basinMoldOf(d.mold);
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--bd2);border-radius:10px;margin-bottom:6px">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:13.5px">${esc(d.L)}×${esc(d.W)}×${esc(d.H)} <span style="font-weight:500;color:var(--t3)">· ${esc(M.ko)} ${M.l}×${M.w}${+d.bowls === 2 ? ' ×2' : ''}</span></div>
+        <div style="font-size:11.5px;color:var(--t3)">${esc(basinSkirtText(d, 'ko'))} · ${d.tap ? '수전타공 Ø' + esc(d.tapDia) : '매립수전(타공X)'}${d.stone ? ' · ' + esc(d.stone) : ''}</div>
+      </div>
+      <button class="btn btn-sm" onclick="openBasinDraw('${b.id}','${d.id}')"><i class="ti ti-edit"></i></button>
+      <button class="btn btn-sm" style="color:var(--red-t)" onclick="basinDrawDel('${b.id}','${d.id}')"><i class="ti ti-trash"></i></button>
+    </div>`; }).join('')
+      : '<div style="font-size:12px;color:var(--t3);padding:8px 2px">아직 도면이 없습니다 — 「도면 그리기」로 만드세요.</div>'}`;
+}
+
 const BASIN_BOWLS = ['중방볼', '좌방볼', '우방볼', '타원볼', '물방울볼', '기둥볼', '무봉(심리스)', '평판', '기타'];
 function basinStoneMeta(name) { return BASIN_STONES.find(s => s.k === name) || null; }
 const BASIN_FILTERS = [
@@ -12582,6 +13015,8 @@ function openBasinForm(id, pre) {
       <div class="fld"><label>진행 단계</label><select id="b-stage">${BASIN_STAGES.map(st => `<option ${(v.stage || '견적') === st ? 'selected' : ''}>${st}</option>`).join('')}</select></div>
       <div class="fld full"><label>현장 주소 <span style="color:var(--t3);font-weight:500">(출고증에 표시)</span></label><input id="b-address" lang="ko" placeholder="현장 주소지" value="${esc(v.address || '')}"></div>
       <div class="fld full"><label>비고</label><input id="b-note" lang="ko" placeholder="선택" value="${esc(v.note || '')}"></div>
+      ${b ? `<div class="fld full">${basinDrawListHtml(b)}</div>`
+      : `<div class="fld full"><div style="font-size:12px;color:var(--t2);background:var(--soft);border-radius:9px;padding:9px 11px;line-height:1.6"><i class="ti ti-ruler-2"></i> <b>세면대 도면</b>은 이 발주를 <b>저장한 뒤</b> 다시 열면 이 자리에서 그릴 수 있습니다.<br><button type="button" class="btn btn-sm" style="margin-top:6px" onclick="openBasinDraw('')"><i class="ti ti-ruler-2"></i>먼저 그려보기 (저장 없이)</button></div></div>`}
       <div class="fld full" style="font-size:11.5px;color:var(--t3);line-height:1.5;background:var(--soft);border-radius:9px;padding:9px 11px"><i class="ti ti-info-circle"></i> 납기 약 30~33일 · 세면대 1개당 브라켓 1SET 포함(팝업·수전·트랩 별도) · 발주 후 수정 불가</div>
     </div>
     ${b && basinStageIndex(b) >= 4 ? `<div style="padding:0 16px 10px">${(b.stage || '') === '완료'
