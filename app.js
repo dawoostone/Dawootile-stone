@@ -12696,7 +12696,7 @@ function _openDrawFor(coll, docId, drawId) {
     </div>
     <div id="bd-prev" style="border:1px solid var(--bd2);border-radius:10px;background:#fff;padding:6px"></div>
     <div style="font-size:11px;color:var(--t3);padding:5px 4px 0">미리보기는 창 크기에 맞춰 줄여서 보여줍니다 — 내려받는 PNG는 원래 크기(2340×1640)로 또렷합니다.</div>
-    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">닫기</button>${basinId ? `<button class="btn btn-pri" style="flex:2" onclick="basinDrawSave()"><i class="ti ti-check"></i>이 발주 건에 저장</button>` : ''}</div>`);
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">닫기</button>${_bdDocId ? `<button class="btn btn-pri" style="flex:2" onclick="basinDrawSave()"><i class="ti ti-check"></i>${coll === 'quotes' ? '이 견적서에 저장' : '이 발주 건에 저장'}</button>` : ''}</div>`);
   basinDrawPreview();
 }
 function basinDrawLang(v) {
