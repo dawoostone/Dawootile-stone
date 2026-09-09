@@ -12675,7 +12675,8 @@ function openBasinDraw(basinId, drawId) {
       <button class="btn btn-sm" onclick="basinDrawPng('ko')"><i class="ti ti-download"></i>한글본 PNG</button>
       <button class="btn btn-sm" onclick="basinDrawPng('cn')"><i class="ti ti-download"></i>중문본 PNG</button>
     </div>
-    <div id="bd-prev" style="overflow:auto;border:1px solid var(--bd2);border-radius:10px;background:#fff;padding:6px"></div>
+    <div id="bd-prev" style="border:1px solid var(--bd2);border-radius:10px;background:#fff;padding:6px"></div>
+    <div style="font-size:11px;color:var(--t3);padding:5px 4px 0">미리보기는 창 크기에 맞춰 줄여서 보여줍니다 — 내려받는 PNG는 원래 크기(2340×1640)로 또렷합니다.</div>
     <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">닫기</button>${basinId ? `<button class="btn btn-pri" style="flex:2" onclick="basinDrawSave()"><i class="ti ti-check"></i>이 발주 건에 저장</button>` : ''}</div>`);
   basinDrawPreview();
 }
@@ -12709,7 +12710,10 @@ function basinDrawPreview() {
   if (A.back < 0 || A.front < 0) bad.push('앞뒤 띄움값이 판을 벗어납니다');
   if (A.m < 0 || A.gap < 0) bad.push('좌우·사이 띄움값이 판을 벗어납니다');
   if (bad.length) { box.innerHTML = `<div style="padding:22px;text-align:center;color:var(--red-t);font-size:13.5px;line-height:1.8"><i class="ti ti-alert-triangle"></i> ${bad.map(esc).join('<br>')}</div>`; return; }
-  box.innerHTML = `<div style="min-width:820px">${basinDrawSvg(d, _bdCur._lang === 'cn' ? 'cn' : 'ko')}</div>`;
+  // 미리보기는 창 너비에 맞춰 줄여서 «한눈에» 보이게 한다 (내려받는 PNG는 원래 크기 그대로)
+  const svg = basinDrawSvg(d, _bdCur._lang === 'cn' ? 'cn' : 'ko')
+    .replace(' width="1170" height="820"', ' width="100%" style="display:block;height:auto"');
+  box.innerHTML = svg;
 }
 /* SVG → PNG 내려받기 (위챗·카톡으로 바로 보낼 수 있게) */
 function basinDrawPng(lang) {
