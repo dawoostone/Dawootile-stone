@@ -1146,7 +1146,7 @@ function renderClientDetail() {
     <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">
       <div class="stat"><div class="v" style="font-size:18px">${fmtWon(st.total)}</div><div class="l">총 매출</div></div>
       <div class="stat"><div class="v" style="font-size:18px;color:var(--gd)">${fmtWon(st.paidSum)}</div><div class="l">입금액</div></div>
-      <div class="stat"><div class="v" style="font-size:18px;color:${st.unpaid > 0 ? 'var(--red-t)' : ''}">${fmtWon(st.unpaid)}</div><div class="l">미수금</div></div>
+      <div class="stat"><div class="v" style="font-size:18px;color:${st.unpaid > 0 ? 'var(--red-t)' : ''}">${fmtWon(st.unpaid)}</div><div class="l">미수금${(+clientMoneyOf((c.value || '').trim()).opening || 0) ? ' <span style="color:#8a5a00">(이월 포함)</span>' : ''}</div></div>
       <div class="stat"><div class="v">${st.noTax}</div><div class="l">계산서 미발행</div></div>
     </div>
     <div class="card" style="margin-bottom:12px;padding:12px 16px">
@@ -1160,6 +1160,7 @@ function renderClientDetail() {
       </div>
       <div style="font-size:11px;color:var(--t3);margin-top:6px">견적서에서 <b>영업담당자로 표기</b>를 켜면 견적 담당자 대신 이 담당자의 이름·연락처가 표시됩니다.</div>
     </div>
+    ${clientOpeningCardHtml(c)}
     <div class="card" style="margin-bottom:12px;padding:0;overflow:hidden">
       <div onclick="const _b=el('cb-body');_b.style.display=(_b.style.display==='none'?'block':'none')" style="cursor:pointer;padding:13px 16px;display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0;font-size:15px"><i class="ti ti-id-badge-2"></i> 사업자 정보 · 유형 확인</h3><i class="ti ti-chevron-down" style="color:var(--t3)"></i></div>
       <div id="cb-body" style="display:none;padding:0 16px 14px">
@@ -7277,6 +7278,9 @@ function ledgerRows(client, cat) {
   if (!qs.length && !(state.banktx || []).some(t => txIsIn(t) && txClientOf(t) === client)) return [];
   const qid = {}; qs.forEach(q => qid[q.id] = q);
   const rows = [];
+  /* ★ 이월 잔액 — 앱 이전의 남은 미수를 원장 맨 위 한 줄로 (분류별 보기에서는 뺀다) */
+  const _ob = CAT ? null : clientOpening(client);
+  if (_ob) rows.push({ d: _ob.date || '2000-01-01', k: 'open', amt: _ob.amt, memo: _ob.memo });
   qs.forEach(q => {
     const tot = Math.round(+q.total || 0);
     let amt = tot, taxA = (+q.taxTotal || tot || 0), mixed = false;
@@ -7297,10 +7301,10 @@ function ledgerRows(client, cat) {
     if (!txIsIn(t) || txClientOf(t) !== client) return;
     rows.push({ d: t.date || '', k: 'pay', amt: txMoney(t), src: t.manual ? 'manual' : 'bank', payer: t.payer || '', bankNm: t.bankNm || '', tid: t.id });
   });
-  const ord = { sale: 0, tax: 1, pay: 2 };
+  const ord = { open: -1, sale: 0, tax: 1, pay: 2 };
   rows.sort((a, b) => (a.d || '').localeCompare(b.d || '') || (ord[a.k] - ord[b.k]) || (a.docNo || '').localeCompare(b.docNo || ''));
   let bal = 0;
-  rows.forEach(r => { if (r.k === 'sale') bal += r.amt; else if (r.k === 'pay') bal -= r.amt; r.bal = bal; });
+  rows.forEach(r => { if (r.k === 'sale' || r.k === 'open') bal += r.amt; else if (r.k === 'pay') bal -= r.amt; r.bal = bal; });
   return rows;
 }
 /* 이 거래처로 들어온 통장 입금 전부 (최신순) */
@@ -7339,14 +7343,108 @@ function ledgerAgg() {
        (앱에 견적을 안 올린 거래의 대금이 통장에 섞여 있어서 그렇다 — 실측 248곳 중 181곳)
      견적 한 장이 결제됐는지는 «오래된 견적부터 채운» 결과일 뿐, 저장하지 않는다.
    ══════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════
+   ★★ 거래처 «이월 잔액» (2026-09-10)
+   ─────────────────────────────────────────────────────────
+   사용자: *"동진엠에스 잔액 초기화하고 수기로 잡아야할 듯 7월분 8월에 결제"*
+
+   앱에 견적을 올리기 «전»의 남은 미수를 거래처 문서에 한 줄로 적어 둔다.
+     clients.openingBal  = 12340656     (그 날 기준 받을 돈)
+     clients.openingDate = '2026-07-31' (기준일)
+
+   ★ 매출 통계·부가세·계산서 집계에는 **절대 안 들어간다.**
+     `o.sale` 에 더하지 않고 `o.opening` 에 따로 담아서 **미수 계산에만** 쓴다.
+     (그래서 분류별 매출·홈택스 대조·계산서 미발행 숫자가 하나도 안 흔들린다)
+
+   ★ 배분 순서에서 **제일 먼저** 채운다 — 옛날 돈부터 갚는 게 맞으니까.
+     날짜 규칙(견적일 이후 입금만)도 그대로 적용된다: openingDate 이후 입금만 붙는다.
+
+   실측 (동진엠에스, 2026-09-10):
+     이월 12,340,656 (사장님 엑셀 원장 7월 누계) + 앱 매출 14,065,700 − 입금 23,231,956
+     = 미수 3,174,400.  이월을 안 넣었을 때 앱이 보여주던 9,023,960 은
+     8월 입금 1,819만이 갈 곳을 못 찾아 «선입금»으로 떠 있어서 생긴 차이였다(과입 5,849,560).
+   ══════════════════════════════════════════════════════════ */
+function clientOpening(client) {
+  const c = (state.clients || []).find(x => _normName(x.value) === _normName(client));
+  const v = Math.round(+((c && c.openingBal) || 0));
+  if (!c || !(v > 0)) return null;
+  return { amt: v, date: String(c.openingDate || ''), id: c.id, memo: String(c.openingMemo || '') };
+}
+/* 이월 잔액 저장 — 거래처 상세에서 부른다 */
+async function saveClientOpening(cid) {
+  const c = (state.clients || []).find(x => x.id === cid); if (!c) return;
+  const amt = Math.round(_numv(el('ob-amt') && el('ob-amt').value));
+  const date = (el('ob-date') && el('ob-date').value || '').trim();
+  const memo = (el('ob-memo') && el('ob-memo').value || '').trim();
+  if (amt > 0 && !date) { toast('기준일을 넣어주세요 — 이 날짜 이후 입금만 이월에 붙습니다'); return; }
+  try {
+    const prepay = !!(el('ob-prepay') && el('ob-prepay').checked);
+    await Store.update('clients', cid, { openingBal: amt > 0 ? amt : 0, openingDate: amt > 0 ? date : '', openingMemo: amt > 0 ? memo : '', prepayOk: prepay });
+    moneyBust();
+    toast((amt > 0 ? ('이월 잔액 ' + fmtWon(amt) + '원 저장됨') : '이월 잔액을 지웠습니다') + (prepay ? ' · 선입금 인정' : ''));
+  } catch (e) { toast('저장 실패: ' + ((e && e.message) || e)); }
+  setTimeout(renderClients, 300);
+}
+/* 거래처 상세에 붙는 이월 잔액 입력 카드 */
+function clientOpeningCardHtml(c) {
+  const ob = clientOpening(c.value);
+  const M = clientMoneyOf((c.value || '').trim());
+  const inp = 'font-size:14px;padding:8px 10px;border:1.5px solid var(--bd2);border-radius:9px;width:100%';
+  return `<div class="card" style="margin-bottom:12px;padding:12px 16px">
+    <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:4px">
+      <h3 style="margin:0;font-size:14px;white-space:nowrap"><i class="ti ti-history"></i> 이월 잔액</h3>
+      <span style="font-size:11.5px;color:var(--t3)">앱에 견적을 올리기 «전»의 남은 미수를 여기 적습니다</span>
+    </div>
+    <div style="font-size:11.5px;color:var(--t3);line-height:1.6;margin-bottom:9px">
+      매출 통계·부가세·계산서 집계에는 <b>들어가지 않습니다</b> — <b>미수 계산에만</b> 씁니다.
+      기준일 <b>이후</b>에 들어온 입금부터 이 이월을 먼저 갚습니다.
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+      <div class="fld" style="flex:1.4;min-width:150px;margin:0"><label>이월 잔액 (원)</label>
+        <input id="ob-amt" inputmode="numeric" value="${ob ? ob.amt : ''}" placeholder="0" style="${inp};text-align:right"></div>
+      <div class="fld" style="flex:1;min-width:140px;margin:0"><label>기준일</label>
+        <input type="date" id="ob-date" value="${esc(ob ? ob.date : '')}" style="${inp}"></div>
+      <div class="fld" style="flex:1.6;min-width:160px;margin:0"><label>비고 <span style="color:var(--t3);font-weight:500">(선택)</span></label>
+        <input id="ob-memo" lang="ko" value="${esc(ob ? ob.memo : '')}" placeholder="예: 엑셀 원장 7월 누계" style="${inp}"></div>
+      <button class="btn btn-pri" style="flex:none" onclick="saveClientOpening('${c.id}')"><i class="ti ti-check"></i>저장</button>
+    </div>
+    <label style="display:flex;align-items:flex-start;gap:9px;margin-top:10px;padding:9px 11px;background:var(--soft);border-radius:9px;cursor:pointer">
+      <input type="checkbox" id="ob-prepay" ${c.prepayOk ? 'checked' : ''} style="width:18px;height:18px;flex:none;margin-top:1px;accent-color:var(--gd)">
+      <span style="flex:1;min-width:0;font-size:12.5px;line-height:1.6"><b>선입금 인정</b> — 이 거래처는 <b>먼저 받고 나중에 파는</b> 경우가 있습니다
+        <div style="font-size:11.5px;color:var(--t3);margin-top:2px">평소에는 «견적일 이후에 들어온 입금»만 그 견적 대금으로 봅니다.
+        이걸 켜면 그 규칙을 <b>이 거래처만</b> 끄고, 먼저 들어온 돈(과입금)도 뒤에 나온 견적에 붙습니다.</div></span>
+    </label>
+    ${ob ? `<div style="margin-top:9px;background:var(--soft);border-radius:9px;padding:9px 12px;font-size:12.5px;line-height:1.75">
+      <div>이월 <b>${fmtWon(ob.amt)}</b> <span style="color:var(--t3)">(${esc(ob.date || '기준일 없음')})</span>
+        + 앱 매출 <b>${fmtWon(M.sale)}</b> − 입금 <b style="color:var(--gd)">${fmtWon(M.paid)}</b>
+        = 미수 <b style="color:${M.rem > 0 ? 'var(--red-t)' : 'var(--gd)'}">${fmtWon(M.rem)}</b></div>
+      ${M.extra ? `<div style="color:var(--amber-t)">아직 어느 건에도 안 붙은 돈 <b>${fmtWon(M.extra)}</b>원</div>` : ''}
+      ${c.prepayOk ? '<div style="color:#0f766e"><i class="ti ti-check"></i> 선입금 인정 — 먼저 들어온 돈도 뒤 견적에 붙습니다</div>' : ''}
+    </div>` : ''}
+  </div>`;
+}
 let _cmCache = null, _qpCache = null, _cmAt = 0;
 /* 자료가 바뀌면 다시 계산 — 거래처 이름 목록·입금자 추정 결과도 같이 버린다 */
 function moneyBust() { _cmCache = null; _qpCache = null; _lcNames = null; _tcIx = null; }
 function _moneyBuild() {
   if (_cmCache && _qpCache && Date.now() - _cmAt < 3000) return;   // 자료가 바뀌면 moneyBust() 가 바로 지우므로 오래 들고 있어도 안전
   const M = {}, P = {};
-  const get = c => M[c] || (M[c] = { sale: 0, paid: 0, applied: 0, rem: 0, extra: 0, qn: 0 });
+  const get = c => M[c] || (M[c] = { sale: 0, paid: 0, applied: 0, rem: 0, extra: 0, qn: 0, opening: 0 });
   const byC = {};
+  /* ★ 이월 잔액 — 앱 이전의 남은 미수. sale 에 더하지 않고 opening 에 따로 담는다
+     (매출 통계·부가세·계산서 집계를 흔들지 않기 위해서다). 미수 계산에만 쓴다. */
+  const OB = {}, PP = {};
+  (state.clients || []).forEach(c => {
+    const nm = (c.value || '').trim(); if (!nm) return;
+    /* ★ 선입금 인정 — 이 거래처는 «먼저 받고 나중에 파는» 경우가 있다.
+       켜면 «견적일 이후 입금만» 규칙을 이 거래처에만 끈다.
+       (동진엠에스처럼 8/12에 과입하고 8/13부터 산 경우, 안 켜면 과입금이 앞으로 못 넘어간다) */
+    if (c.prepayOk) PP[nm] = 1;
+    const v = Math.round(+c.openingBal || 0);
+    if (!(v > 0)) return;
+    OB[nm] = { amt: v, d: String(c.openingDate || '') };
+    get(nm).opening = v;
+  });
   (state.quotes || []).forEach(q => {
     if (!q.ordered) return; const c = (q.client || '').trim(); if (!c) return;
     const o = get(c); o.sale += Math.round(+q.total || 0); o.qn++;
@@ -7369,28 +7467,32 @@ function _moneyBuild() {
     const o = M[c];
     const ins = (insC[c] || []).slice().sort((a, b) => a.d.localeCompare(b.d));
     let applied = 0;
-    (byC[c] || []).slice()
+    /* 채울 순서: ★ 이월 잔액이 제일 먼저, 그 다음 오래된 견적부터 */
+    const line = (byC[c] || []).slice()
       .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.docNo || '').localeCompare(b.docNo || ''))
-      .forEach(q => {
-        const tot = Math.round(+q.total || 0); const qd = String(q.date || '');
-        let need = tot, got = 0;
-        for (const i of ins) {
-          if (need <= 0) break;
-          if (i.left <= 0) continue;
-          if (i.d && qd && i.d < qd) continue;   // 견적보다 먼저 들어온 돈은 이 견적 대금이 아니다
-          const use = Math.min(need, i.left); i.left -= use; need -= use; got += use;
-        }
-        P[q.id] = got; applied += got;
-      });
-    o.applied = applied;                        // 실제로 견적에 붙은 돈
-    o.rem = Math.max(0, o.sale - applied);      // 미수 (0 밑으로 안 내려감)
-    o.extra = Math.max(0, o.paid - applied);    // 아직 어느 견적에도 안 붙은 돈 (선입금 · 앱 밖 거래 대금)
+      .map(q => ({ id: q.id, tot: Math.round(+q.total || 0), d: String(q.date || '') }));
+    if (OB[c]) line.unshift({ id: '', tot: OB[c].amt, d: OB[c].d });
+    const _prepay = !!PP[c];                   // 선입금 인정 거래처는 날짜 규칙을 끈다
+    line.forEach(x => {
+      let need = x.tot, got = 0; const qd = x.d;
+      for (const i of ins) {
+        if (need <= 0) break;
+        if (i.left <= 0) continue;
+        if (!_prepay && i.d && qd && i.d < qd) continue;   // 그 건보다 먼저 들어온 돈은 그 건 대금이 아니다
+        const use = Math.min(need, i.left); i.left -= use; need -= use; got += use;
+      }
+      if (x.id) P[x.id] = got; else o.openingPaid = got;
+      applied += got;
+    });
+    o.applied = applied;                                       // 실제로 붙은 돈 (이월 포함)
+    o.rem = Math.max(0, (o.sale + (o.opening || 0)) - applied); // 미수 = 앱 매출 + 이월 − 붙은 돈
+    o.extra = Math.max(0, o.paid - applied);                   // 아직 어디에도 안 붙은 돈 (선입금 · 앱 밖 대금)
   });
   _cmAt = Date.now(); _cmCache = M; _qpCache = P;
 }
 function clientMoneyMap() { _moneyBuild(); return _cmCache; }
 function quotePaidMap() { _moneyBuild(); return _qpCache; }
-const _MONEY0 = { sale: 0, paid: 0, applied: 0, rem: 0, extra: 0, qn: 0 };
+const _MONEY0 = { sale: 0, paid: 0, applied: 0, rem: 0, extra: 0, qn: 0, opening: 0, openingPaid: 0 };
 function clientMoneyOf(c) { return clientMoneyMap()[(c || '').trim()] || _MONEY0; }
 function clientRemOf(c) { return clientMoneyOf(c).rem; }
 function clientRemMap() { const m = clientMoneyMap(), r = {}; Object.keys(m).forEach(c => r[c] = m[c].rem); return r; }
@@ -7493,6 +7595,7 @@ function ledgerDetailHtml(client) {
   const all = catOn ? ledgerRows(client, CAT) : full;
   const M = clientMoneyOf(client);
   const sale = M.sale, pay = M.paid, rem = M.rem, extra = M.extra;
+  const _obAmt = +M.opening || 0;
   const taxAmt = full.filter(r => r.k === 'tax').reduce((s, r) => s + r.amt, 0);
   const noTaxAmt = (state.quotes || []).filter(q => !!q.ordered && (q.client || '').trim() === client && !taxSettled(q)).reduce((s, q) => s + (+q.total || 0), 0);
   const inR = d => (d || '') >= R.sd && (d || '') <= R.ed;
@@ -7513,12 +7616,20 @@ function ledgerDetailHtml(client) {
       <span style="font-size:11px;color:var(--t3);width:38px;flex:none">분류</span>
       ${kc('all', '전체')}${catsHere.map(c => kc(c, c, cSplit[c])).join('')}
     </div>` : '';
+  const obNote = _obAmt ? `<div class="banner" style="margin-bottom:10px;font-size:12px;background:#fff7e0;border:1px solid #f0d090;color:#8a5a00"><i class="ti ti-history"></i><span style="flex:1;min-width:0">
+      <b>이월 잔액 ${fmtWon(_obAmt)}원</b>이 미수에 포함되어 있습니다 (앱 이전 거래). 매출·계산서 집계에는 들어가지 않습니다.</span></div>` : '';
   const catNote = catOn ? `<div class="banner info" style="margin-bottom:10px;font-size:12px"><i class="ti ti-info-circle"></i><span style="flex:1;min-width:0;display:block">
       <b>${esc(CAT)}</b> 몫만 보고 있습니다 — 매출·계산서 금액은 그 견적의 <b>${esc(CAT)} 품목 금액 비율</b>만큼입니다.
       입금은 은행 기록에 «무슨 품목 대금인지»가 안 적혀 있어 분류로 나눌 수 없으므로, <b>입금·잔액(미수)은 «전체»에서만 보입니다.</b></span></div>` : '';
   const rc = (v, l) => `<button class="chip ${(filters.ledgerRange || 'all') === v ? 'active' : ''}" onclick="ledgerSetRange('${v}')">${l}</button>`;
   const money = (v, col) => `<td style="text-align:right;white-space:nowrap${col ? ';color:' + col : ''}">${v ? fmtWon(v) : '<span style="color:var(--bd2)">·</span>'}</td>`;
   const row = r => {
+    if (r.k === 'open') return `<tr style="background:#fff7e0">
+      <td style="white-space:nowrap;color:var(--t3)">${esc((r.d || '').slice(2))}</td>
+      <td><span class="pill" style="background:#ffeab8;color:#8a5a00"><i class="ti ti-history"></i> 이월</span></td>
+      <td><b>앱 이전 잔액</b>${r.memo ? ` <span style="color:var(--t3)">· ${esc(r.memo)}</span>` : ''}</td>
+      ${money(r.amt)}${money(0)}
+      <td style="text-align:right;white-space:nowrap;font-weight:700">${fmtWon(r.bal)}</td></tr>`;
     if (r.k === 'sale') return `<tr>
       <td style="white-space:nowrap;color:var(--t3)">${esc((r.d || '').slice(2))}</td>
       <td><span class="pill p-gray">매출</span></td>
@@ -7579,7 +7690,7 @@ function ledgerDetailHtml(client) {
       <b>미수를 마이너스로 만들지 않고 따로 둡니다.</b></span></div>` : ''}
     ${catChips}
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:9px">${catChips ? '<span style="font-size:11px;color:var(--t3);width:38px;flex:none">기간</span>' : ''}${rc('all', '전체')}${rc('3m', '최근 3개월')}${rc('tm', '이번 달')}${rc('lm', '지난 달')}</div>
-    ${catNote}
+    ${obNote}${catNote}
     ${catOn ? catTable : `<div class="tbl-wrap"><table class="tbl">
       <thead><tr><th style="width:58px">날짜</th><th style="width:56px">구분</th><th>내용</th>
         <th style="text-align:right;width:92px">매출</th><th style="text-align:right;width:92px">입금</th><th style="text-align:right;width:98px">잔액(미수)</th></tr></thead>
