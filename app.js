@@ -60,7 +60,11 @@ function _catIndex() {
   if (_catIx) return _catIx;
   const m = new Map();
   (state.priceList || []).forEach(p => { const k = _normName(p.itemName); if (k && !m.has(k)) m.set(k, p.cat || ''); });
-  _catIx = { plc: m, memo: new Map() };
+  /* 재고에 적어둔 분류 — 단가표 지정 다음 순위로 쓴다.
+     예: 「상판 (볼) 반제품」은 이름만 보면 세라믹으로 새는데 재고에는 '세면대'로 등록돼 있다. */
+  const iv = new Map();
+  (state.inventory || []).forEach(x => { const k = _normName(x.name); if (k && !iv.has(k)) iv.set(k, x.cat || ''); });
+  _catIx = { plc: m, ivc: iv, memo: new Map() };
   return _catIx;
 }
 function itemCategory(name) {
@@ -71,6 +75,7 @@ function itemCategory(name) {
   let out = '';
   const pc = ix.plc.get(key);
   if (pc) { const c = qcatNorm(pc); if (LCATS.indexOf(c) >= 0) out = c; }   // 단가표에서 손으로 지정한 분류가 최우선
+  if (!out) { const ic = ix.ivc && ix.ivc.get(key); if (ic) { const c = qcatNorm(ic); if (LCATS.indexOf(c) >= 0) out = c; } }   // 그 다음은 재고에 적어둔 분류
   if (!out) {
     const t = (name || '').replace(/\s/g, '');
     /* 통관 → 세면대(본체·브라켓·폽업 부속 포함) → 석재(돌 이름·석재 가공 용어)
@@ -4867,7 +4872,7 @@ function qRowHebePerJang(row) {
 function qPerHebeRefresh(row) {
   const box = row && row.querySelector('.q-perhebe'); if (!box) return;
   const name = ((row.querySelector('.q-mat') || {}).value || '').trim();
-  if (name.includes('세면대')) { box.innerHTML = ''; return; }          // 세면대는 장 단위가 아니다
+  if (name.includes('세면대') || isHalfMat(name)) { box.innerHTML = ''; return; }   // 세면대·반제품은 장 단위 고정단가라 ㎡ 환산이 오해를 부른다
   const h = qRowHebePerJang(row);
   const price = _numv((row.querySelector('.q-price') || {}).value);
   if (!(h > 0)) { box.innerHTML = name ? '<span style="color:var(--t3)">규격이 없어 ㎡당 단가를 계산할 수 없습니다</span>' : ''; return; }
@@ -4876,8 +4881,98 @@ function qPerHebeRefresh(row) {
   box.innerHTML = '<span style="color:var(--t3)"><i class="ti ti-ruler-2" style="font-size:12px;vertical-align:-1px"></i> ㎡당</span> '
     + '<b style="color:var(--gd);font-size:13.5px">' + fmtWon(per) + '</b><span style="color:var(--t3)">원 · 1장 ' + h + '㎡</span>';
 }
+/* ══════════════════════════════════════════════════════════
+   세면대 반제품 — 제작 규격 · 접합 여부  (2026-09-10)
+   ────────────────────────────────────────────────────────
+   반제품(예: 「상판 (볼) 반제품」)은 이미 국내에 들어와 있는 재고품이라
+   **반제품 자체의 규격은 고정**이다 (재고에 적힌 1210*610*15 같은 값).
+   파는 건 그걸 «얼마 크기로 재단해서 내보내느냐» 이므로,
+   견적서 규격 칸에는 반제품 규격이 아니라 **제작 규격**이 찍혀야 한다.
+   그래서 자재로 반제품을 고르면 규격 칸을 자동으로 채우지 않고,
+   아래 초록 칸에서 제작 규격을 넣게 한다.
+
+   단가는 재단 크기와 상관없이 두 가지로 고정한다 (2026-09-10 지정):
+     접합 출고    950,000원 / 장 (VAT 별도)
+     비접합 출고  850,000원 / 장 (VAT 별도)
+   ══════════════════════════════════════════════════════════ */
+const HB_PRICE = { join: 950000, plain: 850000 };
+const HB_NAME = { join: '접합', plain: '비접합' };
+/* 이 자재가 «반제품» 인가 — 이름에 반제품이 들어가면 전부 해당 */
+function isHalfMat(name) { return String(name || '').indexOf('반제품') >= 0; }
+/* 규격 칸 글자에서 제작 규격·접합 여부를 되읽는다 (저장한 견적을 다시 열 때 씀)
+   예: 「1200*550*180 접합」 → {L:'1200', W:'550', H:'180', kind:'join'} */
+function hbParseSpec(s) {
+  const t = String(s || '');
+  const m = t.match(/(\d{2,5})\s*[*xX×]\s*(\d{2,5})(?:\s*[*xX×]\s*(\d{1,4}))?/);
+  const kind = /비접합/.test(t) ? 'plain' : (/접합/.test(t) ? 'join' : '');
+  return { L: m ? m[1] : '', W: m ? m[2] : '', H: (m && m[3]) || '', kind: kind };
+}
+function _hbBtnStyle(sel) {
+  return 'flex:1;min-width:0;padding:9px 6px;border-radius:9px;cursor:pointer;font-size:14px;font-weight:800;line-height:1.25;'
+    + (sel ? 'background:#12684a;color:#fff;border:1.5px solid #12684a' : 'background:#fff;color:var(--t2);border:1.5px solid var(--bd2)');
+}
+function halfMakeHtml(on, d) {
+  const p = hbParseSpec((d && d.spec) || '');
+  const inp = 'font-size:15px;padding:8px;border:1.5px solid var(--bd2);border-radius:8px;background:#fff;text-align:right;width:100%';
+  const lb = t => `<div style="font-size:11px;color:var(--t3);margin-bottom:3px">${t}</div>`;
+  const btn = k => `<button type="button" class="hb-b" data-k="${k}" onclick="hbPick(this,'${k}')" style="${_hbBtnStyle(p.kind === k)}">${HB_NAME[k]} 출고<div style="font-size:11.5px;font-weight:600;opacity:.85;margin-top:1px">${fmtWon(HB_PRICE[k])}원</div></button>`;
+  return `<div class="q-half" data-kind="${esc(p.kind)}" style="display:${on ? 'block' : 'none'};margin-bottom:8px;border:1.5px solid #7cc3a6;background:#f2fbf7;border-radius:10px;padding:9px 10px">
+    <div style="font-size:11.5px;font-weight:700;color:#12684a;margin-bottom:3px"><i class="ti ti-scissors"></i> 반제품 제작 규격 · 접합 여부</div>
+    <div class="hb-stock" style="font-size:11px;color:var(--t3);margin-bottom:7px"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
+      <div>${lb('기장 (mm)')}<input class="hb-l" inputmode="numeric" placeholder="1200" value="${esc(p.L)}" oninput="hbCalc(this)" style="${inp}"></div>
+      <div>${lb('폭 (mm)')}<input class="hb-w" inputmode="numeric" placeholder="550" value="${esc(p.W)}" oninput="hbCalc(this)" style="${inp}"></div>
+      <div>${lb('치마 높이 <span style="color:var(--bd2)">(선택)</span>')}<input class="hb-h" inputmode="numeric" placeholder="180" value="${esc(p.H)}" oninput="hbCalc(this)" style="${inp}"></div>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:8px">${btn('join')}${btn('plain')}</div>
+    <div class="hb-note" style="font-size:11.5px;margin-top:7px;line-height:1.6"></div>
+  </div>`;
+}
+/* 접합 / 비접합 버튼 — 고르면 단가가 그 자리에서 들어간다 */
+function hbPick(btn, kind) {
+  const row = btn.closest('.q-row'); if (!row) return;
+  const box = row.querySelector('.q-half'); if (box) box.dataset.kind = kind;
+  row.querySelectorAll('.hb-b').forEach(b => b.setAttribute('style', _hbBtnStyle(b.dataset.k === kind)));
+  const pe = row.querySelector('.q-price'); if (pe) pe.value = HB_PRICE[kind] || '';
+  hbCalc(row);
+}
+/* 입력값 → 견적서 규격 칸에 「1200*550*180 접합」 형태로 써 넣는다 */
+function hbCalc(node) {
+  const row = (node && node.closest) ? node.closest('.q-row') : node; if (!row) return;
+  const box = row.querySelector('.q-half'); if (!box) return;
+  const num = c => { const e = row.querySelector(c); if (!e) return ''; const v = String(e.value || '').replace(/[^0-9]/g, ''); if (e.value !== v) e.value = v; return v; };
+  const L = num('.hb-l'), W = num('.hb-w'), H = num('.hb-h');
+  const kind = box.dataset.kind || '';
+  const spec = row.querySelector('.q-spec');
+  if (spec) {
+    let s = (L && W) ? (L + '*' + W + (H ? '*' + H : '')) : '';
+    if (kind) s = (s ? s + ' ' : '') + HB_NAME[kind];
+    spec.value = s;
+  }
+  const nm = ((row.querySelector('.q-mat') || {}).value || '').trim();
+  const it = (state.inventory || []).find(x => _normName(x.name) === _normName(nm));
+  const st = box.querySelector('.hb-stock');
+  if (st) st.innerHTML = it
+    ? `반제품 원판 <b>${esc(it.spec || '-')}</b>${it.stone ? ' · ' + esc(it.stone) : ''} · 가용 <b>${availJang(it)}</b>장`
+    : '';
+  const note = box.querySelector('.hb-note'); if (!note) return;
+  const msgs = [];
+  if (!kind) msgs.push('<span style="color:#a2560f"><i class="ti ti-alert-circle"></i> <b>접합 / 비접합</b>을 골라야 단가가 들어갑니다</span>');
+  if (!(L && W)) msgs.push('<span style="color:var(--t3)">기장·폭을 넣으면 견적서 <b>규격</b> 칸에 자동으로 찍힙니다</span>');
+  // 원판보다 크게는 재단할 수 없다
+  const bm = String((it && it.spec) || '').match(/(\d{2,5})\s*[*xX×]\s*(\d{2,5})/);
+  if (bm && L && W) {
+    const bl = Math.max(+bm[1], +bm[2]), bw = Math.min(+bm[1], +bm[2]);
+    const cl = Math.max(+L, +W), cw = Math.min(+L, +W);
+    if (cl > bl || cw > bw) msgs.push(`<span style="color:#c0341d;font-weight:700"><i class="ti ti-alert-triangle"></i> 제작 규격이 반제품 원판(${esc(bm[1])}×${esc(bm[2])})보다 큽니다 — 이 크기로는 재단할 수 없습니다</span>`);
+  }
+  if (kind && L && W) msgs.push(`<span style="color:#12684a;font-weight:700"><i class="ti ti-check"></i> ${esc(L)}×${esc(W)}${H ? '×' + esc(H) : ''} ${HB_NAME[kind]} 출고 · 장당 ${fmtWon(HB_PRICE[kind])}원 (VAT 별도)</span>`);
+  note.innerHTML = msgs.join('<br>');
+  try { quoteRecalc(); } catch (e) { }
+}
 function qRowHtml(d) {
   d = d || {}; const i = _qN++; const inp = 'font-size:14px;padding:8px;border:1.5px solid var(--bd2);border-radius:8px'; const _isBasin = (d.name || '').includes('세면대');
+  const _isHalf = isHalfMat(d.name);
   const _lockMat = qIsRegisteredMat(d.name);
   return `<div class="q-row" style="border:1px solid var(--bd2);border-radius:10px;padding:8px 9px;margin-bottom:8px">
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
@@ -4887,6 +4982,7 @@ function qRowHtml(d) {
     <div class="q-avail" style="font-size:11.5px;margin:-2px 2px 6px;min-height:14px">${qAvailText(d.name)}${qLockNote(d.name)}</div>
     <div class="q-stone-wrap" style="margin-bottom:6px;display:${_isBasin ? 'block' : 'none'}"><select class="q-stone" style="width:100%;font-size:14px;padding:8px;border:1.5px solid var(--bd2);border-radius:8px;background:#fff"><option value="">— 석종(컬러) 선택 · 세면대 발주에 적용 —</option>${BASIN_STONES.map(st => `<option value="${esc(st.k)}" ${d.stone === st.k ? 'selected' : ''}>${esc(st.k)}${st.t ? ' · ' + st.t : ''}</option>`).join('')}</select></div>
     ${basinCalcHtml(_isBasin)}
+    ${halfMakeHtml(_isHalf, d)}
     <div style="display:flex;gap:6px;align-items:center">
       <input class="q-spec" lang="en" placeholder="규격" value="${esc(d.spec || '')}" oninput="quoteRecalc()" style="flex:1.7;min-width:0;${inp}">
       <input class="q-qty" inputmode="text" placeholder="수량" value="${esc(d.qty || '')}" oninput="quoteRecalc()" style="flex:1;min-width:44px;${inp};text-align:right">
@@ -4896,7 +4992,7 @@ function qRowHtml(d) {
     </div>
     <div class="q-perhebe" style="font-size:11.5px;text-align:right;margin:4px 2px 0;min-height:15px"></div>
     <div class="q-prev" style="font-size:11.5px;text-align:right;margin:2px 2px 0"></div>
-    <div class="q-hebe" style="display:${_isBasin ? 'none' : 'flex'};gap:6px;align-items:center;margin-top:6px">
+    <div class="q-hebe" style="display:${(_isBasin || _isHalf) ? 'none' : 'flex'};gap:6px;align-items:center;margin-top:6px">
       <span style="white-space:nowrap;font-size:12px;color:var(--t3)"><i class="ti ti-ruler-2" style="font-size:12px;vertical-align:-1px"></i> ㎡당 단가</span>
       <input class="q-hebeprice" inputmode="numeric" placeholder="헤베당 단가 입력 → 장당 자동" oninput="quoteHebeToPrice(this)" style="flex:1;min-width:0;font-size:13px;padding:6px 8px;border:1.5px solid var(--bd2);border-radius:8px;text-align:right">
       <span class="q-hebe-hint" style="white-space:nowrap;font-size:11px;color:var(--t3)"></span>
@@ -4918,15 +5014,19 @@ function quoteMatPick(inp) {
   const row = inp.closest('.q-row'); if (!row) return; const name = (inp.value || '').trim();
   const it = (state.inventory || []).find(x => _normName(x.name) === _normName(name));
   const pl = (state.priceList || []).find(x => _normName(x.itemName) === _normName(name));
-  const specEl = row.querySelector('.q-spec'); if (specEl && !specEl.value.trim()) specEl.value = (it && it.spec) || (pl && pl.spec) || '';
+  const _half = isHalfMat(name);
+  /* ★ 반제품은 «원판 규격»을 규격 칸에 넣으면 안 된다 — 규격 칸에는 «제작 규격»이 찍혀야 한다 */
+  const specEl = row.querySelector('.q-spec'); if (specEl && !specEl.value.trim() && !_half) specEl.value = (it && it.spec) || (pl && pl.spec) || '';
   const client = (el('q-client') && el('q-client').value || '').trim();
   const type = el('q-ctype') ? el('q-ctype').value : '';
-  const priceEl = row.querySelector('.q-price'); const p = quoteGetPrice(client, name, type); if (p && !_numv(priceEl.value)) priceEl.value = p;
+  /* ★ 반제품 단가는 접합/비접합 버튼으로만 들어간다 — 단가표 값이 먼저 들어가면 헷갈린다 */
+  const priceEl = row.querySelector('.q-price'); const p = _half ? 0 : quoteGetPrice(client, name, type); if (p && !_numv(priceEl.value)) priceEl.value = p;
   const wrap = row.querySelector('.q-stone-wrap'); if (wrap) wrap.style.display = name.includes('세면대') ? 'block' : 'none';
   const avEl = row.querySelector('.q-avail'); if (avEl) avEl.innerHTML = qAvailText(name) + qLockNote(name);
   qLockMat(row);                                  // 등록된 자재를 고르면 이름칸 잠금
   const bc = row.querySelector('.q-bcalc'); if (bc) { const on = name.includes('세면대'); bc.style.display = on ? 'block' : 'none'; if (on) { bcSyncAllBiz(); bcNoteRefresh(); } }
-  const hb = row.querySelector('.q-hebe'); if (hb) hb.style.display = name.includes('세면대') ? 'none' : 'flex';
+  const hf = row.querySelector('.q-half'); if (hf) { hf.style.display = _half ? 'block' : 'none'; if (_half) { try { hbCalc(row); } catch (e) { } } }
+  const hb = row.querySelector('.q-hebe'); if (hb) hb.style.display = (name.includes('세면대') || _half) ? 'none' : 'flex';
   const hh = row.querySelector('.q-hebe-hint'); if (hh) { const hpj = it ? (+it.hebePerJang || 0) : 0; hh.textContent = hpj > 0 ? ('1장 ' + hpj + '㎡') : ''; }
   quoteRecalc();
 }
