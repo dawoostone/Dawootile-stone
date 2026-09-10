@@ -5712,7 +5712,9 @@ function priceDiffList(ctype, items, client) {
   });
   return out;
 }
-/* 저장 직후에 뜨는 «단가표를 바꿀까요?» 창 — 체크한 것만 반영한다 (기본은 전부 꺼짐) */
+/* «단가표를 바꿀까요?» 창 — 체크한 것만 반영한다 (기본은 전부 꺼짐)
+   ★ 2026-09-10 사용자 요청으로 **저장할 때 자동으로 뜨지 않는다**. 함수는 남겨 뒀으니
+     나중에 필요하면 어딘가에서 openPriceDiff(priceDiffList(ctype, items, client).filter(d=>!d.empty), ctype, client) 로 부르면 된다. */
 let _pdRows = [], _pdType = '', _pdClient = '';
 function openPriceDiff(rows, ctype, client) {
   _pdRows = rows || []; _pdType = ctype || ''; _pdClient = client || '';
@@ -5796,13 +5798,15 @@ async function submitQuote(id) {
     if (id) await Store.update('quotes', id, data); else await Store.add('quotes', data);
     try { const cdoc = (state.clients || []).find(x => _normName(x.value) === _normName(client)); if (cdoc && (cdoc.ctype || '') !== ctype) await Store.update('clients', cdoc.id, { ctype }); } catch (e) { }   // 거래처 유형 기억
     /* ★ 2026-09-10 — 단가표를 «자동으로 덮어쓰지 않는다».
-       비어 있는 칸만 채우고, 이미 값이 있는 칸은 저장 뒤에 물어본 다음 고른 것만 반영한다. */
-    var _pdAsk = [];
+       ① 단가표 칸이 비어 있으면 → 저장할 때 채운다 (기준이 없으니 잃을 게 없다)
+       ② 값이 있으면 → 저장이 그 값을 절대 안 바꾼다. **아무것도 묻지 않는다.**
+       ★ 사용자 요청(2026-09-10): *"단가표를 바꿀까요 띄우지 마"* — 저장 후 확인창을 뗐다.
+         기준단가와 다른 건 견적 폼의 그 줄 밑에 바로 표시되고([기준단가로] 버튼),
+         기준단가 자체를 고칠 땐 설정 › 단가표에서 직접 고친다. */
     try {
       const _pd = priceDiffList(ctype, items, client);
       for (const d of _pd) {
         if (d.empty && !d.byRule) { try { await quoteLearnPrice(ctype, d.name, d.price, client); } catch (e) { } }
-        else _pdAsk.push(d);
       }
     } catch (e) { }
     try {   // 부대비용 기본단가 기억
@@ -5811,7 +5815,6 @@ async function submitQuote(id) {
       if (ch) await saveExtraPrices(np);
     } catch (e) { }
     filters.quoteEdit = ''; filters.quoteCopy = false; toast('견적 저장됨'); renderQuote();
-    if (_pdAsk.length) { try { openPriceDiff(_pdAsk, ctype, client); } catch (e) { } }   // 기준단가와 다른 품목이 있으면 물어본다
   } finally { setTimeout(() => { _busy = false; }, 500); }
 }
 async function delQuote(id) {
