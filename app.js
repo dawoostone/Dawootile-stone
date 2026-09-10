@@ -5170,11 +5170,26 @@ function _prevPriceHtml(h, cur, applyFn) {
 function qPrevRefresh(row) {
   const box = row && row.querySelector('.q-prev'); if (!box) return;
   box.innerHTML = '';
-  const name = ((row.querySelector('.q-mat') || {}).value || '').trim();
+  const name = ((row.querySelector('.q-mat') || {}).value || '').trim(); if (!name) return;
   const client = (el('q-client') && el('q-client').value || '').trim();
-  if (!name || !client) return;
-  const h = clientPrevPrice(client, name); if (!h) return;
-  box.innerHTML = _prevPriceHtml(h, _numv((row.querySelector('.q-price') || {}).value), 'qPrevApply');
+  const cur = _numv((row.querySelector('.q-price') || {}).value);
+  const lines = [];
+  /* ★ 등록된 «유형별 기준단가»와 다르면 그 자리에서 알려준다.
+     저장해도 단가표는 안 바뀌므로(2026-09-10), 여기서 보고 판단하면 된다. */
+  try {
+    const t = (el('q-ctype') && el('q-ctype').value) || '';
+    if (t && t !== '별도' && cur > 0 && !isHalfMat(name)) {
+      const pl = (state.priceList || []).find(p => _normName(p.itemName) === _normName(name));
+      const reg = pl ? Math.round(+pl[ctypeKey(t)] || 0) : 0;
+      if (reg > 0 && reg !== Math.round(cur)) {
+        const gap = Math.round(cur) - reg;
+        lines.push(`<span style="color:#a2560f"><i class="ti ti-alert-circle" style="font-size:12px;vertical-align:-1px"></i> ${esc(t)} 기준단가 <b>${fmtWon(reg)}</b>원 과 다름 (${gap > 0 ? '+' : '−'}${fmtWon(Math.abs(gap))})</span>`
+          + ` <button type="button" class="btn btn-sm" style="padding:1px 8px;font-size:11px;margin-left:4px" onclick="qPrevApply(this,${reg})">기준단가로</button>`);
+      }
+    }
+  } catch (e) { }
+  if (client) { const h = clientPrevPrice(client, name); if (h) lines.push(_prevPriceHtml(h, cur, 'qPrevApply')); }
+  box.innerHTML = lines.join('<br>');
 }
 function qPrevApply(btn, p) {
   const row = btn.closest('.q-row'); if (!row) return;
@@ -5644,6 +5659,100 @@ function clientPriceCard(c) {
   </div>`;
 }
 /* 견적 저장 시 단가 기억 — 「별도」는 거래처 전용으로, 나머지는 유형별 단가표에 */
+/* ══════════════════════════════════════════════════════════
+   ★★ 단가표 «자동 덮어쓰기» 금지 (2026-09-10)
+   ────────────────────────────────────────────────────────
+   사용자: *"인테리어랑 유통업체랑 자재 단가가 자꾸 마음대로 입력되는데
+            기억이 먼저가 아니라 업체별 단가 구분에 대한 게 먼저 입력되어야 함"*
+
+   예전엔 **견적을 저장할 때마다** 그 견적에 쓴 단가로 단가표의 유형별 칸을
+   그냥 덮어썼다. 그래서 한 번 깎아준 값이 그 유형의 «기준 단가»가 돼 버렸다.
+
+   실측 (2026-09-10, 라이브):
+     저장하면서 단가표를 덮어쓴 횟수 — 인테리어 90 · 유통 78 · 소비자 27 · 대리점 3
+     그 결과 «유통가가 인테리어가보다 비싼» 뒤집힌 품목이 8개 생겼다
+       로마 팬텀 화이트 12T  유통 358,400 / 인테리어 256,000
+       자토바 브라운 6T      유통 252,000 / 인테리어 211,680
+       퓨어 화이트 6T        유통 178,200 / 인테리어 145,800
+     제일 많이 흔들린 품목: 「세면대 비규격 주문제작」 (건마다 값이 달라서 129번 덮어씀)
+
+   ★ 이제 규칙은 이렇다 — «업체별 단가 구분»이 먼저다:
+     ① 단가표 칸이 **비어 있으면** 저장할 때 자동으로 채운다 (기준이 없으니 잃을 게 없다)
+     ② 칸에 **값이 있으면 저장이 그 값을 절대 안 바꾼다.**
+        대신 저장 직후에 «다른 단가로 나갔다»고 알려주고, **고른 것만** 단가표에 반영한다.
+     ③ 견적 폼에서도 기준단가와 다르면 그 줄 밑에 바로 표시한다.
+   되돌리려면: submitQuote 의 priceDiffList 부분을 예전처럼
+     `for (const it of items) await quoteLearnPrice(...)` 한 줄로 되돌리면 된다.
+   ══════════════════════════════════════════════════════════ */
+/* 이 견적의 단가가 «등록된 기준단가»와 어떻게 다른지 — 저장은 하지 않고 목록만 만든다 */
+function priceDiffList(ctype, items, client) {
+  const out = [], seen = {};
+  const push = o => { const k = _normName(o.name); if (seen[k]) return; seen[k] = 1; out.push(o); };
+  const special = ctype === '별도';
+  if (special && !(client && String(client).trim())) return out;
+  const key = special ? '' : ctypeKey(ctype);
+  (items || []).forEach(it => {
+    if (it.extra) return;
+    const nm = (it.name || '').trim(); const pr = Math.round(+it.price || 0);
+    if (!nm || !(pr > 0)) return;
+    if (isHalfMat(nm)) return;                       // 반제품은 접합/비접합 고정단가라 단가표를 안 쓴다
+    if (special) {
+      const cp = (state.clientPrices || []).find(p => (p.client || '').trim() && _normName(p.client) === _normName(client) && _normName(p.itemName) === _normName(nm));
+      const rule = clientRulePrice(client, nm);
+      const cur = cp ? Math.round(+cp.price || 0) : (rule > 0 ? rule : 0);
+      if (cur === pr) return;
+      push({ name: nm, price: pr, cur: cur, label: (client || '') + ' 전용', empty: !cur, byRule: !cp && rule > 0 });
+    } else {
+      const pl = (state.priceList || []).find(p => _normName(p.itemName) === _normName(nm));
+      const cur = pl ? Math.round(+pl[key] || 0) : 0;
+      if (cur === pr) return;
+      push({ name: nm, price: pr, cur: cur, label: (PRICE_RULE_BASES[key] || ctype) + ' 단가', empty: !cur, byRule: false });
+    }
+  });
+  return out;
+}
+/* 저장 직후에 뜨는 «단가표를 바꿀까요?» 창 — 체크한 것만 반영한다 (기본은 전부 꺼짐) */
+let _pdRows = [], _pdType = '', _pdClient = '';
+function openPriceDiff(rows, ctype, client) {
+  _pdRows = rows || []; _pdType = ctype || ''; _pdClient = client || '';
+  if (!_pdRows.length) return;
+  const line = (d, i) => `<label style="display:flex;align-items:center;gap:9px;padding:9px 4px;border-bottom:1px solid var(--soft);cursor:pointer">
+      <input type="checkbox" class="pd-c" data-i="${i}" style="width:18px;height:18px;flex:none;accent-color:var(--gd)">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:13.5px">${esc(d.name)}</div>
+        <div style="font-size:11.5px;color:var(--t3);margin-top:2px">${esc(d.label)}${d.byRule ? ' <span style="color:#a2560f">(지금은 단가 규칙으로 계산됨)</span>' : ''}</div>
+      </div>
+      <div style="text-align:right;white-space:nowrap;font-size:13px">
+        <span style="color:var(--t3)">${d.cur ? fmtWon(d.cur) : '없음'}</span>
+        <span style="color:var(--bd2);margin:0 4px">→</span>
+        <b style="color:${d.cur && d.price < d.cur ? '#c0341d' : 'var(--gd)'}">${fmtWon(d.price)}</b>
+      </div>
+    </label>`;
+  openModal(`<div class="sheet-head"><h3><i class="ti ti-tag"></i> 단가표를 바꿀까요?</h3><button class="btn btn-ghost btn-sm" onclick="closeModal()"><i class="ti ti-x"></i></button></div>
+    <div style="padding:2px 2px 0">
+      <div style="background:var(--soft);border-radius:10px;padding:10px 12px;font-size:12.5px;color:var(--t2);line-height:1.65;margin-bottom:10px">
+        견적은 <b>이미 저장됐습니다.</b> 아래는 등록된 <b>기준단가와 다른 단가</b>로 나간 품목입니다.<br>
+        <b style="color:var(--gd)">아무것도 안 고르고 닫으면 단가표는 그대로</b>입니다 — 이번 견적에만 그 단가가 쓰입니다.<br>
+        기준단가 자체를 바꿔야 할 때만 골라서 반영하세요.
+      </div>
+      <div style="max-height:44vh;overflow:auto;border:1px solid var(--bd2);border-radius:10px;padding:0 10px">${_pdRows.map(line).join('')}</div>
+      <div style="display:flex;gap:6px;margin-top:9px">
+        <button type="button" class="btn btn-sm" style="flex:none" onclick="pdAll(true)">전체 선택</button>
+        <button type="button" class="btn btn-sm" style="flex:none" onclick="pdAll(false)">전체 해제</button>
+      </div>
+    </div>
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">단가표 그대로 두기</button><button class="btn btn-pri" style="flex:1" onclick="pdApply()"><i class="ti ti-check"></i>선택한 항목 반영</button></div>`);
+}
+function pdAll(on) { document.querySelectorAll('.pd-c').forEach(c => { c.checked = !!on; }); }
+async function pdApply() {
+  const picked = [];
+  document.querySelectorAll('.pd-c').forEach(c => { if (c.checked) { const d = _pdRows[+c.dataset.i]; if (d) picked.push(d); } });
+  if (!picked.length) { closeModal(); toast('단가표는 그대로 두었습니다'); return; }
+  closeModal();
+  let n = 0;
+  for (const d of picked) { try { await quoteLearnPrice(_pdType, d.name, d.price, _pdClient); n++; } catch (e) { } }
+  toast(n + '개 품목 단가표에 반영됐습니다');
+}
 async function quoteLearnPrice(type, name, price, client) {
   if (!name || !(price > 0)) return;
   if (type === '별도') {
@@ -5685,13 +5794,23 @@ async function submitQuote(id) {
     data.fromHoldIds = (_qFromHolds || []).filter(hid => (state.holdings || []).some(h => h.id === hid));
     if (id) await Store.update('quotes', id, data); else await Store.add('quotes', data);
     try { const cdoc = (state.clients || []).find(x => _normName(x.value) === _normName(client)); if (cdoc && (cdoc.ctype || '') !== ctype) await Store.update('clients', cdoc.id, { ctype }); } catch (e) { }   // 거래처 유형 기억
-    for (const it of items) { if (it.extra) continue; try { await quoteLearnPrice(ctype, it.name, +it.price || 0, client); } catch (e) { } }   // 단가 기억 — 별도는 거래처 전용, 나머지는 유형별 (부대비용 제외)
+    /* ★ 2026-09-10 — 단가표를 «자동으로 덮어쓰지 않는다».
+       비어 있는 칸만 채우고, 이미 값이 있는 칸은 저장 뒤에 물어본 다음 고른 것만 반영한다. */
+    var _pdAsk = [];
+    try {
+      const _pd = priceDiffList(ctype, items, client);
+      for (const d of _pd) {
+        if (d.empty && !d.byRule) { try { await quoteLearnPrice(ctype, d.name, d.price, client); } catch (e) { } }
+        else _pdAsk.push(d);
+      }
+    } catch (e) { }
     try {   // 부대비용 기본단가 기억
       const cur = extraPrices(); const np = Object.assign({}, cur); let ch = false;
       document.querySelectorAll('.qx-row').forEach(r => { const nm = r.getAttribute('data-name'); if (marginCat(nm) === '가공') return; const pr = _numv(r.querySelector('.qx-price').value); if (pr > 0 && cur[nm] !== pr) { np[nm] = pr; ch = true; } });   // 가공비는 기본단가에서 변동 없이 · 기억 안 함
       if (ch) await saveExtraPrices(np);
     } catch (e) { }
-    filters.quoteEdit = ''; filters.quoteCopy = false; toast(id ? '견적 저장됨' : '견적 저장 · 유형별 단가 반영됨'); renderQuote();
+    filters.quoteEdit = ''; filters.quoteCopy = false; toast('견적 저장됨'); renderQuote();
+    if (_pdAsk.length) { try { openPriceDiff(_pdAsk, ctype, client); } catch (e) { } }   // 기준단가와 다른 품목이 있으면 물어본다
   } finally { setTimeout(() => { _busy = false; }, 500); }
 }
 async function delQuote(id) {
