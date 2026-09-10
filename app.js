@@ -6185,35 +6185,123 @@ async function taxPing() {
     box.innerHTML = '<span style="color:var(--gd);font-weight:700"><i class="ti ti-plug-connected"></i> 팝빌 연동 정상</span> · <b style="color:' + (c.test ? '#9a6a12' : 'var(--gd)') + '">' + (c.test ? '테스트 모드 (국세청 전송 안 됨)' : '운영 모드 (실제 발행)') + '</b>' + taxPointHtml(j);
   } catch (e) { if (box) box.innerHTML = '<span style="color:#c0341d">확인 실패: ' + esc((e && e.message) || e) + '</span>'; }
 }
-/* 발행 화면에 붙는 거래처 원장 — 이 거래처의 견적·입금·미수·계산서 상태를 한눈에 */
+/* 이 거래처의 입금 한 줄 한 줄이 어느 견적에 얼마씩 붙었는지 —
+   _moneyBuild() 와 똑같은 규칙(오래된 견적부터 · 견적일보다 먼저 들어온 돈은 안 붙임)으로
+   다시 한 번 돌려서 «내역»까지 남긴다. 저장하는 값은 하나도 없다. */
+function clientAllocDetail(client) {
+  const key = _normName(client || '');
+  const out = { ins: [], byQuote: {}, inTot: 0, applied: 0, left: 0 };
+  if (!key) return out;
+  const qs = (state.quotes || []).filter(q => q.ordered && _normName(q.client || '') === key)
+    .slice().sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.docNo || '').localeCompare(b.docNo || ''));
+  const ins = (state.banktx || []).filter(t => txIsIn(t) && _normName(txClientOf(t) || '') === key)
+    .map(t => ({ t: t, d: String(t.date || ''), amt: txMoney(t), left: txMoney(t), to: [] }))
+    .sort((a, b) => a.d.localeCompare(b.d) || (a.t.dt || '').localeCompare(b.t.dt || ''));
+  qs.forEach(q => {
+    let need = Math.round(+q.total || 0); const qd = String(q.date || ''); let got = 0;
+    for (const i of ins) {
+      if (need <= 0) break;
+      if (i.left <= 0) continue;
+      if (i.d && qd && i.d < qd) continue;           // 견적보다 먼저 들어온 돈은 이 견적 대금이 아니다
+      const use = Math.min(need, i.left); i.left -= use; need -= use; got += use;
+      i.to.push({ doc: q.docNo || '', amt: use });
+    }
+    out.byQuote[q.id] = got;
+  });
+  out.ins = ins;
+  ins.forEach(i => { out.inTot += i.amt; out.left += i.left; });
+  out.applied = out.inTot - out.left;
+  return out;
+}
+/* 발행 화면 원장의 «견적/통장» 탭 — 다시 그리지 않고 보이기만 바꾼다
+   (다시 그리면 위에 입력하던 사업자번호·이메일이 날아간다) */
+function taxLedTab(v) {
+  const q = el('txled-q'), b = el('txled-b'), bq = el('txled-tq'), bb = el('txled-tb');
+  if (!q || !b) return;
+  const on = v === 'b';
+  q.style.display = on ? 'none' : ''; b.style.display = on ? '' : 'none';
+  if (bq) bq.setAttribute('style', _txTabStyle(!on));
+  if (bb) bb.setAttribute('style', _txTabStyle(on));
+}
+function _txTabStyle(sel) {
+  return 'padding:5px 11px;font-size:12px;font-weight:700;border-radius:8px;cursor:pointer;white-space:nowrap;'
+    + (sel ? 'background:var(--gd);color:#fff;border:1.5px solid var(--gd)' : 'background:#fff;color:var(--t2);border:1.5px solid var(--bd2)');
+}
+/* 발행 화면에 붙는 거래처 원장 — 이 거래처의 견적·입금·미수·계산서 상태를 한눈에
+   ★ 2026-09-09 — 통장 입금 줄을 그대로 볼 수 있는 «통장 입금» 탭을 붙였다.
+     예전엔 «입금» 칸이 «그 견적에 배분된 금액»만 보여줘서, 돈은 들어왔는데
+     견적일보다 먼저 들어온 입금이면 0원(-)으로 보여 «입금이 하나도 없다»고 오해했다. */
+let _txLedClient = '';
 function taxLedgerHtml(client, curId) {
   const key = _normName(client || ''); if (!key) return '';
+  _txLedClient = String(client || '');
   const rem = q => quoteRem(q);
   const list = (state.quotes || []).filter(q => _normName(q.client || '') === key)
     .sort((a, b) => (qDate(b) || '').localeCompare(qDate(a) || '') || (+b.createdAt || 0) - (+a.createdAt || 0));
-  if (!list.length) return '';
+  const AL = clientAllocDetail(client);
+  if (!list.length && !AL.ins.length) return '';
   const tot = list.reduce((a, q) => a + (+q.total || 0), 0);
   const paid = list.reduce((a, q) => a + quotePaid(q), 0);
   const unp = list.reduce((a, q) => a + rem(q), 0);
   const noTax = list.filter(q => !q.taxInvoice).length;
   const cell = (v, col) => `<td style="text-align:right;white-space:nowrap${col ? ';color:' + col + ';font-weight:700' : ''}">${v ? fmtWon(v) : '<span style="color:var(--bd2)">-</span>'}</td>`;
+  /* 입금 칸이 0원일 때 «왜 0원인지»를 손가락 올리면 알려준다 */
+  const paidCell = q => {
+    const v = quotePaid(q);
+    if (v) return `<td style="text-align:right;white-space:nowrap;color:var(--gd);font-weight:700">${fmtWon(v)}</td>`;
+    let why = '아직 이 건에 붙은 입금이 없습니다';
+    if (AL.ins.length) {
+      const qd = String(q.date || '');
+      const later = AL.ins.filter(i => !(i.d && qd && i.d < qd));
+      why = later.length
+        ? '이 거래처 입금은 있지만, 이 건보다 앞선 견적들이 먼저 채워져 남은 돈이 없습니다'
+        : ('이 거래처 입금은 있지만 전부 이 건(' + (qd || '?') + ')보다 먼저 들어온 돈이라 이 건 대금으로 보지 않습니다 — 통장 입금 탭에서 확인하세요');
+    }
+    return `<td style="text-align:right;white-space:nowrap"><span style="color:var(--bd2);cursor:help" title="${esc(why)}">-</span></td>`;
+  };
+  const qRows = list.map(q => {
+    const cur = q.id === curId; const r = rem(q);
+    return `<tr style="${cur ? 'background:var(--gl2,#eefaf5)' : ''}">
+      <td style="white-space:nowrap">${esc(qDate(q))}</td>
+      <td>${cur ? '<b style="color:var(--gd)">▶ ' + esc(q.docNo || '') + '</b>' : esc(q.docNo || '')}${q.ordered ? '' : '<div style="font-size:10px;color:var(--amber-t)">미확정</div>'}</td>
+      ${cell(q.total)}${paidCell(q)}${cell(r, r > 0 ? 'var(--red-t)' : '')}
+      <td style="white-space:nowrap;font-size:11px">${q.ntsConfirmNum ? '<span style="color:var(--gd);font-weight:700">발행</span>' : (q.taxInvoice ? '<span style="color:var(--t3)">표시만</span>' : '<span style="color:var(--red-t)">미발행</span>')}</td>
+      <td>${cur ? '<span style="font-size:11px;color:var(--t3)">현재</span>' : `<button class="btn btn-sm btn-ghost" title="이 건으로 발행" onclick="openTaxForm('${q.id}')"><i class="ti ti-arrow-right"></i></button>`}</td>
+    </tr>`; }).join('');
+  /* 통장 입금 줄 — 최근 것이 위로 */
+  const _cq = list.find(z => z.id === curId); const _curDoc = (_cq && _cq.docNo) || '';
+  const bRows = AL.ins.slice().reverse().map(i => {
+    const t = i.t;
+    const toTxt = i.to.length ? i.to.map(x => esc(x.doc) + ' ' + fmtWon(x.amt)).join('<br>') : '<span style="color:var(--bd2)">-</span>';
+    const isCur = !!_curDoc && i.to.some(x => x.doc === _curDoc);
+    return `<tr style="${isCur ? 'background:var(--gl2,#eefaf5)' : ''}">
+      <td style="white-space:nowrap">${esc(String(t.date || ''))}<div style="font-size:10px;color:var(--t3)">${esc(String(t.dt || '').slice(11))}</div></td>
+      <td>${esc(t.payer || '')}${txIsGuess(t) ? '<div style="font-size:10px;color:var(--amber-t)">이름으로 추정</div>' : ''}<div style="font-size:10px;color:var(--t3)">${esc(t.bankNm || '')}${t.way ? ' · ' + esc(t.way) : ''}</div></td>
+      <td style="text-align:right;white-space:nowrap;font-weight:700;color:var(--gd)">${fmtWon(i.amt)}</td>
+      <td style="font-size:11px;line-height:1.5">${toTxt}</td>
+      <td style="text-align:right;white-space:nowrap">${i.left ? '<b style="color:var(--amber-t)">' + fmtWon(i.left) + '</b>' : '<span style="color:var(--bd2)">-</span>'}</td>
+    </tr>`; }).join('');
+  const leftNote = AL.left
+    ? `<div style="font-size:11px;color:var(--amber-t);margin-top:6px"><i class="ti ti-alert-circle"></i> 아직 어느 견적에도 안 붙은 입금이 <b>${fmtWon(AL.left)}원</b> 있습니다 — 앱에 안 올린 거래 대금이거나 선입금입니다. (견적일보다 먼저 들어온 돈은 그 견적 대금으로 보지 않습니다)</div>`
+    : '';
   return `<div class="card" style="padding:12px 14px;margin-bottom:12px">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-      <div style="font-weight:800;font-size:13px;color:var(--gd)"><i class="ti ti-book"></i> ${esc(client)} 거래 원장 <span style="font-weight:500;color:var(--t3)">${list.length}건</span></div>
-      <div style="font-size:11.5px;color:var(--t3)">매출 <b style="color:var(--t1)">${fmtWon(tot)}</b> · 입금 <b style="color:var(--gd)">${fmtWon(paid)}</b> · 미수 <b style="color:var(--red-t)">${fmtWon(unp)}</b>${noTax ? ` · 계산서 미발행 <b style="color:var(--red-t)">${noTax}</b>건` : ''}</div>
+      <div style="font-weight:800;font-size:13px;color:var(--gd)"><i class="ti ti-book"></i> ${esc(client)} 거래 원장</div>
+      <div style="font-size:11.5px;color:var(--t3)">매출 <b style="color:var(--t1)">${fmtWon(tot)}</b> · 견적에 붙은 입금 <b style="color:var(--gd)">${fmtWon(paid)}</b> · 미수 <b style="color:var(--red-t)">${fmtWon(unp)}</b>${noTax ? ` · 계산서 미발행 <b style="color:var(--red-t)">${noTax}</b>건` : ''}</div>
     </div>
-    <div class="tbl-wrap" style="max-height:34vh;overflow:auto"><table class="tbl" style="font-size:12px">
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+      <button type="button" id="txled-tq" style="${_txTabStyle(true)}" onclick="taxLedTab('q')">견적 ${list.length}건</button>
+      <button type="button" id="txled-tb" style="${_txTabStyle(false)}" onclick="taxLedTab('b')">통장 입금 ${AL.ins.length}건 · ${fmtWon(AL.inTot)}원</button>
+      <button type="button" class="btn btn-sm" style="margin-left:auto" onclick="openLedgerFor(_txLedClient)"><i class="ti ti-external-link"></i>거래처 원장 전체 보기</button>
+    </div>
+    <div id="txled-q" class="tbl-wrap" style="max-height:34vh;overflow:auto"><table class="tbl" style="font-size:12px">
       <thead><tr><th>일자</th><th>견적번호</th><th style="text-align:right">합계</th><th style="text-align:right">입금</th><th style="text-align:right">미수</th><th>계산서</th><th style="width:56px"></th></tr></thead>
-      <tbody>${list.map(q => {
-        const cur = q.id === curId; const r = rem(q);
-        return `<tr style="${cur ? 'background:var(--gl2,#eefaf5)' : ''}">
-          <td style="white-space:nowrap">${esc(qDate(q))}</td>
-          <td>${cur ? '<b style="color:var(--gd)">▶ ' + esc(q.docNo || '') + '</b>' : esc(q.docNo || '')}${q.ordered ? '' : '<div style="font-size:10px;color:var(--amber-t)">미확정</div>'}</td>
-          ${cell(q.total)}${cell(quotePaid(q))}${cell(r, r > 0 ? 'var(--red-t)' : '')}
-          <td style="white-space:nowrap;font-size:11px">${q.ntsConfirmNum ? '<span style="color:var(--gd);font-weight:700">발행</span>' : (q.taxInvoice ? '<span style="color:var(--t3)">표시만</span>' : '<span style="color:var(--red-t)">미발행</span>')}</td>
-          <td>${cur ? '<span style="font-size:11px;color:var(--t3)">현재</span>' : `<button class="btn btn-sm btn-ghost" title="이 건으로 발행" onclick="openTaxForm('${q.id}')"><i class="ti ti-arrow-right"></i></button>`}</td>
-        </tr>`; }).join('')}</tbody></table></div>
-    <div style="font-size:11px;color:var(--t3);margin-top:6px">다른 건의 <i class="ti ti-arrow-right" style="font-size:12px"></i> 를 누르면 그 건 발행 화면으로 바로 넘어갑니다.</div>
+      <tbody>${qRows || '<tr><td colspan="7" style="text-align:center;color:var(--t3);padding:14px">견적이 없습니다</td></tr>'}</tbody></table></div>
+    <div id="txled-b" class="tbl-wrap" style="display:none;max-height:34vh;overflow:auto"><table class="tbl" style="font-size:12px">
+      <thead><tr><th>입금일</th><th>입금자 · 은행</th><th style="text-align:right">입금액</th><th>붙은 견적</th><th style="text-align:right">남은 돈</th></tr></thead>
+      <tbody>${bRows || '<tr><td colspan="5" style="text-align:center;color:var(--t3);padding:14px">이 거래처로 잡힌 통장 입금이 없습니다<div style="font-size:11px;margin-top:4px">입금자 이름이 거래처와 다르면 «거래처 원장 전체 보기»에서 연결해 주세요</div></td></tr>'}</tbody></table></div>
+    ${leftNote}
+    <div style="font-size:11px;color:var(--t3);margin-top:6px">견적 표의 <i class="ti ti-arrow-right" style="font-size:12px"></i> 를 누르면 그 건 발행 화면으로 바로 넘어갑니다. · <b>입금</b> 칸은 «그 견적에 배분된 금액»이라 0원이어도 통장에 돈이 있을 수 있습니다 — 위 <b>통장 입금</b> 탭에서 확인하세요.</div>
   </div>`;
 }
 /* 계산서에서 가공비를 묶어 표기할 품명 */
