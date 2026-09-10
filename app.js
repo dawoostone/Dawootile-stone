@@ -9197,8 +9197,14 @@ function _shortDate(d) {
   const t = String(d == null ? '' : d).trim(); if (t.length < 10) return t;
   return t.slice(0, 4) === todayStr().slice(0, 4) ? t.slice(5) : t;
 }
-function quoteMonthNav(delta) { const cur = filters.quoteMonth || todayStr().slice(0, 7); const p = cur.split('-').map(Number); const d = new Date(p[0], p[1] - 1 + delta, 1); filters.quoteMonth = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); renderQuote(); }
-function quoteDayNav(delta) { const cur = filters.quoteDay || todayStr(); const d = new Date(cur + 'T00:00'); d.setDate(d.getDate() + delta); filters.quoteDay = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); renderQuote(); }
+/* ★ 목록만 다시 그린다 — renderQuote() 를 쓰면 화면이 통째로 새로 그려져 보던 자리가 날아간다 */
+function quoteMonthNav(delta) { const cur = filters.quoteMonth || todayStr().slice(0, 7); const p = cur.split('-').map(Number); const d = new Date(p[0], p[1] - 1 + delta, 1); filters.quoteMonth = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); quotesFilter(); }
+function quoteDayNav(delta) { const cur = filters.quoteDay || todayStr(); const d = new Date(cur + 'T00:00'); d.setDate(d.getDate() + delta); filters.quoteDay = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); quotesFilter(); }
+/* 달·날짜를 직접 골라서 이동 */
+function quoteMonthSet(v) { const m = String(v || '').slice(0, 7); if (!/^\d{4}-\d{2}$/.test(m)) return; filters.quoteMonth = m; filters.quoteView = 'month'; quotesFilter(); }
+function quoteDaySet(v) { const d = String(v || '').slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return; filters.quoteDay = d; filters.quoteView = 'day'; quotesFilter(); }
+/* 일별 보기에서 «다른 달» 버튼을 누르면 그 달의 월별 보기로 넘어간다 */
+function quoteMonthJump(m) { quoteMonthSet(m); }
 function quoteCardHtml(q) {
   const when = qDate(q);
   const _bundle = !!filters.quoteBundle; const _selQ = _qSel.has(q.id);
@@ -11102,9 +11108,9 @@ function renderQuote() {
           <span style="white-space:nowrap;color:var(--t3)">${fmtWon(q.total)}</span></div>`).join('')}
       </div>` : ''}</div>` : '';
   const toggle = `<div style="display:flex;gap:6px;margin-bottom:10px">
-    <button class="btn btn-sm ${view === 'all' ? 'btn-pri' : ''}" onclick="filters.quoteView='all';renderQuote()">전체</button>
-    <button class="btn btn-sm ${view === 'month' ? 'btn-pri' : ''}" onclick="filters.quoteView='month';renderQuote()"><i class="ti ti-calendar-month"></i> 월별</button>
-    <button class="btn btn-sm ${view === 'day' ? 'btn-pri' : ''}" onclick="filters.quoteView='day';renderQuote()"><i class="ti ti-calendar-event"></i> 일별</button>
+    <button class="btn btn-sm ${view === 'all' ? 'btn-pri' : ''}" onclick="quoteSetView('all')">전체</button>
+    <button class="btn btn-sm ${view === 'month' ? 'btn-pri' : ''}" onclick="quoteSetView('month')"><i class="ti ti-calendar-month"></i> 월별</button>
+    <button class="btn btn-sm ${view === 'day' ? 'btn-pri' : ''}" onclick="quoteSetView('day')"><i class="ti ti-calendar-event"></i> 일별</button>
     <button class="btn btn-sm ${filters.quoteBundle ? 'btn-pri' : ''}" style="margin-left:auto" onclick="quoteToggleBundle()"><i class="ti ti-stack-2"></i> 묶음청구</button></div>`;
   el('pg-quote').innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-file-invoice"></i>견적서</h2><p>견적 작성 → 출고 → 결제 · 세금계산서까지</p></div>
@@ -11260,6 +11266,7 @@ function _quoteListInner() {
   baseForStat.forEach(q => quoteCatSet(q).forEach(c => { if (cCat[c] != null) cCat[c]++; }));
   if (fCat !== 'all') list = list.filter(q => quoteCatSet(q).indexOf(fCat) >= 0);
   _qShownIds = list.map(q => q.id);   // 지금 화면(검색·필터 반영)에 뜬 견적 — 묶음청구 [전체 선택] 이 이걸 쓴다
+  /* ★ 월별·일별 보기에서는 아래에서 그 기간 것만으로 다시 좁힌다 (안 그러면 화면에 없는 견적까지 선택된다) */
   // 검색 결과 요약 — 몇 건인지, 합계가 얼마인지 바로 보이게
   const searchBar = qy ? (() => {
     const n = list.length, sum = list.reduce((a, q) => a + (+q.total || 0), 0);
@@ -11334,33 +11341,71 @@ function _quoteListInner() {
   const curMonth = filters.quoteMonth || ym;
   const curDay = filters.quoteDay || todayStr();
   const WD = ['일', '월', '화', '수', '목', '금', '토'];
-  const _flatUnpaid = (fStat !== 'all');   // 상태 필터를 걸면 월/일 묶음 없이 전체를 한 번에 본다
+  /* ★ 2026-09-10 — 예전엔 상태 필터를 걸면 월/일 묶음을 통째로 껐다(_flatUnpaid).
+     그래서 «월별 고르고 필터 누르면 월별이 사라지는» 문제가 있었다.
+     이제 **필터가 걸려도 월별·일별을 그대로 유지**하고, 그 달에 없으면 어느 달에 있는지 알려준다. */
+  const _fLbl = (_lbl || '').trim();
+  const _fTag = _fLbl ? `<span class="pill" style="background:#eef4ff;color:#1b4fb0;border:1px solid #cfe0ff;font-size:10.5px">${esc(_fLbl)}</span>` : '';
+  /* 지금 필터에 걸린 건이 «다른 달» 어디에 있는지 — 빈 화면 보고 고장난 줄 알지 않게 */
+  const _otherMonths = (cur) => {
+    const m = {};
+    list.forEach(q => { const d = qDate(q); if (d && d.slice(0, 7) !== cur) m[d.slice(0, 7)] = (m[d.slice(0, 7)] || 0) + 1; });
+    return Object.keys(m).sort((a, b) => b.localeCompare(a)).slice(0, 8).map(k => ({ m: k, n: m[k] }));
+  };
+  const _jumpHtml = (rows, fn) => rows.length
+    ? `<div style="margin-top:10px;font-size:12px;color:var(--t2)">다른 달에 <b>${rows.reduce((a, r) => a + r.n, 0)}건</b> 있습니다
+        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;justify-content:center">${rows.map(r => `<button class="btn btn-sm" style="padding:3px 9px;font-size:11.5px" onclick="${fn}('${r.m}')">${esc(r.m.replace('-', '. '))} <b style="color:var(--gd)">${r.n}</b></button>`).join('')}</div></div>`
+    : '';
   let body, navBar = '';
   _qFlatList = null;   // 월별·일별 보기에서는 «더 보기»가 없다 (아래 전체 보기에서만 채운다)
-  if (view === 'month' && !_flatUnpaid) {
+  if (view === 'month') {
     const mlist = list.filter(q => qDate(q).startsWith(curMonth));
     const mSum = mlist.reduce((a, b) => a + (+b.total || 0), 0);
+    const mRem = mlist.reduce((a, b) => a + _remOf(b), 0);
+    _qShownIds = mlist.map(q => q.id);            // ★ 이 달에 보이는 것만 «전체 선택» 대상
     const byDay = {}; mlist.forEach(q => { const d = qDate(q) || '날짜미상'; (byDay[d] = byDay[d] || []).push(q); });
     const days = Object.keys(byDay).sort((a, b) => b.localeCompare(a));
-    navBar = `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--soft);border-radius:11px;padding:8px 12px;margin-bottom:10px">
-      <button class="btn btn-sm" onclick="quoteMonthNav(-1)"><i class="ti ti-chevron-left"></i></button>
-      <div style="text-align:center"><div style="font-weight:800;font-size:15.5px">${esc(curMonth.replace('-', '. '))}</div><div style="font-size:11.5px;color:var(--t3)">${mlist.length}건 · <b style="color:var(--gd)">${fmtWon(mSum)}</b>원</div></div>
-      <button class="btn btn-sm" onclick="quoteMonthNav(1)"><i class="ti ti-chevron-right"></i></button></div>`;
+    if (fStat === 'unpaid') days.forEach(d => byDay[d].sort((a, b) => _remOf(b) - _remOf(a)));   // 하루 안에서는 미수 큰 순
+    navBar = `<div style="background:var(--soft);border-radius:11px;padding:8px 12px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <button class="btn btn-sm" onclick="quoteMonthNav(-1)"><i class="ti ti-chevron-left"></i></button>
+        <div style="text-align:center;min-width:0">
+          <div style="display:flex;align-items:center;gap:6px;justify-content:center;flex-wrap:wrap">
+            <input type="month" value="${esc(curMonth)}" onchange="quoteMonthSet(this.value)" style="font-size:15px;font-weight:800;padding:2px 6px;border:1.5px solid var(--bd2);border-radius:8px;background:#fff">
+            ${_fTag}
+          </div>
+          <div style="font-size:11.5px;color:var(--t3);margin-top:3px">${mlist.length}건 · <b style="color:var(--gd)">${fmtWon(mSum)}</b>원${mRem > 0 ? ` · 미수 <b style="color:var(--red-t)">${fmtWon(mRem)}</b>` : ''}</div>
+        </div>
+        <button class="btn btn-sm" onclick="quoteMonthNav(1)"><i class="ti ti-chevron-right"></i></button>
+      </div>
+      ${days.length ? '' : _jumpHtml(_otherMonths(curMonth), 'quoteMonthSet')}</div>`;
     body = days.length ? days.map(d => {
       const qs = byDay[d]; const dSum = qs.reduce((a, b) => a + (+b.total || 0), 0);
       const dLabel = d === '날짜미상' ? d : (d.slice(5).replace('-', '/') + ' (' + WD[new Date(d + 'T00:00').getDay()] + ')');
       return `<div style="display:flex;align-items:center;gap:8px;margin:14px 2px 8px"><div style="font-weight:800;font-size:13.5px">${esc(dLabel)}</div><div style="flex:1;height:1px;background:var(--bd)"></div><div style="font-size:12px;color:var(--t2)">${qs.length}건 · <b style="color:var(--gd)">${fmtWon(dSum)}</b>원</div></div>${qs.map(quoteCardHtml).join('')}`;
-    }).join('') : `<div class="empty"><i class="ti ti-file-invoice"></i>${esc(curMonth)}에 견적이 없습니다</div>`;
-  } else if (view === 'day' && !_flatUnpaid) {
+    }).join('') : `<div class="empty"><i class="ti ti-file-invoice"></i>${esc(curMonth.replace('-', '. '))}에 ${_fLbl ? '«' + esc(_fLbl) + '» 조건에 맞는 ' : ''}견적이 없습니다</div>`;
+  } else if (view === 'day') {
     const dlist = list.filter(q => qDate(q) === curDay);
+    _qShownIds = dlist.map(q => q.id);            // ★ 이 날에 보이는 것만 «전체 선택» 대상
+    if (fStat === 'unpaid') dlist.sort((a, b) => _remOf(b) - _remOf(a));
     const dSum = dlist.reduce((a, b) => a + (+b.total || 0), 0);
+    const dRem = dlist.reduce((a, b) => a + _remOf(b), 0);
     const dObj = new Date(curDay + 'T00:00');
     const dTitle = curDay.replace(/-/g, '. ') + ' (' + WD[dObj.getDay()] + ')';
-    navBar = `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--soft);border-radius:11px;padding:8px 12px;margin-bottom:10px">
-      <button class="btn btn-sm" onclick="quoteDayNav(-1)"><i class="ti ti-chevron-left"></i></button>
-      <div style="text-align:center"><div style="font-weight:800;font-size:15.5px">${esc(dTitle)}</div><div style="font-size:11.5px;color:var(--t3)">${dlist.length}건 · <b style="color:var(--gd)">${fmtWon(dSum)}</b>원</div></div>
-      <button class="btn btn-sm" onclick="quoteDayNav(1)"><i class="ti ti-chevron-right"></i></button></div>`;
-    body = dlist.length ? dlist.map(quoteCardHtml).join('') : `<div class="empty"><i class="ti ti-file-invoice"></i>${esc(dTitle)}에 견적이 없습니다</div>`;
+    navBar = `<div style="background:var(--soft);border-radius:11px;padding:8px 12px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <button class="btn btn-sm" onclick="quoteDayNav(-1)"><i class="ti ti-chevron-left"></i></button>
+        <div style="text-align:center;min-width:0">
+          <div style="display:flex;align-items:center;gap:6px;justify-content:center;flex-wrap:wrap">
+            <input type="date" value="${esc(curDay)}" onchange="quoteDaySet(this.value)" style="font-size:15px;font-weight:800;padding:2px 6px;border:1.5px solid var(--bd2);border-radius:8px;background:#fff">
+            ${_fTag}
+          </div>
+          <div style="font-size:11.5px;color:var(--t3);margin-top:3px">${esc(WD[dObj.getDay()])}요일 · ${dlist.length}건 · <b style="color:var(--gd)">${fmtWon(dSum)}</b>원${dRem > 0 ? ` · 미수 <b style="color:var(--red-t)">${fmtWon(dRem)}</b>` : ''}</div>
+        </div>
+        <button class="btn btn-sm" onclick="quoteDayNav(1)"><i class="ti ti-chevron-right"></i></button>
+      </div>
+      ${dlist.length ? '' : _jumpHtml(_otherMonths(curDay.slice(0, 7)), 'quoteMonthJump')}</div>`;
+    body = dlist.length ? dlist.map(quoteCardHtml).join('') : `<div class="empty"><i class="ti ti-file-invoice"></i>${esc(dTitle)}에 ${_fLbl ? '«' + esc(_fLbl) + '» 조건에 맞는 ' : ''}견적이 없습니다</div>`;
   } else {
     /* ★ 전체 보기만 나눠 그린다 (월별·일별은 이미 그 기간 것만이라 양이 적다) */
     _qFlatList = list;
@@ -11378,6 +11423,7 @@ function quotesFilter() {
   const b = el('q-bundlebtns'); if (b) b.innerHTML = _qBundleBtnsHtml();   // '전체 선택 N건' 만 다시 (검색칸 커서 유지)
 }
 /* 견적 필터는 두 축을 겹쳐서 쓴다: (확정/미확정) × (결제·계산서·세면대) */
+function quoteSetView(v) { filters.quoteView = v; renderQuote(); }   // 버튼 자체가 위쪽 카드에 있어 전체를 다시 그린다
 function quoteSetCat(v) { filters.qCat = v; quotesFilter(); }
 function quoteSetConf(v) { filters.qConf = v; quotesFilter(); }
 function quoteSetStat(v) { filters.qStat = v; quotesFilter(); }
