@@ -11093,9 +11093,9 @@ function renderQuote() {
   const unpaidConf = _confUnpaidList.reduce((a, q) => a + _remQ(q), 0);
   const noTax = all.filter(q => !taxSettled(q)).length;   // ★ 현금영수증 건 제외
   const monthSum = all.filter(q => (q.date || '').startsWith(ym)).reduce((a, b) => a + (+b.total || 0), 0);
-  const catAgg = {}; LCATS.forEach(c => catAgg[c] = { sum: 0, cnt: 0 });
-  all.forEach(q => { const sp = quoteCatSplit(q); Object.keys(sp).forEach(c => { if (catAgg[c]) { catAgg[c].sum += sp[c].sup; catAgg[c].cnt++; } }); });
-  const catBreak = `<div class="card" style="margin-bottom:12px;padding:11px 14px"><div style="font-size:11.5px;color:var(--t3);font-weight:700;margin-bottom:8px"><i class="ti ti-chart-pie"></i> 분류별 매출 · 견적건 <span style="font-weight:500">· 품목 기준</span></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:8px">${LCATS.map(c => `<div style="text-align:center;padding:7px 4px;background:var(--soft);border-radius:9px"><div style="font-size:10.5px;color:var(--t2);margin-bottom:2px"><i class="ti ti-${QCAT_ICON[c]}"></i> ${c}</div><div style="font-size:14.5px;font-weight:800;color:${QCAT_COL[c]}">${fmtWon(catAgg[c].sum)}</div><div style="font-size:10px;color:var(--t3)">${catAgg[c].cnt}건</div></div>`).join('')}</div></div>`;
+  /* ★ 2026-09-11 — 위쪽 「분류별 매출」 카드는 없앴다.
+     아래 목록 위의 카드와 같은 내용을 «전체·공급가» vs «필터·VAT포함» 두 기준으로 보여줘서
+     숫자가 안 맞고 화면만 복잡했다. 이제 아래 카드 하나로 합쳤다(확정 건만 · 기간·필터 따라감). */
   const view = filters.quoteView || 'all';
   const _selQs = filters.quoteBundle ? (state.quotes || []).filter(x => _qSel.has(x.id)) : [];
   const _selTotal = _selQs.reduce((a, q) => a + (+q.total || 0), 0);
@@ -11124,7 +11124,6 @@ function renderQuote() {
       <div class="stat"><div class="ic g"><i class="ti ti-calendar-stats"></i></div><div class="v" style="font-size:19px">${fmtWon(monthSum)}</div><div class="l">이번 달 견적</div></div>
     </div>
     ${_pmBanner()}
-    ${catBreak}
     ${toggle}
     ${bundleBar}
     <div class="search-box" style="margin-bottom:10px"><i class="ti ti-search"></i>
@@ -11267,6 +11266,7 @@ function _quoteListInner() {
   const fCat = filters.qCat || 'all';
   const cCat = {}; LCATS.forEach(c => cCat[c] = 0);
   baseForStat.forEach(q => quoteCatSet(q).forEach(c => { if (cCat[c] != null) cCat[c]++; }));
+  const _preCatList = list.slice();   // ★ 분류 카드는 «분류를 고르기 전» 목록으로 만든다 (골라도 다른 분류가 안 사라지게)
   if (fCat !== 'all') list = list.filter(q => quoteCatSet(q).indexOf(fCat) >= 0);
   _qShownIds = list.map(q => q.id);   // 지금 화면(검색·필터 반영)에 뜬 견적 — 묶음청구 [전체 선택] 이 이걸 쓴다
   /* ★ 월별·일별 보기에서는 아래에서 그 기간 것만으로 다시 좁힌다 (안 그러면 화면에 없는 견적까지 선택된다) */
@@ -11303,23 +11303,39 @@ function _quoteListInner() {
       ${chipS('basin', '세면대 미발주', cBasin, 'var(--amber-t)')}
       ${(fConf !== 'all' || fStat !== 'all' || fCat !== 'all') ? `<button class="chip" style="margin-left:auto" onclick="quoteClearFilter()"><i class="ti ti-x"></i>필터 해제</button>` : ''}
     </div>`;
-  /* ── 분류별 금액 카드 — 금액은 품목 하나하나를 보고 나눈다 ──
-     견적서의 분류칸은 한 건에 하나뿐이라, 석재와 세라믹이 같이 든 견적은
-     분류칸만 보면 한쪽으로 몰린다. 그래서 금액만은 품목 기준으로 쪼갠다. */
+  /* ── 분류별 매출 카드 (2026-09-11 통합) ──────────────────
+     ★ 확정된 건만 · 공급가 기준 · 지금 보고 있는 «기간(월별·일별)»과 «필터»를 그대로 따라간다.
+     ★ 한 견적에 세라믹과 세면대가 같이 있으면 품목 금액 비율대로 나눠 담는다(quoteCatSplit).
+       그래서 칸마다의 건수를 다 더하면 전체 건수보다 많을 수 있다. */
+  const _cView = filters.quoteView || 'all';
+  const _cMonth = filters.quoteMonth || ym;
+  const _cDay = filters.quoteDay || todayStr();
+  const _catList = (_cView === 'month') ? _preCatList.filter(q => (qDate(q) || '').startsWith(_cMonth))
+    : (_cView === 'day') ? _preCatList.filter(q => qDate(q) === _cDay) : _preCatList;
+  const _catOrd = _catList.filter(q => !!q.ordered);          // ★ 매출 = 확정된 건만
   const catAmt = {}; LCATS.forEach(c => catAmt[c] = { sup: 0, tot: 0, n: 0 });
-  list.forEach(q => {
+  _catOrd.forEach(q => {
     const sp = quoteCatSplit(q);
     Object.keys(sp).forEach(c => { if (!catAmt[c]) return; catAmt[c].sup += sp[c].sup; catAmt[c].tot += sp[c].tot; catAmt[c].n++; });
   });
+  const _catShow = LCATS.filter(c => catAmt[c].n > 0);
+  const _catSup = LCATS.reduce((a, c) => a + catAmt[c].sup, 0);
+  const _catPeriod = _cView === 'month' ? _cMonth.replace('-', '. ')
+    : _cView === 'day' ? _cDay.replace(/-/g, '. ') : '전체 기간';
   const catBar = `<div class="card" style="margin-bottom:10px;padding:11px 13px">
-    <div style="font-size:11.5px;color:var(--t3);font-weight:700;margin-bottom:8px"><i class="ti ti-chart-pie"></i> 분류별 금액 <span style="font-weight:500">· 품목 기준 (한 견적에 섞여 있으면 나눠서 셉니다)</span></div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">
-      ${LCATS.map(c => `<div style="padding:9px 8px;background:var(--soft);border-radius:10px;text-align:center">
-        <div style="font-size:11px;color:var(--t2);margin-bottom:3px"><i class="ti ti-${QCAT_ICON[c] || 'tag'}"></i> ${esc(c)}</div>
-        <div style="font-size:16px;font-weight:800;color:${QCAT_COL[c]}">${fmtWon(catAmt[c].tot)}</div>
-        <div style="font-size:10.5px;color:var(--t3);margin-top:2px">공급가 ${fmtWon(catAmt[c].sup)} · ${catAmt[c].n}건</div>
-      </div>`).join('')}
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <span style="font-size:12px;font-weight:800;color:var(--t2)"><i class="ti ti-chart-pie"></i> 분류별 매출</span>
+      <span style="font-size:11px;color:var(--t3)">${esc(_catPeriod)} · 확정 ${_catOrd.length}건 · 공급가 <b style="color:var(--gd)">${fmtWon(_catSup)}</b>원</span>
+      <button class="btn btn-sm" style="margin-left:auto;padding:3px 9px;font-size:11.5px" onclick="openCatMonth()"><i class="ti ti-calendar-stats"></i> 월별로 보기</button>
     </div>
+    ${_catShow.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:7px">
+      ${_catShow.map(c => `<button class="tap" style="padding:8px 7px;background:${fCat === c ? '#eefaf5' : 'var(--soft)'};border:1.5px solid ${fCat === c ? QCAT_COL[c] : 'transparent'};border-radius:10px;text-align:center;cursor:pointer;width:100%" onclick="quoteSetCat('${fCat === c ? 'all' : c}')" title="눌러서 이 분류만 보기">
+        <div style="font-size:11px;color:var(--t2);margin-bottom:2px"><i class="ti ti-${QCAT_ICON[c] || 'tag'}"></i> ${esc(c)}</div>
+        <div style="font-size:16px;font-weight:800;color:${QCAT_COL[c]}">${fmtWon(catAmt[c].sup)}</div>
+        <div style="font-size:10px;color:var(--t3);margin-top:1px">VAT포함 ${fmtWon(catAmt[c].tot)} · ${catAmt[c].n}건</div>
+      </button>`).join('')}
+    </div>` : `<div style="font-size:12px;color:var(--t3);padding:6px 2px">이 기간에 확정된 견적이 없습니다</div>`}
+    <div style="font-size:10.5px;color:var(--t3);margin-top:7px">확정된 견적만 · 금액은 <b>공급가</b>(부가세 제외) · 칸을 누르면 그 분류만 봅니다</div>
   </div>`;
   // 필터별 요약 바
   let unpaidBar = '';
@@ -11340,9 +11356,7 @@ function _quoteListInner() {
     </div>`;
     if (fStat === 'unpaid') list = list.slice().sort((a, b) => _remOf(b) - _remOf(a));   // 미수 큰 순
   }
-  const view = filters.quoteView || 'all';
-  const curMonth = filters.quoteMonth || ym;
-  const curDay = filters.quoteDay || todayStr();
+  const view = _cView, curMonth = _cMonth, curDay = _cDay;
   const WD = ['일', '월', '화', '수', '목', '금', '토'];
   /* ★ 2026-09-10 — 예전엔 상태 필터를 걸면 월/일 묶음을 통째로 껐다(_flatUnpaid).
      그래서 «월별 고르고 필터 누르면 월별이 사라지는» 문제가 있었다.
@@ -11426,6 +11440,92 @@ function quotesFilter() {
   const b = el('q-bundlebtns'); if (b) b.innerHTML = _qBundleBtnsHtml();   // '전체 선택 N건' 만 다시 (검색칸 커서 유지)
 }
 /* 견적 필터는 두 축을 겹쳐서 쓴다: (확정/미확정) × (결제·계산서·세면대) */
+/* ══════════════════════════════════════════════════════════
+   분류별 매출 × 월별 표 (2026-09-11)
+   ─────────────────────────────────────────────────────────
+   사용자: *"분류별 매출 월별로 볼 수 있게 해주고 / 분류별 매출, 분류별 금액 이렇게
+            따로 띄워져 있는데 이게 가치가 있는지? 금액 왜 다른지 / 화면이 전체적으로 정신이 없음"*
+
+   ★ 두 카드가 «같은 걸 두 번» 보여주고 있었다 (실측 2026-09-11, 견적 542장):
+       위 「분류별 매출」  = 전체 견적(미확정 포함) · 공급가   → 세라믹 935,893,608
+       아래 「분류별 금액」 = 지금 필터에 걸린 것 · VAT 포함    → 세라믹 1,023,139,228 (전체 기준)
+     기준이 둘 다 달라서 숫자가 안 맞았다. 위 카드를 없애고 **하나로 합쳤다.**
+   ★ 매출은 **확정된 건만** 센다 (사용자 선택). 미확정까지 세면 시공이 3.18억으로 부풀었다 →
+     확정만 세면 6,465만. 정산·원장의 «확정 매출»과 기준이 같아진다.
+   ★ 금액은 **공급가**가 기준 (부가세는 우리 돈이 아니다). VAT 포함은 작게 같이 적는다.
+   ══════════════════════════════════════════════════════════ */
+let _cmoYear = 0;
+function catMonthYear() { return _cmoYear || +String(todayStr()).slice(0, 4); }
+/* 분류 × 1~12월 (확정 견적만 · 공급가) */
+function catMonthData(yr) {
+  const rows = {}; LCATS.forEach(c => rows[c] = new Array(12).fill(0));
+  const tot = new Array(12).fill(0);
+  (state.quotes || []).forEach(q => {
+    if (!q.ordered) return;
+    const d = qDate(q) || ''; if (d.slice(0, 4) !== String(yr)) return;
+    const m = +d.slice(5, 7) - 1; if (!(m >= 0 && m < 12)) return;
+    const sp = quoteCatSplit(q);
+    Object.keys(sp).forEach(c => { if (rows[c]) { rows[c][m] += sp[c].sup; tot[m] += sp[c].sup; } });
+  });
+  return { rows: rows, tot: tot };
+}
+function catMonthNav(d) { _cmoYear = catMonthYear() + d; openCatMonth(); }
+function openCatMonth() {
+  const yr = catMonthYear();
+  const D = catMonthData(yr);
+  const has = LCATS.filter(c => D.rows[c].some(v => v > 0));
+  const cats = has.length ? has : LCATS;
+  const grand = D.tot.reduce((a, b) => a + b, 0);
+  const mx = Math.max(1, ...D.tot);
+  const th = (t, al) => `<th style="position:sticky;top:0;background:var(--soft);text-align:${al || 'right'};white-space:nowrap;font-size:11.5px;padding:7px 8px;z-index:1">${t}</th>`;
+  const td = (v, o) => `<td style="text-align:right;white-space:nowrap;padding:6px 8px;${(o && o.st) || ''}">${v ? fmtWon(v) : '<span style="color:var(--bd2)">·</span>'}</td>`;
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-calendar-stats"></i>분류별 매출 · 월별</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--soft);border-radius:11px;padding:8px 12px;margin-bottom:10px">
+      <button class="btn btn-sm" onclick="catMonthNav(-1)"><i class="ti ti-chevron-left"></i></button>
+      <div style="text-align:center"><div style="font-weight:800;font-size:15.5px">${yr}년</div>
+        <div style="font-size:11.5px;color:var(--t3)">확정 매출 <b style="color:var(--gd)">${fmtWon(grand)}</b>원 <span style="color:var(--t3)">(공급가)</span></div></div>
+      <button class="btn btn-sm" onclick="catMonthNav(1)"><i class="ti ti-chevron-right"></i></button>
+    </div>
+    <div style="font-size:11.5px;color:var(--t3);margin-bottom:8px;line-height:1.6">
+      <b>확정된 견적만</b> 셉니다 · 금액은 <b>공급가</b>(부가세 제외) · 한 견적에 여러 분류가 섞여 있으면 품목 금액 비율대로 나눠 담습니다.
+    </div>
+    <div class="tbl-wrap" style="max-height:52vh;overflow:auto"><table class="tbl" style="font-size:12px;min-width:760px">
+      <thead><tr>${th('분류', 'left')}${Array.from({ length: 12 }, (_, i) => th((i + 1) + '월'))}${th('합계')}</tr></thead>
+      <tbody>
+        ${cats.map(c => {
+          const sum = D.rows[c].reduce((a, b) => a + b, 0);
+          return `<tr>
+            <td style="white-space:nowrap;padding:6px 8px;font-weight:700;color:${QCAT_COL[c]}"><i class="ti ti-${QCAT_ICON[c] || 'tag'}"></i> ${esc(c)}</td>
+            ${D.rows[c].map(v => td(v)).join('')}
+            ${td(sum, { st: 'font-weight:800;color:' + QCAT_COL[c] })}</tr>`;
+        }).join('')}
+        <tr style="background:var(--soft)">
+          <td style="white-space:nowrap;padding:7px 8px;font-weight:800">합계</td>
+          ${D.tot.map(v => td(v, { st: 'font-weight:700' })).join('')}
+          ${td(grand, { st: 'font-weight:800;color:var(--gd)' })}</tr>
+      </tbody></table></div>
+    <div style="margin-top:10px">
+      <div style="font-size:11.5px;color:var(--t3);font-weight:700;margin-bottom:6px">월별 합계</div>
+      <div style="display:flex;align-items:flex-end;gap:4px;height:64px">
+        ${D.tot.map((v, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px" title="${i + 1}월 ${fmtWon(v)}원">
+          <div style="width:100%;background:${v ? 'var(--gd)' : 'var(--bd2)'};border-radius:3px 3px 0 0;height:${Math.max(2, Math.round(v / mx * 46))}px"></div>
+          <div style="font-size:9.5px;color:var(--t3)">${i + 1}</div></div>`).join('')}
+      </div>
+    </div>
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">닫기</button><button class="btn btn-pri" style="flex:1" onclick="catMonthXls()"><i class="ti ti-file-spreadsheet"></i>엑셀 저장</button></div>`);
+}
+function catMonthXls() {
+  if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후 다시'); return; }
+  const yr = catMonthYear(), D = catMonthData(yr);
+  const head = ['분류'].concat(Array.from({ length: 12 }, (_, i) => (i + 1) + '월')).concat(['합계']);
+  const aoa = [['분류별 매출 · 월별 — ' + yr + '년 (확정 견적만 · 공급가)'], ['출력일 ' + todayStr()], [], head];
+  LCATS.forEach(c => aoa.push([c].concat(D.rows[c]).concat([D.rows[c].reduce((a, b) => a + b, 0)])));
+  aoa.push(['합계'].concat(D.tot).concat([D.tot.reduce((a, b) => a + b, 0)]));
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 14 }].concat(Array.from({ length: 13 }, () => ({ wch: 13 })));
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '분류별월별');
+  XLSX.writeFile(wb, '분류별매출_월별_' + yr + '.xlsx');
+}
 function quoteSetView(v) { filters.quoteView = v; renderQuote(); }   // 버튼 자체가 위쪽 카드에 있어 전체를 다시 그린다
 function quoteSetCat(v) { filters.qCat = v; quotesFilter(); }
 function quoteSetConf(v) { filters.qConf = v; quotesFilter(); }
