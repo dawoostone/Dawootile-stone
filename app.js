@@ -2566,7 +2566,7 @@ function openAlerts() {
    모달 헬퍼
    =================================================================== */
 function openModal(html) { el('sheet').innerHTML = html; el('modal').classList.add('open'); document.body.style.overflow = 'hidden'; }
-function closeModal() { el('modal').classList.remove('open'); document.body.style.overflow = ''; _holdLinkSite = null; _holdConfirm = null; }
+function closeModal() { el('modal').classList.remove('open'); document.body.style.overflow = ''; _holdLinkSite = null; _holdConfirm = null; const _sh = el('sheet'); if (_sh) _sh.style.maxWidth = ''; }   // ★ 넓힌 창(openWide)도 원래대로
 el('modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 // Esc 키: 자동완성 팝업 먼저, 없으면 모달 닫기
 document.addEventListener('keydown', e => {
@@ -11513,6 +11513,8 @@ function openCatMonth() {
       </div>
     </div>
     <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">닫기</button><button class="btn btn-pri" style="flex:1" onclick="catMonthXls()"><i class="ti ti-file-spreadsheet"></i>엑셀 저장</button></div>`);
+  /* 12개월 표는 기본 창(580px)에 안 들어간다 — 이 창만 넓힌다. closeModal 이 되돌린다. */
+  const sh = el('sheet'); if (sh) sh.style.maxWidth = '1000px';
 }
 function catMonthXls() {
   if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후 다시'); return; }
