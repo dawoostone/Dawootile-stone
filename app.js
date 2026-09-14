@@ -13015,6 +13015,7 @@ function basinDrawNew() {
     L: 1200, W: 550, H: 170,
     sl: false, sr: false, sf: true,          // 치마 — 좌 / 우 / 전
     mold: 'square-550x350', moldD: 150, bowls: 1,
+    moldFlip: '',                            // ★ 물방울형 좌우 반전 ('' | 'flip' | 'out' | 'in')
     offL: '', offR: '', offF: '', offB: '', offMid: '',   // 비우면 센터
     tap: true, tapDia: 35, tapFromBowl: 60, tapFromBack: '',   // ★ 기본은 «볼 뒤쪽 → 수전 중심 60» (뒤 모서리 기준은 예전 도면 호환용)
     drainOut: 62, drainIn: 45,                // ★ 배수구 타공 Ø62 / Ø45
@@ -13139,8 +13140,53 @@ function _bdLead(cx, cy, r, dx, dy, label, o) {
   return _bdL(sx, sy, ex, ey, { w: 0.75 }) + _bdL(ex, ey, ex + tail, ey, { w: 0.75 })
     + _bdT(ex + tail + (dx >= 0 ? 3 : -3), ey + 4, label, { a: dx >= 0 ? 'start' : 'end', fs: o.fs || 12.5 });
 }
-/* 볼 모양 — 금형 종류대로 */
-function _bdBowl(x, y, w, h, g, rpx) {
+/* ══════════════════════════════════════════════════════════
+   ★★ 물방울형 볼 «좌우 반전» (2026-09-14)
+   ─────────────────────────────────────────────────────────
+   사용자: *"세면대 도면에서 물방울형 볼은 좌우 반전도 필요"*
+
+   물방울형(水滴盆)은 한쪽은 둥글고 반대쪽은 뾰족하게 빠지는 «비대칭» 모양이다.
+   그래서 어느 쪽이 둥근 쪽인지 도면에 못 박아 두지 않으면 공장이 반대로 만든다.
+   (타원·사각·원형은 좌우가 똑같아서 뒤집어도 그림이 안 바뀐다 → 물방울형에만 뜬다)
+
+   d.moldFlip 네 가지
+     ''      기본 — 둥근쪽 왼쪽
+     'flip'  좌우 반전 — 둥근쪽 오른쪽
+     'out'   쌍볼 대칭 — 둥근쪽이 바깥 (왼볼 왼쪽 · 오른볼 오른쪽)
+     'in'    쌍볼 대칭 — 둥근쪽이 안쪽  (왼볼 오른쪽 · 오른볼 왼쪽)
+   'out'/'in' 은 볼이 2개일 때만 뜻이 있다 — 1개면 기본으로 본다.
+
+   ★ «볼 자기 중심선» 을 기준으로 거울처럼 뒤집는다(translate + scale(-1,1)).
+     볼 위치·치수·배수구·수전 타공은 하나도 안 움직인다.
+   ══════════════════════════════════════════════════════════ */
+const BD_FLIP_TXT = {
+  '': { ko: '둥근쪽 왼쪽', cn: '圆头在左' },
+  'flip': { ko: '둥근쪽 오른쪽 (좌우 반전)', cn: '圆头在右（左右翻转）' },
+  'out': { ko: '대칭 · 둥근쪽 바깥', cn: '对称 · 圆头朝外' },
+  'in': { ko: '대칭 · 둥근쪽 안쪽', cn: '对称 · 圆头朝内' }
+};
+/* 이 볼(bi번째)을 뒤집어 그릴까? — 물방울형이 아니면 언제나 아니오 */
+function bdFlipOf(d, bi) {
+  const M = basinMoldOf(d && d.mold);
+  if (!M || M.g !== 'drop') return false;
+  const v = String((d && d.moldFlip) || '');
+  if (v === 'flip') return true;
+  const two = (+(d && d.bowls) === 2);
+  if (two && v === 'out') return bi === 1;   // 오른쪽 볼만 뒤집으면 둥근쪽이 양쪽 바깥
+  if (two && v === 'in') return bi === 0;    // 왼쪽 볼만 뒤집으면 둥근쪽이 가운데로
+  return false;
+}
+/* 도면·목록에 적을 방향 한 줄 (물방울형이 아니면 빈 문자열) */
+function bdFlipText(d, lang) {
+  const M = basinMoldOf(d && d.mold);
+  if (!M || M.g !== 'drop') return '';
+  let v = String((d && d.moldFlip) || '');
+  if (+(d && d.bowls) !== 2 && (v === 'out' || v === 'in')) v = '';
+  const t = BD_FLIP_TXT[v] || BD_FLIP_TXT[''];
+  return lang === 'cn' ? t.cn : t.ko;
+}
+/* 볼 모양 — 금형 종류대로 (flip: 물방울형 좌우 반전) */
+function _bdBowl(x, y, w, h, g, rpx, flip) {
   const st = ' fill="none" stroke="#111" stroke-width="1.3"';
   if (g === 'oval') return `<ellipse cx="${(x + w / 2).toFixed(1)}" cy="${(y + h / 2).toFixed(1)}" rx="${(w / 2).toFixed(1)}" ry="${(h / 2).toFixed(1)}"${st}/>`;
   if (g === 'round') {
@@ -13149,10 +13195,11 @@ function _bdBowl(x, y, w, h, g, rpx) {
   }
   if (g === 'drop') {
     const cy = y + h / 2, r = h / 2;
-    return `<path d="M${(x + r).toFixed(1)},${y.toFixed(1)} A${r.toFixed(1)},${r.toFixed(1)} 0 0 0 ${(x + r).toFixed(1)},${(y + h).toFixed(1)}`
+    const p = `<path d="M${(x + r).toFixed(1)},${y.toFixed(1)} A${r.toFixed(1)},${r.toFixed(1)} 0 0 0 ${(x + r).toFixed(1)},${(y + h).toFixed(1)}`
       + ` C${(x + w * 0.55).toFixed(1)},${(y + h).toFixed(1)} ${(x + w * 0.9).toFixed(1)},${(cy + h * 0.22).toFixed(1)} ${(x + w).toFixed(1)},${(cy + h * 0.06).toFixed(1)}`
       + ` L${(x + w).toFixed(1)},${(cy - h * 0.06).toFixed(1)}`
       + ` C${(x + w * 0.9).toFixed(1)},${(cy - h * 0.22).toFixed(1)} ${(x + w * 0.55).toFixed(1)},${y.toFixed(1)} ${(x + r).toFixed(1)},${y.toFixed(1)} Z"${st}/>`;
+    return flip ? `<g transform="translate(${(2 * x + w).toFixed(1)},0) scale(-1,1)">${p}</g>` : p;
   }
   const rr = Math.max(2, Math.min(rpx || 12, w / 3, h / 3));
   return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="${rr.toFixed(1)}" ry="${rr.toFixed(1)}"${st}/>`;
@@ -13210,7 +13257,9 @@ function basinDrawSvg(d, lang) {
 
   /* ── ② 정보표 (2열 × 3행) ── */
   const iy = 8 + hdH, irh = 36, icw = (Wc - 16) / 2, lw = 108;
-  const moldTxt = `${K(M.ko, M.cn)} ${M.l}×${M.w}×${+d.moldD || 150}` + (A.n === 2 ? K(' · 2개', ' ×2') : '');
+  const _flipTxt = bdFlipText(d, lang);
+  const moldTxt = `${K(M.ko, M.cn)} ${M.l}×${M.w}×${+d.moldD || 150}` + (A.n === 2 ? K(' · 2개', ' ×2') : '')
+    + (_flipTxt ? ' · ' + _flipTxt : '');
   const cells = [
     [K('거 래 처', '客　户'), (cn ? (d.clientCn || d.client || '主恩石材') : (d.client || '')), K('주문번호', '订单编号'), (d.orderNo || '')],
     [K('재　료', '材　料'), (cn ? basinStoneCn(d.stone) : (d.stone || '')), K('볼 금형', '盆　型'), moldTxt],
@@ -13247,7 +13296,7 @@ function basinDrawSvg(d, lang) {
   const tapFB = Math.max(0, TP.fromBack);
   A.xs.forEach((bx0, bi) => {
     const bx = px + bx0 * sc;
-    s += _bdBowl(bx, by, bwid, bh, M.g, 60 * sc);
+    s += _bdBowl(bx, by, bwid, bh, M.g, 60 * sc, bdFlipOf(d, bi));
     const cx = bx + bwid / 2, cy = by + bh / 2;
     if (dOut > 0) s += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${(dOut / 2 * sc).toFixed(1)}" fill="none" stroke="#111" stroke-width="1"/>`;
     if (dIn > 0) s += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${(dIn / 2 * sc).toFixed(1)}" fill="none" stroke="#111" stroke-width="1"/>`;
@@ -13406,6 +13455,14 @@ function _openDrawFor(coll, docId, drawId) {
       <div class="fld"><label>볼 금형<span class="req">*</span></label><select id="bd-mold" onchange="basinDrawPreview()" style="${inp}">${moldOpts}</select></div>
       <div class="fld"><label>볼 개수</label><select id="bd-bowls" onchange="basinDrawPreview()" style="${inp}"><option value="1" ${+_bdCur.bowls !== 2 ? 'selected' : ''}>1개</option><option value="2" ${+_bdCur.bowls === 2 ? 'selected' : ''}>2개 (쌍볼)</option></select></div>
       <div class="fld"><label>금형 깊이</label><input id="bd-moldD" inputmode="numeric" value="${esc(_bdCur.moldD)}" oninput="basinDrawPreview()" style="${inp}"></div>
+      <div class="fld full" id="bd-flipwrap" style="display:none;background:#f2f7f2;border:1.5px solid #cfe3cf;border-radius:11px;padding:10px 12px">
+        <label style="color:#2f6b3a">물방울형 방향 <span style="font-weight:500;color:#5a8a63">— 어느 쪽이 둥근 쪽인지 도면에 적힙니다</span></label>
+        <select id="bd-moldFlip" onchange="basinDrawPreview()" style="${inp};margin-top:6px">
+          ${[['', '기본 — 둥근쪽 왼쪽'], ['flip', '좌우 반전 — 둥근쪽 오른쪽'], ['out', '쌍볼 대칭 — 둥근쪽 바깥'], ['in', '쌍볼 대칭 — 둥근쪽 안쪽']]
+      .map(o => `<option value="${o[0]}" ${String(_bdCur.moldFlip || '') === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}
+        </select>
+        <div id="bd-flip-hint" style="font-size:11px;color:#2f6b3a;margin-top:5px"></div>
+      </div>
       <div class="fld full"><label>볼 위치 띄움 <span style="color:var(--t3);font-weight:500">(비우면 가운데)</span></label>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:7px">
           <input id="bd-offL" inputmode="numeric" placeholder="좌측 여백" value="${esc(_bdCur.offL)}" oninput="basinDrawPreview()" style="${inp}">
@@ -13473,6 +13530,8 @@ function basinDrawRead() {
   d.L = _numv(g('bd-L')) || 0; d.W = _numv(g('bd-W')) || 0; d.H = _numv(g('bd-H')) || 0;
   d.stone = g('bd-stone'); d.mold = g('bd-mold') || d.mold;
   d.bowls = +g('bd-bowls') === 2 ? 2 : 1; d.moldD = _numv(g('bd-moldD')) || 150;
+  d.moldFlip = String(g('bd-moldFlip') || '');   // ★ 물방울형 좌우 반전
+  if (d.bowls !== 2 && (d.moldFlip === 'out' || d.moldFlip === 'in')) d.moldFlip = '';
   d.sl = !!(el('bd-sl') && el('bd-sl').checked); d.sr = !!(el('bd-sr') && el('bd-sr').checked); d.sf = !!(el('bd-sf') && el('bd-sf').checked);
   ['offL', 'offR', 'offF', 'offB', 'offMid'].forEach(k => { d[k] = String(g('bd-' + k) || '').trim(); });
   d.tap = g('bd-tap') !== '0'; d.tapDia = _numv(g('bd-tapDia')) || 35;
@@ -13487,6 +13546,23 @@ function basinDrawRead() {
 }
 function basinDrawPreview() {
   const d = basinDrawRead(); const box = el('bd-prev'); if (!box) return;
+  /* ★ 물방울형 방향 칸 — 물방울형을 골랐을 때만 보인다 */
+  const _fw = el('bd-flipwrap'), _fs = el('bd-moldFlip');
+  if (_fw) {
+    const _isDrop = basinMoldOf(d.mold).g === 'drop', _two = (+d.bowls === 2);
+    _fw.style.display = _isDrop ? '' : 'none';
+    if (_fs) {
+      Array.prototype.forEach.call(_fs.options, o => {
+        if (o.value === 'out' || o.value === 'in') { o.hidden = !_two; o.disabled = !_two; }
+      });
+      if (!_two && (_fs.value === 'out' || _fs.value === 'in')) { _fs.value = ''; d.moldFlip = ''; }
+    }
+    const _fh = el('bd-flip-hint');
+    if (_fh) _fh.innerHTML = _isDrop
+      ? `도면에 <b>${esc(bdFlipText(d, 'ko'))}</b> / 중문본 <b>${esc(bdFlipText(d, 'cn'))}</b> 으로 적힙니다`
+      + (_two ? '' : ' <span style="color:#8a8f8a">· 쌍볼 대칭은 볼 2개일 때만 고를 수 있습니다</span>')
+      : '';
+  }
   const A = basinDrawLayout(d);
   const bad = [];
   if (!(A.L > 0) || !(A.W > 0)) bad.push('기장·폭을 입력하세요');
@@ -13565,7 +13641,7 @@ function basinDrawListHtml(doc, coll) {
     const M = basinMoldOf(d.mold);
     return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--bd2);border-radius:10px;margin-bottom:6px">
       <div style="flex:1;min-width:0">
-        <div style="font-weight:700;font-size:13.5px">${esc(d.L)}×${esc(d.W)}×${esc(d.H)} <span style="font-weight:500;color:var(--t3)">· ${esc(M.ko)} ${M.l}×${M.w}${+d.bowls === 2 ? ' ×2' : ''}</span></div>
+        <div style="font-weight:700;font-size:13.5px">${esc(d.L)}×${esc(d.W)}×${esc(d.H)} <span style="font-weight:500;color:var(--t3)">· ${esc(M.ko)} ${M.l}×${M.w}${+d.bowls === 2 ? ' ×2' : ''}</span>${M.g === 'drop' ? `<span style="font-weight:600;font-size:11.5px;color:#2f6b3a;background:#eaf3ea;border-radius:6px;padding:1px 6px;margin-left:5px">${esc(bdFlipText(d, 'ko'))}</span>` : ''}</div>
         <div style="font-size:11.5px;color:var(--t3)">${esc(basinSkirtText(d, 'ko'))} · ${d.tap ? '수전타공 Ø' + esc(d.tapDia) : '매립수전(타공X)'}${d.stone ? ' · ' + esc(d.stone) : ''}</div>
       </div>
       <button class="btn btn-sm" onclick="${openFn}('${doc.id}','${d.id}')"><i class="ti ti-edit"></i></button>
