@@ -11603,6 +11603,12 @@ function quoteDocHtml(q) {
 .sum .tot td{background:#201c17;color:#fff;font-size:15px;font-weight:700;border:none;padding:13px 14px;letter-spacing:1px}
 .sum .tot td:last-child{color:#e2c48c}
 .sum .dep td{background:#f7f3ea;font-weight:700}.sum .dep .k{color:#1a56b8}.sum .dep .v{color:#1a56b8}
+/* ★ 할인(D/C) — 고객이 바로 알아보게. 문서 톤(베이지·먹색)을 깨지 않는 선에서만 강조 */
+.sum .dc td{background:#fcf3f1;border-bottom:1px solid #f0dcd6}
+.sum .dc .k{color:#a8341f;font-weight:700;box-shadow:inset 3px 0 0 #c0341d}
+.sum .dc .v{color:#c0341d;font-weight:800;font-size:13.5px}
+.sum .tot .was{display:block;font-size:10px;font-weight:500;color:#a89268;letter-spacing:.4px;margin-bottom:3px}
+.sum .tot .was s{color:#c3ac82}
 .notice{margin-top:15px;border:1px solid #cbb089;border-radius:2px;overflow:hidden}
 .notice .nh{background:#8a7350;color:#fff;font-weight:700;font-size:11.5px;padding:8px 13px;letter-spacing:1px}
 .notice ul{margin:0;padding:10px 12px 10px 30px;font-size:11px;line-height:1.75;color:#6b5a3c;font-weight:500;background:#faf6ee}
@@ -11625,8 +11631,8 @@ function quoteDocHtml(q) {
     <table class="sum">
       <tr><td class="k">공급가액</td><td class="v">${fmtWon(q.supply)} 원</td></tr>
       <tr><td class="k">부가세 (10%)</td><td class="v">${fmtWon(q.vat)} 원</td></tr>
-      ${(+q.discount || 0) > 0 ? `<tr><td class="k">할인 (D/C)</td><td class="v" style="color:#c0341d">- ${fmtWon(q.discount)} 원</td></tr>` : ''}
-      <tr class="tot"><td>합계금액</td><td style="text-align:right">${fmtWon(q.total)} 원</td></tr>
+      ${(+q.discount || 0) > 0 ? `<tr class="dc"><td class="k">할인 (D/C)</td><td class="v">- ${fmtWon(q.discount)} 원</td></tr>` : ''}
+      <tr class="tot"><td>합계금액</td><td style="text-align:right">${(+q.discount || 0) > 0 ? `<span class="was">할인 전 <s>${fmtWon((+q.supply || 0) + (+q.vat || 0))} 원</s></span>` : ''}${fmtWon(q.total)} 원</td></tr>
       ${(() => { const d = quoteDeposit(q); return d ? `<tr class="dep"><td class="k">계약금 (${_pctTxt(d.pct)}%)</td><td class="v">${fmtWon(d.amt)} 원</td></tr>
       <tr><td class="k">잔금</td><td class="v">${fmtWon(d.rest)} 원</td></tr>` : ''; })()}
     </table>
@@ -12373,6 +12379,12 @@ function combinedBillDocHtml(qs, picked, extraDc) {
 .sum .tot td{background:#201c17;color:#fff;font-size:15px;font-weight:700;border:none;padding:13px 14px;letter-spacing:1px}
 .sum .tot td:last-child{color:#e2c48c}
 .sum .dep td{background:#f7f3ea;font-weight:700}.sum .dep .k{color:#1a56b8}.sum .dep .v{color:#1a56b8}
+/* ★ 할인(D/C) — 견적서와 같은 강조 (2026-09-14) */
+.sum .dc td{background:#fcf3f1;border-bottom:1px solid #f0dcd6}
+.sum .dc .k{color:#a8341f;font-weight:700;box-shadow:inset 3px 0 0 #c0341d}
+.sum .dc .v{color:#c0341d;font-weight:800;font-size:13.5px}
+.sum .tot .was{display:block;font-size:10px;font-weight:500;color:#a89268;letter-spacing:.4px;margin-bottom:3px}
+.sum .tot .was s{color:#c3ac82}
 .notice{margin-top:15px;border:1px solid #cbb089;border-radius:2px;overflow:hidden}
 .notice .nh{background:#8a7350;color:#fff;font-weight:700;font-size:11.5px;padding:8px 13px;letter-spacing:1px}
 .notice ul{margin:0;padding:10px 12px 10px 30px;font-size:11px;line-height:1.75;color:#6b5a3c;font-weight:500;background:#faf6ee}
@@ -12395,9 +12407,9 @@ function combinedBillDocHtml(qs, picked, extraDc) {
     <table class="sum">
       <tr><td class="k">공급가액 합계</td><td class="v">${fmtWon(supply)} 원</td></tr>
       <tr><td class="k">부가세 (10%)</td><td class="v">${fmtWon(vat)} 원</td></tr>
-      ${disc > 0 ? `<tr><td class="k">할인 (D/C)</td><td class="v" style="color:#c0341d">- ${fmtWon(disc)} 원</td></tr>` : ''}
-      ${_xdc > 0 ? `<tr><td class="k">${disc > 0 ? '총액 할인 (D/C)' : '할인 (D/C)'}</td><td class="v" style="color:#c0341d">- ${fmtWon(_xdc)} 원</td></tr>` : ''}
-      <tr class="tot"><td>청구 합계</td><td style="text-align:right">${fmtWon(total - _xdc)} 원</td></tr>
+      ${disc > 0 ? `<tr class="dc"><td class="k">할인 (D/C)</td><td class="v">- ${fmtWon(disc)} 원</td></tr>` : ''}
+      ${_xdc > 0 ? `<tr class="dc"><td class="k">${disc > 0 ? '총액 할인 (D/C)' : '할인 (D/C)'}</td><td class="v">- ${fmtWon(_xdc)} 원</td></tr>` : ''}
+      <tr class="tot"><td>청구 합계</td><td style="text-align:right">${(disc + _xdc) > 0 ? `<span class="was">할인 전 <s>${fmtWon(supply + vat)} 원</s></span>` : ''}${fmtWon(total - _xdc)} 원</td></tr>
     </table>
   </div>
   ${hasBasin ? `<div class="notice"><div class="nh">⚠ 세면대 주문제작 특이사항 (필독)</div><ul>${BASIN_NOTICE.map(l => `<li>${e(l)}</li>`).join('')}</ul></div>` : ''}
