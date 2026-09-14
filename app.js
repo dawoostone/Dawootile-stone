@@ -5231,7 +5231,13 @@ function quoteRecalc() {
   const total = raw - dc;
   if (el('q-supply')) el('q-supply').textContent = fmtWon(supply);
   if (el('q-vat')) el('q-vat').textContent = fmtWon(vat);
-  if (el('q-dcshow')) el('q-dcshow').textContent = dc > 0 ? ('-' + fmtWon(dc)) : '0';
+  /* ★ 할인(D/C) 표시 — 넣으면 빨간 박스가 열리고 합계 옆에 «할인 반영» 딱지가 붙는다 */
+  const _dcOn = dc > 0;
+  if (el('q-dcshow')) el('q-dcshow').textContent = _dcOn ? ('− ' + fmtWon(dc) + '원') : '0';
+  if (el('q-dcraw')) el('q-dcraw').textContent = fmtWon(raw) + '원';
+  if (el('q-dcbox')) el('q-dcbox').style.display = _dcOn ? '' : 'none';
+  if (el('q-dctag')) el('q-dctag').style.display = _dcOn ? '' : 'none';
+  if (el('q-dcwrap')) { const w = el('q-dcwrap'); w.style.borderColor = _dcOn ? '#c0341d' : '#f0c8c2'; w.style.background = _dcOn ? '#fff0ee' : '#fff6f5'; }
   if (el('q-total')) el('q-total').textContent = fmtWon(total);
   if (el('q-total-foot')) el('q-total-foot').textContent = fmtWon(total) + '원';
   // 계약금 — 합계금액의 몇 %
@@ -5454,16 +5460,28 @@ function renderQuoteForm() {
         <div style="background:var(--soft);border-radius:11px;padding:12px 14px;max-width:360px;margin-left:auto">
           <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:5px"><span style="color:var(--t2)">공급가액</span><b id="q-supply">0</b></div>
           <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px"><span style="color:var(--t2)">부가세 (10%)</span><b id="q-vat">0</b></div>
-          <div style="display:flex;justify-content:space-between;align-items:center;font-size:14px;margin-bottom:6px"><span style="color:var(--t2)">할인 (D/C)</span><input id="q-dc" inputmode="numeric" value="${esc(editing ? (v.discount || '') : '')}" oninput="quoteRecalc()" placeholder="0" style="width:130px;text-align:right;font-size:14px;padding:6px 9px;border:1.5px solid var(--bd2);border-radius:8px;color:#c0341d;font-weight:700"></div>
-          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;justify-content:flex-end;align-items:center">
-            <span style="font-size:10.5px;color:var(--t3);margin-right:auto">합계 내림(절사)</span>
-            <button type="button" class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:11.5px" onclick="quoteTruncate(1000)">천원</button>
-            <button type="button" class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:11.5px" onclick="quoteTruncate(10000)">만원</button>
-            <button type="button" class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:11.5px" onclick="quoteTruncate(100000)">십만원</button>
-            <button type="button" class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:11.5px" onclick="quoteTruncate(1000000)">백만원</button>
-            <button type="button" class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:11.5px" onclick="quoteDcClear()">해제</button>
+          <!-- ★ 할인(D/C) — 잘 보이게 빨간 박스로 (2026-09-14 사용자 요청) -->
+          <div id="q-dcwrap" style="border:1.5px solid #f0c8c2;background:#fff6f5;border-radius:11px;padding:9px 11px;margin:8px 0 9px">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+              <span style="font-size:13.5px;font-weight:800;color:#c0341d;white-space:nowrap"><i class="ti ti-tag"></i> 할인 (D/C)</span>
+              <span style="display:inline-flex;align-items:center;gap:5px">
+                <input id="q-dc" inputmode="numeric" value="${esc(editing ? (v.discount || '') : '')}" oninput="quoteRecalc()" placeholder="0" style="width:132px;text-align:right;font-size:16px;padding:8px 10px;border:2px solid #e8a99f;border-radius:9px;color:#c0341d;font-weight:800;background:#fff">
+                <b style="color:#c0341d;font-size:13px">원</b></span>
+            </div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:7px;justify-content:flex-end;align-items:center">
+              <span style="font-size:10.5px;color:#a2560f;margin-right:auto;font-weight:600">합계 내림(절사)</span>
+              <button type="button" class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:11.5px" onclick="quoteTruncate(1000)">천원</button>
+              <button type="button" class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:11.5px" onclick="quoteTruncate(10000)">만원</button>
+              <button type="button" class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:11.5px" onclick="quoteTruncate(100000)">십만원</button>
+              <button type="button" class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:11.5px" onclick="quoteTruncate(1000000)">백만원</button>
+              <button type="button" class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:11.5px;color:#c0341d" onclick="quoteDcClear()">해제</button>
+            </div>
+            <div id="q-dcbox" style="display:none;background:#fff;border:1.5px solid #f0c8c2;border-radius:9px;padding:8px 11px;margin-top:7px">
+              <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;color:#c0341d;font-weight:700">할인 적용</span><b id="q-dcshow" style="font-size:15px;color:#c0341d">0</b></div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-top:4px;border-top:1px dashed #f0c8c2"><span style="font-size:12px;color:var(--t2)">할인 전 합계</span><b id="q-dcraw" style="font-size:13.5px;color:var(--t2)">0원</b></div>
+            </div>
           </div>
-          <div style="display:flex;justify-content:space-between;font-size:17px;border-top:1px solid var(--bd2);padding-top:8px"><span style="font-weight:700">합계금액</span><b id="q-total" style="color:var(--gd)">0</b></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:17px;border-top:1px solid var(--bd2);padding-top:8px"><span style="font-weight:700">합계금액<span id="q-dctag" style="display:none;font-size:11px;font-weight:700;color:#c0341d;margin-left:6px;background:#ffecea;border:1px solid #f0c8c2;border-radius:7px;padding:1px 6px">할인 반영</span></span><b id="q-total" style="color:var(--gd)">0</b></div>
           <div style="border-top:1px dashed var(--bd2);margin-top:9px;padding-top:8px">
             <div style="display:flex;justify-content:space-between;align-items:center;font-size:13.5px;margin-bottom:6px">
               <span style="color:var(--t2)">계약금 <span style="font-size:10.5px;color:var(--t3)">(합계금액 기준)</span></span>
