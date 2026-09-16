@@ -6559,7 +6559,7 @@ function clientAllocDetail(client) {
   if (!key) return out;
   const qs = (state.quotes || []).filter(q => q.ordered && _normName(q.client || '') === key)
     .slice().sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.docNo || '').localeCompare(b.docNo || ''));
-  const ins = (state.banktx || []).filter(t => txIsIn(t) && _normName(txClientOf(t) || '') === key)
+  const ins = (state.banktx || []).filter(t => txIsIn(t) && !txSkip(t) && _normName(txClientOf(t) || '') === key)
     .map(t => ({ t: t, d: String(t.date || ''), amt: txMoney(t), left: txMoney(t), to: [] }))
     .sort((a, b) => a.d.localeCompare(b.d) || (a.t.dt || '').localeCompare(b.t.dt || ''));
   qs.forEach(q => {
@@ -7093,10 +7093,51 @@ async function bankRun() {
    ══════════════════════════════════════════════════════════ */
 let _bkRows = [];   // 지금 화면에 뜬 줄 — 엑셀 내려받기가 이걸 그대로 쓴다
 
+/* ══════════════════════════════════════════════════════════
+   ★★ «견적과 상관없는 입금» 무시하기 (2026-09-16)
+   ─────────────────────────────────────────────────────────
+   사용자: *"견적과 상관 없는 입금내역은 거래처 대치 안하고 무시하고 싶음"*
+
+   통장에는 장사와 무관한 돈도 들어온다 — 이자수익·잡이익·보험금 환급·
+   대표 개인 이체·계좌 사이 자금이동 같은 것들.
+   예전에는 이런 것도 «어느 거래처 돈인지 모르는 입금»으로 계속 남아
+   빨간 알림이 안 없어지고, 거래처를 억지로 붙이면 그 거래처 미수가 틀어졌다.
+
+   이제 **「무시」 한 번**이면 끝난다. 무시한 입금은
+     · 「어느 거래처 돈인지 모르는 입금」 개수·알림에서 빠지고
+     · 거래처 지정 화면에도 안 뜨고
+     · **미수 계산에 아예 안 들어간다** (거래처가 붙어 있어도 빠진다)
+     · 통장 내역에는 그대로 남아 있다 — 지우는 게 아니다. 「무시함」 칸에서 언제든 되돌린다.
+   ══════════════════════════════════════════════════════════ */
+function txSkip(t) { return !!(t && t.noQuote); }
 /* 거래처를 아직 못 정한 입금 — 사람이 손봐 줄 게 이것 하나뿐이다.
    거래처만 정해지면 그 거래처 미수에서 자동으로 빠진다(견적에 붙이는 작업은 없어졌다). */
-function txNoClient(t) { return txIsIn(t) && !txClientOf(t); }
+function txNoClient(t) { return txIsIn(t) && !txClientOf(t) && !txSkip(t); }
 function bankNoClientCount() { try { return (state.banktx || []).filter(txNoClient).length; } catch (e) { return 0; } }
+/* 한 건 무시 / 되돌리기 */
+async function txSkipSet(id, on) {
+  const t = (state.banktx || []).find(x => x.id === id); if (!t) return;
+  try {
+    await Store.update('banktx', id, on
+      ? { noQuote: true, noQuoteBy: (me && me.name) || '', noQuoteAt: Date.now() }
+      : { noQuote: false });
+    moneyBust();
+    toast(on ? '무시함 — 미수 계산에서 빠집니다' : '되돌렸습니다');
+    setTimeout(renderLedger, 250);
+  } catch (e) { toast('실패: ' + ((e && e.message) || e)); }
+}
+/* 같은 입금자명 여러 건을 한꺼번에 */
+async function txSkipPayer(pkey) {
+  const list = (state.banktx || []).filter(t => txIsIn(t) && !txSkip(t) && (t.pkey || _bankKey(t.payer)) === pkey);
+  if (!list.length) { toast('무시할 건이 없습니다'); return; }
+  const nm = (list[0].payer || '').trim() || '(이름 없음)';
+  const sum = list.reduce((a, t) => a + txMoney(t), 0);
+  if (!confirm('「' + nm + '」 이름으로 들어온 입금 ' + list.length + '건 (' + fmtWon(sum) + '원)을\n견적과 무관한 돈으로 보고 무시할까요?\n\n통장 내역에는 그대로 남고, 언제든 되돌릴 수 있습니다.')) return;
+  let n = 0;
+  for (const t of list) { try { await Store.update('banktx', t.id, { noQuote: true, noQuoteBy: (me && me.name) || '', noQuoteAt: Date.now() }); n++; } catch (e) { } }
+  moneyBust(); toast(n + '건 무시함');
+  setTimeout(renderLedger, 300);
+}
 /* 견적 목록 위 알림 — 거래처를 못 정한 입금이 있으면 알려준다 */
 function _pmBanner() {
   if (!canLedger()) return '';
@@ -7143,6 +7184,9 @@ function bankRows() {
   const amtP = qy ? quoteAmtPred(qy) : null;      // 220만 · 1000만~3000만 · 500만이상 같은 금액 검색
   const list = (state.banktx || []).filter(t => {
     if (!txIsIn(t)) return false;                    // ★ 출금은 정산 › 출금 에서 본다 (관리자 전용)
+    /* ★ 무시한 입금은 «무시함» 칸에서만 보인다 */
+    if (kind === 'skip') { if (!txSkip(t)) return false; }
+    else if (txSkip(t)) return false;
     if (kind === 'noclient' && txClientOf(t)) return false;
     const d = t.date || '';
     if (d < R.sd || d > R.ed) return false;
@@ -7160,7 +7204,8 @@ function bankRows() {
 function _bankSumInner() {
   const si = _bkRows.reduce((a, t) => a + txMoney(t), 0);
   const nc = _bkRows.filter(txNoClient).length;
-  return `<span style="font-size:12.5px;color:var(--t2)"><b>${_bkRows.length}건</b>${nc ? ` <span style="color:var(--amber-t)">· 거래처 미지정 ${nc}건</span>` : ''}</span>
+  const _sk = (filters.bankKind === 'skip');
+  return `<span style="font-size:12.5px;color:var(--t2)"><b>${_bkRows.length}건</b>${nc ? ` <span style="color:var(--amber-t)">· 거래처 미지정 ${nc}건</span>` : ''}${_sk ? ` <span style="color:var(--t3)">· 견적과 무관으로 빼 둔 입금입니다 (미수에 안 들어갑니다)</span>` : ''}</span>
     <span style="margin-left:auto;font-size:12px;color:var(--t3)">입금 합계 <b style="font-size:15px;color:var(--gd);font-weight:800">${fmtWon(si)}</b>원</span>`;
 }
 
@@ -7174,13 +7219,15 @@ function _bankListInner() {
   const cut = _bkRows.length - shown.length;
   const row = t => {
     const c = txClientOf(t);
-    return `<tr>
+    return `<tr${txSkip(t) ? ' style="opacity:.55"' : ''}>
       <td style="white-space:nowrap;color:var(--t3)">${esc(String(t.dt || t.date || '').slice(2))}</td>
       <td>${t.manual ? '<span class="pill p-prog">직접</span>' : '<span class="pill p-done">입금</span>'}</td>
       <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(t.payer || '')}"><b>${esc(t.payer || '(이름 없음)')}</b>${t.bankNm ? ` <span style="color:var(--t3);font-size:11.5px">${esc(t.bankNm)}</span>` : ''}</td>
-      <td style="max-width:210px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c
-        ? `<button class="pill p-gray" style="border:none;cursor:pointer;max-width:150px;overflow:hidden;text-overflow:ellipsis;vertical-align:middle" onclick="openLedgerFor(${JSON.stringify(c).replace(/"/g, '&quot;')})" title="이 거래처 원장 보기">${esc(c)}</button><button class="btn btn-sm btn-ghost" style="padding:1px 5px;margin-left:3px" title="거래처 바꾸기" onclick="txReassign('${t.id}')"><i class="ti ti-switch-horizontal"></i></button>`
-        : `<button class="btn btn-sm btn-ghost" style="padding:2px 8px;font-size:11px;color:var(--gd);border-color:var(--gd)" onclick="txReassign('${t.id}')"><i class="ti ti-link"></i>거래처 지정</button>`}</td>
+      <td style="max-width:230px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${txSkip(t)
+        ? `<span class="pill p-gray" style="opacity:.75">견적과 무관</span><button class="btn btn-sm btn-ghost" style="padding:1px 7px;font-size:11px;margin-left:4px" title="다시 세기" onclick="txSkipSet('${t.id}',false)"><i class="ti ti-arrow-back-up"></i>되돌리기</button>`
+        : (c
+        ? `<button class="pill p-gray" style="border:none;cursor:pointer;max-width:130px;overflow:hidden;text-overflow:ellipsis;vertical-align:middle" onclick="openLedgerFor(${JSON.stringify(c).replace(/"/g, '&quot;')})" title="이 거래처 원장 보기">${esc(c)}</button><button class="btn btn-sm btn-ghost" style="padding:1px 5px;margin-left:3px" title="거래처 바꾸기" onclick="txReassign('${t.id}')"><i class="ti ti-switch-horizontal"></i></button><button class="btn btn-sm btn-ghost" style="padding:1px 5px;margin-left:2px" title="견적과 무관한 돈 — 미수에서 빼기" onclick="txSkipSet('${t.id}',true)"><i class="ti ti-eye-off"></i></button>`
+        : `<button class="btn btn-sm btn-ghost" style="padding:2px 8px;font-size:11px;color:var(--gd);border-color:var(--gd)" onclick="txReassign('${t.id}')"><i class="ti ti-link"></i>거래처 지정</button><button class="btn btn-sm btn-ghost" style="padding:2px 7px;font-size:11px;margin-left:3px;color:var(--t3)" title="견적과 무관한 돈 — 미수에서 빼기" onclick="txSkipSet('${t.id}',true)"><i class="ti ti-eye-off"></i>무시</button>`)}</td>
       <td style="text-align:right;white-space:nowrap;font-weight:700;color:var(--gd)">${fmtWon(txMoney(t))}</td>
     </tr>`;
   };
@@ -7220,7 +7267,7 @@ function bankListHtml() {
 
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
       <span style="font-size:11px;color:var(--t3);width:38px;flex:none">구분</span>
-      ${kc('all', '전체')}${kc('in', '입금')}${kc('noclient', '거래처 미지정')}
+      ${kc('all', '전체')}${kc('in', '입금')}${kc('noclient', '거래처 미지정')}${(() => { const n = (state.banktx || []).filter(t => txIsIn(t) && txSkip(t)).length; return n ? kc('skip', '무시함 ' + n) : ''; })()}
     </div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
       <span style="font-size:11px;color:var(--t3);width:38px;flex:none">기간</span>
@@ -7778,7 +7825,7 @@ function ledgerRows(client, cat) {
   /* ★ 입금 줄 = 이 거래처로 들어온 통장 입금 전부.
      견적 한 장 한 장에 붙이는 작업이 없어져서, 통장에 찍힌 그대로 내려온다. */
   (state.banktx || []).forEach(t => {
-    if (!txIsIn(t) || txClientOf(t) !== client) return;
+    if (!txIsIn(t) || txSkip(t) || txClientOf(t) !== client) return;
     rows.push({ d: t.date || '', k: 'pay', amt: txMoney(t), src: t.manual ? 'manual' : 'bank', payer: t.payer || '', bankNm: t.bankNm || '', tid: t.id });
   });
   const ord = { open: -1, sale: 0, tax: 1, pay: 2 };
@@ -7788,7 +7835,7 @@ function ledgerRows(client, cat) {
   return rows;
 }
 /* 이 거래처로 들어온 통장 입금 전부 (최신순) */
-function ledgerPays(client) { return (state.banktx || []).filter(t => txIsIn(t) && txClientOf(t) === client).sort((a, b) => (b.date || '').localeCompare(a.date || '')); }
+function ledgerPays(client) { return (state.banktx || []).filter(t => txIsIn(t) && !txSkip(t) && txClientOf(t) === client).sort((a, b) => (b.date || '').localeCompare(a.date || '')); }
 /* 거래처별 요약 — 기간과 무관한 누적 (원장이니까). 금액은 clientMoneyMap() 이 이미 다 계산해 둔 값. */
 function ledgerAgg() {
   const M = clientMoneyMap();
@@ -7805,7 +7852,7 @@ function ledgerAgg() {
   });
   let unassigned = 0, unassignedSum = 0;
   (state.banktx || []).forEach(t => {
-    if (!txIsIn(t)) return;
+    if (!txIsIn(t) || txSkip(t)) return;              // ★ 무시한 입금은 세지 않는다
     const c = txClientOf(t);
     if (!c) { unassigned++; unassignedSum += txMoney(t); return; }
     const o = get(c);
@@ -7932,7 +7979,8 @@ function _moneyBuild() {
   });
   const insC = {};
   (state.banktx || []).forEach(t => {
-    if (!txIsIn(t)) return; const c = txClientOf(t); if (!c) return;
+    if (!txIsIn(t) || txSkip(t)) return;              // ★ 무시한 입금은 미수 계산에 아예 안 들어간다
+    const c = txClientOf(t); if (!c) return;
     get(c).paid += txMoney(t);
     (insC[c] || (insC[c] = [])).push({ d: String(t.date || ''), left: txMoney(t) });
   });
@@ -8205,8 +8253,12 @@ function txReassign(id) {
     <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;margin-bottom:12px;cursor:pointer">
       <input type="checkbox" id="tx-alias" checked style="width:16px;height:16px">
       <span>앞으로 <b>${esc(t.payer || '')}</b> 이름으로 들어오는 입금은 자동으로 이 거래처로</span></label>
+    <div style="font-size:11.5px;color:var(--t3);background:var(--soft);border-radius:9px;padding:9px 11px;margin-bottom:11px;line-height:1.65">
+      이자·잡이익·보험금·개인 이체처럼 <b>견적과 상관없는 돈</b>이면 거래처를 붙이지 말고 <b>무시</b>하세요.<br>
+      통장 내역에는 그대로 남고 <b>미수 계산에서만 빠집니다.</b> 나중에 되돌릴 수 있습니다.</div>
     <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button>
-      <button class="btn btn-pri" style="flex:2" onclick="txReassignSave('${id}')"><i class="ti ti-check"></i>저장</button></div>`);
+      <button class="btn" style="flex:1.2;color:var(--t2)" onclick="closeModal();txSkipSet('${id}',true)"><i class="ti ti-eye-off"></i>무시</button>
+      <button class="btn btn-pri" style="flex:1.6" onclick="txReassignSave('${id}')"><i class="ti ti-check"></i>저장</button></div>`);
 }
 async function txReassignSave(id) {
   const t = (state.banktx || []).find(x => x.id === id); if (!t) return;
@@ -8225,7 +8277,7 @@ async function txReassignSave(id) {
 function ledgerFixHtml() {
   const R = ledgerRange();
   const inR = d => (d || '') >= R.sd && (d || '') <= R.ed;
-  const list = (state.banktx || []).filter(t => txIsIn(t) && inR(t.date) && !txClientOf(t)).sort((a, b) => (b.date || '').localeCompare(a.date || ''));   // 출금은 거래처를 붙일 대상이 아니다
+  const list = (state.banktx || []).filter(t => txIsIn(t) && inR(t.date) && !txClientOf(t) && !txSkip(t)).sort((a, b) => (b.date || '').localeCompare(a.date || ''));   // 출금·무시한 건은 붙일 대상이 아니다
   // 같은 입금자명끼리 묶어서 한 번만 정하면 되게
   const g = {};
   list.forEach(t => { const k = t.pkey || _bankKey(t.payer); (g[k] || (g[k] = { payer: t.payer, k: k, n: 0, sum: 0, ids: [] })); g[k].n++; g[k].sum += (+t.amount || 0); g[k].ids.push(t.id); });
@@ -8233,7 +8285,9 @@ function ledgerFixHtml() {
   return `
     <div class="ph"><div><h2><i class="ti ti-wand"></i>거래처 지정</h2><p>이름이 앱의 거래처와 안 맞는 입금 ${list.length}건 · ${groups.length}개 이름</p></div>
       <button class="btn btn-sm" onclick="ledgerBack()"><i class="ti ti-arrow-left"></i>원장</button></div>
-    <div class="banner info" style="margin-bottom:11px;font-size:12px"><i class="ti ti-info-circle"></i> 같은 입금자명은 하나로 묶어놨습니다. 한 번 정해두면 <b>다음부터 같은 이름은 자동</b>으로 그 거래처가 됩니다. 개인 입금이나 거래처와 무관한 돈은 그냥 두셔도 됩니다.</div>
+    <div class="banner info" style="margin-bottom:11px;font-size:12px"><i class="ti ti-info-circle"></i>
+      <span style="flex:1;min-width:0">같은 입금자명은 하나로 묶어놨습니다. 한 번 정해두면 <b>다음부터 같은 이름은 자동</b>으로 그 거래처가 됩니다.<br>
+      이자·잡이익·개인 이체처럼 <b>견적과 상관없는 돈</b>은 <b>「무시」</b>를 누르세요 — 목록에서 빠지고 미수에도 안 들어갑니다.</span></div>
     ${groups.length ? groups.map((x, i) => `
       <div class="card" style="padding:11px 13px;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
@@ -8241,13 +8295,14 @@ function ledgerFixHtml() {
           <span style="font-size:13px;font-weight:800;color:var(--gd)">${fmtWon(x.sum)}원 <span style="font-size:11px;font-weight:600;color:var(--t3)">${x.n}건</span></span></div>
         <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;align-items:flex-start">
           <div style="flex:1;min-width:200px">${clientPickerHtml('fx-' + i, '', '거래처 이름 입력')}</div>
-          <button class="btn btn-sm btn-pri" style="flex:none" onclick="ledgerFixSave('${esc(x.k)}',${i})"><i class="ti ti-check"></i>지정</button></div>
+          <button class="btn btn-sm btn-pri" style="flex:none" onclick="ledgerFixSave('${esc(x.k)}',${i})"><i class="ti ti-check"></i>지정</button>
+          <button class="btn btn-sm" style="flex:none;color:var(--t2)" title="견적과 무관한 돈 — 이 이름 ${x.n}건을 미수에서 빼기" onclick="txSkipPayer('${esc(x.k)}')"><i class="ti ti-eye-off"></i>무시</button></div>
       </div>`).join('') : '<div class="empty"><i class="ti ti-circle-check"></i>모든 입금에 거래처가 지정되어 있습니다</div>'}`;
 }
 async function ledgerFixSave(pkey, i) {
   const c = clientPickValue('fx-' + i);
   if (!c) { toast('거래처 이름을 치고 아래 목록에서 눌러 선택하세요'); return; }
-  const ids = (state.banktx || []).filter(t => txIsIn(t) && (t.pkey || _bankKey(t.payer)) === pkey && !t.client).map(t => t.id);
+  const ids = (state.banktx || []).filter(t => txIsIn(t) && !txSkip(t) && (t.pkey || _bankKey(t.payer)) === pkey && !t.client).map(t => t.id);
   if (!confirm(`${ids.length}건을 "${c}" 로 지정할까요?\n앞으로 같은 이름은 자동으로 이 거래처가 됩니다.`)) return;
   try {
     const m = Object.assign({}, bankAliasMap()); m[pkey] = c; await saveBankAlias(m);
