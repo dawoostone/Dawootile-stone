@@ -5298,8 +5298,93 @@ function qMarkMinus() {
   });
 }
 function addQRow() { const c = el('q-rows'); if (c) { c.insertAdjacentHTML('beforeend', qRowHtml({})); } }
-function openQuoteInline(id, copy) { filters.quoteEdit = id || 'new'; filters.quoteCopy = !!copy; filters.quoteCat = ''; renderQuote(); if (el('pg-quote')) el('pg-quote').scrollIntoView({ block: 'start' }); }
-function quoteCancel() { filters.quoteEdit = ''; filters.quoteCopy = false; filters.quoteCat = ''; renderQuote(); }
+/* ══════════════════════════════════════════════════════════
+   ★★ 견적 화면 스위치 — «한 번에 하나만» (2026-09-16)
+   견적 탭 하나에 폼·설정·통장내역·재단·묶음청구가 전부 얹혀 있다.
+   켤 때 나머지를 안 끄면 renderQuote 가 엉뚱한 걸 그려 **작성 중인 폼이 날아간다.**
+   그래서 어느 화면을 열든 이걸 먼저 부른다.
+   ══════════════════════════════════════════════════════════ */
+function qScreenClear() {
+  filters.quoteEdit = ''; filters.quoteCopy = false; filters.quoteSettings = false;
+  filters.cutSim = false; filters.bankList = false; filters.billEdit = false;
+  filters.taxEdit = ''; filters.costEdit = '';
+}
+
+/* ══════════════════════════════════════════════════════════
+   ★★ 견적 임시저장(초안) — 무슨 일이 있어도 친 글자는 안 잃는다
+   ─────────────────────────────────────────────────────────
+   사용자: *"견적서 저장 자꾸 안되는데 저장하면 날아가고 하면 날아가고"*
+   진짜 원인(위 renderQuote 순서)은 고쳤지만, 그것 말고도
+   실수로 다른 메뉴를 누르거나·새로고침·전화가 와서 앱이 내려가도 글자는 사라진다.
+   그래서 **치는 대로 이 기기에 몰래 적어 두고**, 폼을 다시 열면 되살린다.
+   · 저장에 성공하면 지운다 · 「취소」를 눌러도 지운다 · 12시간 지나면 버린다
+   · 이 기기 안에만 있다(localStorage) — 서버·다른 사람에게는 안 간다
+   ══════════════════════════════════════════════════════════ */
+const QDRAFT_TTL = 12 * 3600 * 1000;
+function _qdKey(id) { return 'qdraft:' + (id || 'new'); }
+function _qdFields(root) { return [].slice.call(root.querySelectorAll('input,select,textarea')); }
+/* 지금 폼을 통째로 한 덩어리로 */
+function qDraftGrab() {
+  const root = document.getElementById('qform-root'); if (!root) return null;
+  const rows = document.querySelectorAll('#q-rows .q-row').length;
+  const vals = _qdFields(root).map(e => (e.type === 'checkbox' || e.type === 'radio') ? (e.checked ? 1 : 0) : String(e.value == null ? '' : e.value));
+  return { at: Date.now(), rows: rows, vals: vals };
+}
+let _qdTimer = null;
+function qDraftSave() {
+  if (!filters.quoteEdit) return;
+  clearTimeout(_qdTimer);
+  _qdTimer = setTimeout(() => {
+    try {
+      const d = qDraftGrab(); if (!d) return;
+      const hasAny = d.vals.some(v => v !== '' && v !== 0 && v !== '0');
+      if (!hasAny) return;
+      localStorage.setItem(_qdKey(filters.quoteEdit), JSON.stringify(d));
+    } catch (e) { }
+  }, 400);
+}
+function qDraftDrop(id) { try { localStorage.removeItem(_qdKey(id == null ? filters.quoteEdit : id)); } catch (e) { } }
+function qDraftRead(id) {
+  try {
+    const raw = localStorage.getItem(_qdKey(id)); if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (!d || !d.vals || (Date.now() - (+d.at || 0)) > QDRAFT_TTL) { qDraftDrop(id); return null; }
+    return d;
+  } catch (e) { return null; }
+}
+/* 폼을 새로 그린 직후 — 적어 둔 게 있으면 되살린다 */
+function qDraftRestore() {
+  const id = filters.quoteEdit; if (!id) return;
+  const d = qDraftRead(id); if (!d) return;
+  const root = document.getElementById('qform-root'); if (!root) return;
+  try {
+    let guard = 0;
+    while (document.querySelectorAll('#q-rows .q-row').length < (+d.rows || 1) && guard++ < 60) addQRow();
+    const fs = _qdFields(root);
+    if (fs.length !== d.vals.length) return;          // 폼 모양이 달라졌으면 손대지 않는다
+    fs.forEach((e, i) => {
+      const v = d.vals[i];
+      if (e.type === 'checkbox' || e.type === 'radio') e.checked = !!v; else e.value = v;
+    });
+    try { quoteRecalc(); } catch (e2) { }
+    const note = document.getElementById('qd-note');
+    if (note) {
+      const mins = Math.max(1, Math.round((Date.now() - d.at) / 60000));
+      note.innerHTML = `<span style="display:inline-flex;align-items:center;gap:7px;flex-wrap:wrap"><i class="ti ti-history"></i>
+        <b>${mins}분 전에 쓰던 내용을 되살렸습니다.</b>
+        <button type="button" class="btn btn-sm" style="padding:1px 8px;font-size:11px" onclick="qDraftClear()">되살리지 않기</button></span>`;
+      note.style.display = '';
+    }
+  } catch (e) { }
+}
+function qDraftClear() { qDraftDrop(); const n = document.getElementById('qd-note'); if (n) n.style.display = 'none'; renderQuoteForm(); }
+
+function openQuoteInline(id, copy) {
+  qScreenClear();                                   // ★ 다른 화면 스위치를 반드시 끈다
+  filters.quoteEdit = id || 'new'; filters.quoteCopy = !!copy; filters.quoteCat = '';
+  renderQuote(); if (el('pg-quote')) el('pg-quote').scrollIntoView({ block: 'start' });
+}
+function quoteCancel() { qDraftDrop(); filters.quoteEdit = ''; filters.quoteCopy = false; filters.quoteCat = ''; renderQuote(); }
 /* 부대비용·가공 프리셋 (견적 폼에 항상 표시, 수량 입력한 것만 견적서 반영) */
 const CONSUMER_GAGONG = [{ name: '가공비 12T (장당)', unit: '장' }, { name: '가공비 6T (장당)', unit: '장' }];   // 소비자 유형 가공비
 const QUOTE_EXTRAS = [
@@ -5413,6 +5498,7 @@ function renderQuoteForm() {
   el('pg-quote').innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-file-invoice"></i>${editing ? '견적 수정' : (copy ? '견적 복사' : '견적 작성')}</h2><p>거래처·품목을 입력하면 합계가 자동 계산됩니다</p></div>
       <div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="openCutSimModal()"><i class="ti ti-layout-grid"></i>재단 시뮬레이션</button><button class="btn btn-sm" onclick="quoteCancel()"><i class="ti ti-arrow-left"></i> 목록</button></div></div>
+    <div id="qd-note" style="display:none;font-size:12px;color:#1a56b8;background:#eef4ff;border:1.5px solid #c3d6f5;border-radius:11px;padding:9px 12px;margin-bottom:10px"></div>
     <div id="qform-root" class="card" style="padding:15px 17px">
       <div class="frm" style="display:block">
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
@@ -5510,6 +5596,17 @@ function renderQuoteForm() {
   // 행 HTML 은 #q-ctype 이 화면에 붙기 전에 만들어지므로, 붙인 뒤에 세면대 업체구분을 다시 맞춘다
   bcSyncAllBiz(); bcNoteRefresh();
   quoteRecalc();
+  /* ★ 적어 둔 초안이 있으면 되살리고, 이후로는 치는 대로 이 기기에 적어 둔다.
+     폼 전체에 한 번만 귀를 달아 둔다(줄을 새로 추가해도 그대로 잡힌다). */
+  try {
+    qDraftRestore();
+    const _root = document.getElementById('qform-root');
+    if (_root && !_root._qdBound) {
+      _root._qdBound = true;
+      _root.addEventListener('input', qDraftSave);
+      _root.addEventListener('change', qDraftSave);
+    }
+  } catch (e) { }
 }
 function collectQItems() {
   const items = [];
@@ -5704,89 +5801,19 @@ function clientPriceCard(c) {
      `for (const it of items) await quoteLearnPrice(...)` 한 줄로 되돌리면 된다.
    ══════════════════════════════════════════════════════════ */
 /* 이 견적의 단가가 «등록된 기준단가»와 어떻게 다른지 — 저장은 하지 않고 목록만 만든다 */
-function priceDiffList(ctype, items, client) {
-  const out = [], seen = {};
-  const push = o => { const k = _normName(o.name); if (seen[k]) return; seen[k] = 1; out.push(o); };
-  const special = ctype === '별도';
-  if (special && !(client && String(client).trim())) return out;
-  const key = special ? '' : ctypeKey(ctype);
-  (items || []).forEach(it => {
-    if (it.extra) return;
-    const nm = (it.name || '').trim(); const pr = Math.round(+it.price || 0);
-    if (!nm || !(pr > 0)) return;
-    if (isHalfMat(nm)) return;                       // 반제품은 접합/비접합 고정단가라 단가표를 안 쓴다
-    if (special) {
-      const cp = (state.clientPrices || []).find(p => (p.client || '').trim() && _normName(p.client) === _normName(client) && _normName(p.itemName) === _normName(nm));
-      const rule = clientRulePrice(client, nm);
-      const cur = cp ? Math.round(+cp.price || 0) : (rule > 0 ? rule : 0);
-      if (cur === pr) return;
-      push({ name: nm, price: pr, cur: cur, label: (client || '') + ' 전용', empty: !cur, byRule: !cp && rule > 0 });
-    } else {
-      const pl = (state.priceList || []).find(p => _normName(p.itemName) === _normName(nm));
-      const cur = pl ? Math.round(+pl[key] || 0) : 0;
-      if (cur === pr) return;
-      push({ name: nm, price: pr, cur: cur, label: (PRICE_RULE_BASES[key] || ctype) + ' 단가', empty: !cur, byRule: false });
-    }
-  });
-  return out;
-}
-/* «단가표를 바꿀까요?» 창 — 체크한 것만 반영한다 (기본은 전부 꺼짐)
-   ★ 2026-09-10 사용자 요청으로 **저장할 때 자동으로 뜨지 않는다**. 함수는 남겨 뒀으니
-     나중에 필요하면 어딘가에서 openPriceDiff(priceDiffList(ctype, items, client).filter(d=>!d.empty), ctype, client) 로 부르면 된다. */
-let _pdRows = [], _pdType = '', _pdClient = '';
-function openPriceDiff(rows, ctype, client) {
-  _pdRows = rows || []; _pdType = ctype || ''; _pdClient = client || '';
-  if (!_pdRows.length) return;
-  const line = (d, i) => `<label style="display:flex;align-items:center;gap:9px;padding:9px 4px;border-bottom:1px solid var(--soft);cursor:pointer">
-      <input type="checkbox" class="pd-c" data-i="${i}" style="width:18px;height:18px;flex:none;accent-color:var(--gd)">
-      <div style="flex:1;min-width:0">
-        <div style="font-weight:700;font-size:13.5px">${esc(d.name)}</div>
-        <div style="font-size:11.5px;color:var(--t3);margin-top:2px">${esc(d.label)}${d.byRule ? ' <span style="color:#a2560f">(지금은 단가 규칙으로 계산됨)</span>' : ''}</div>
-      </div>
-      <div style="text-align:right;white-space:nowrap;font-size:13px">
-        <span style="color:var(--t3)">${d.cur ? fmtWon(d.cur) : '없음'}</span>
-        <span style="color:var(--bd2);margin:0 4px">→</span>
-        <b style="color:${d.cur && d.price < d.cur ? '#c0341d' : 'var(--gd)'}">${fmtWon(d.price)}</b>
-      </div>
-    </label>`;
-  openModal(`<div class="sheet-head"><h3><i class="ti ti-tag"></i> 단가표를 바꿀까요?</h3><button class="btn btn-ghost btn-sm" onclick="closeModal()"><i class="ti ti-x"></i></button></div>
-    <div style="padding:2px 2px 0">
-      <div style="background:var(--soft);border-radius:10px;padding:10px 12px;font-size:12.5px;color:var(--t2);line-height:1.65;margin-bottom:10px">
-        견적은 <b>이미 저장됐습니다.</b> 아래는 등록된 <b>기준단가와 다른 단가</b>로 나간 품목입니다.<br>
-        <b style="color:var(--gd)">아무것도 안 고르고 닫으면 단가표는 그대로</b>입니다 — 이번 견적에만 그 단가가 쓰입니다.<br>
-        기준단가 자체를 바꿔야 할 때만 골라서 반영하세요.
-      </div>
-      <div style="max-height:44vh;overflow:auto;border:1px solid var(--bd2);border-radius:10px;padding:0 10px">${_pdRows.map(line).join('')}</div>
-      <div style="display:flex;gap:6px;margin-top:9px">
-        <button type="button" class="btn btn-sm" style="flex:none" onclick="pdAll(true)">전체 선택</button>
-        <button type="button" class="btn btn-sm" style="flex:none" onclick="pdAll(false)">전체 해제</button>
-      </div>
-    </div>
-    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">단가표 그대로 두기</button><button class="btn btn-pri" style="flex:1" onclick="pdApply()"><i class="ti ti-check"></i>선택한 항목 반영</button></div>`);
-}
-function pdAll(on) { document.querySelectorAll('.pd-c').forEach(c => { c.checked = !!on; }); }
-async function pdApply() {
-  const picked = [];
-  document.querySelectorAll('.pd-c').forEach(c => { if (c.checked) { const d = _pdRows[+c.dataset.i]; if (d) picked.push(d); } });
-  if (!picked.length) { closeModal(); toast('단가표는 그대로 두었습니다'); return; }
-  closeModal();
-  let n = 0;
-  for (const d of picked) { try { await quoteLearnPrice(_pdType, d.name, d.price, _pdClient); n++; } catch (e) { } }
-  toast(n + '개 품목 단가표에 반영됐습니다');
-}
-async function quoteLearnPrice(type, name, price, client) {
-  if (!name || !(price > 0)) return;
-  if (type === '별도') {
-    if (!(client && String(client).trim())) return;
-    /* 규칙으로 나오는 값과 같으면 굳이 줄을 만들지 않는다. 다르면 그 품목만 «예외»로 남긴다. */
-    if (clientRulePrice(client, name) === Math.round(price)) return;
-    await saveClientPrice(client, name, price); return;
-  }
-  const key = ctypeKey(type);
-  const pl = (state.priceList || []).find(p => _normName(p.itemName) === _normName(name));
-  if (pl) { if ((+pl[key] || 0) !== price) { const patch = {}; patch[key] = price; await Store.update('priceList', pl.id, patch); } }
-  else { const obj = { itemName: name, dist: 0, interior: 0, consumer: 0 }; obj[key] = price; await Store.add('priceList', obj); }
-}
+/* ══════════════════════════════════════════════════════════
+   ★★★ 2026-09-16 — «견적이 단가표를 고치는» 기능은 전부 없앴다.
+   사용자: *"단가 기준 단가를 변경하는 시스템 만들지 마"*
+
+   여기 있던 것들을 통째로 지웠다:
+     · priceDiffList()   견적 단가 vs 기준단가 비교표
+     · openPriceDiff() / pdAll() / pdApply()   «단가표를 바꿀까요?» 창
+     · quoteLearnPrice() 견적 단가를 priceList·clientPrices 에 써 넣던 함수
+   (남겨 두면 언젠가 또 어딘가에서 불린다. 그래서 «끄는» 게 아니라 «지웠다».)
+
+   ★ 기준단가는 오직 **설정 › 단가표**에서 사람이 직접 고친다.
+     견적서에 아무 단가나 적어도 단가표는 꿈쩍도 하지 않는다.
+   ══════════════════════════════════════════════════════════ */
 async function submitQuote(id) {
   const client = (el('q-client') && el('q-client').value || '').trim();
   if (!client) { toast('거래처를 입력하세요'); return; }
@@ -5804,7 +5831,10 @@ async function submitQuote(id) {
   let depositPct = el('q-dp') ? _numv(el('q-dp').value) : 0;
   if (!(depositPct > 0) || depositPct >= 100) depositPct = 0;
   const depositAmt = depositPct > 0 ? Math.round(total * depositPct / 100) : 0;
-  if (_busy) return; _busy = true;
+  /* ★ 예전엔 `if (_busy) return;` 만 있어서, 앞선 작업이 아직 안 끝났으면
+     버튼을 눌러도 **아무 말 없이 아무 일도 안 일어났다**(저장이 안 되는 것처럼 보임). */
+  if (_busy) { toast('앞 작업을 끝내는 중입니다 — 잠시 후 다시 눌러주세요'); return; }
+  _busy = true;
   try {
     await ensureClient(client);
     const q = id ? (state.quotes || []).find(x => x.id === id) : null;
@@ -5814,25 +5844,27 @@ async function submitQuote(id) {
     // 홀딩에서 가져온 견적이면 그 홀딩 id 를 남긴다 → 출고로 돌릴 때 홀딩이 자동으로 풀린다
     data.fromHoldIds = (_qFromHolds || []).filter(hid => (state.holdings || []).some(h => h.id === hid));
     if (id) await Store.update('quotes', id, data); else await Store.add('quotes', data);
-    try { const cdoc = (state.clients || []).find(x => _normName(x.value) === _normName(client)); if (cdoc && (cdoc.ctype || '') !== ctype) await Store.update('clients', cdoc.id, { ctype }); } catch (e) { }   // 거래처 유형 기억
-    /* ★ 2026-09-10 — 단가표를 «자동으로 덮어쓰지 않는다».
-       ① 단가표 칸이 비어 있으면 → 저장할 때 채운다 (기준이 없으니 잃을 게 없다)
-       ② 값이 있으면 → 저장이 그 값을 절대 안 바꾼다. **아무것도 묻지 않는다.**
-       ★ 사용자 요청(2026-09-10): *"단가표를 바꿀까요 띄우지 마"* — 저장 후 확인창을 뗐다.
-         기준단가와 다른 건 견적 폼의 그 줄 밑에 바로 표시되고([기준단가로] 버튼),
-         기준단가 자체를 고칠 땐 설정 › 단가표에서 직접 고친다. */
-    try {
-      const _pd = priceDiffList(ctype, items, client);
-      for (const d of _pd) {
-        if (d.empty && !d.byRule) { try { await quoteLearnPrice(ctype, d.name, d.price, client); } catch (e) { } }
-      }
-    } catch (e) { }
-    try {   // 부대비용 기본단가 기억
-      const cur = extraPrices(); const np = Object.assign({}, cur); let ch = false;
-      document.querySelectorAll('.qx-row').forEach(r => { const nm = r.getAttribute('data-name'); if (marginCat(nm) === '가공') return; const pr = _numv(r.querySelector('.qx-price').value); if (pr > 0 && cur[nm] !== pr) { np[nm] = pr; ch = true; } });   // 가공비는 기본단가에서 변동 없이 · 기억 안 함
-      if (ch) await saveExtraPrices(np);
-    } catch (e) { }
+    /* ★ 견적이 들어간 걸 확인한 «바로 이 순간» 초안을 지우고 화면을 넘긴다.
+       예전엔 단가표 손질을 다 끝낸 뒤에야 넘어가서, 그 사이에 사장님은
+       «저장이 안 됐나?» 하고 다시 누르곤 했다. */
+    qDraftDrop(id || 'new');
     filters.quoteEdit = ''; filters.quoteCopy = false; toast('견적 저장됨'); renderQuote();
+    try { const cdoc = (state.clients || []).find(x => _normName(x.value) === _normName(client)); if (cdoc && (cdoc.ctype || '') !== ctype) await Store.update('clients', cdoc.id, { ctype }); } catch (e) { }   // 거래처 유형 기억
+    /* ══════════════════════════════════════════════════════
+       ★★★ 2026-09-16 — 견적 저장은 **기준단가를 절대 안 건드린다.**
+       사용자: *"단가 기준 단가를 변경하는 시스템 만들지 마"*
+       (같은 취지로 세 번 말씀하셨다: 09-10 «자꾸 마음대로 입력된다» →
+        09-10 «단가표를 바꿀까요 띄우지 마» → 09-16 «만들지 마»)
+
+       예전엔 여기서
+         · 단가표 빈 칸을 자동으로 채우고(quoteLearnPrice → priceList 새 줄까지 만들었다)
+         · 부대비용 기본단가(extraPrices)도 조용히 덮어썼다.
+       그래서 견적 한 장 저장할 때마다 단가표에 쓰기가 여러 번 일어났고,
+       그때마다 스냅샷이 돌아 화면이 출렁이고 저장이 느려졌다.
+
+       이제 **여기서는 단가표에 한 글자도 안 쓴다.**
+       기준단가는 오직 **설정 › 단가표**에서 사람이 직접 고친다.
+       ══════════════════════════════════════════════════════ */
   } finally { setTimeout(() => { _busy = false; }, 500); }
 }
 async function delQuote(id) {
@@ -6353,7 +6385,7 @@ async function taxSaveClientNow(quiet) {
 function openTaxForm(id) {
   if (!canTax()) { toast('세금계산서 발행 권한이 없습니다 — 관리자에게 문의하세요'); return; }
   qListSave();                           // 보던 위치 기억 → 나올 때 그대로 되돌린다
-  filters.taxEdit = id; renderQuote(); _pageScrollTo(0);
+  qScreenClear(); filters.taxEdit = id; renderQuote(); _pageScrollTo(0);
 }
 /* ══════════════════════════════════════════════════════════
    영수 / 청구 — 드롭다운 대신 버튼 두 개로 고른다. 기본은 '청구'.
@@ -7041,7 +7073,7 @@ function _pmBanner() {
 function bankOpenList() {
   if (!canLedger()) { toast('통장 내역 권한이 없습니다 — 관리자에게 문의하세요'); return; }
   qListSave();
-  filters.bankList = true; filters.ledger = false; filters.ledgerClient = ''; filters.ledgerFix = false;
+  qScreenClear(); filters.bankList = true; filters.ledger = false; filters.ledgerClient = ''; filters.ledgerFix = false;
   if (!filters.bankKind) filters.bankKind = 'in';        // ★ 출금은 정산 탭으로 뺐다 — 여기는 입금만
   if (!filters.bankRange) filters.bankRange = 'all';
   go('quote');
@@ -8698,7 +8730,7 @@ function openCutSim() {
   if (isCustomerRole()) { toast('권한이 없습니다'); return; }
   _cutGroups = []; _cutSimSheetClear();
   const _pq = el('pg-quote'); if (_pq) _pq.innerHTML = '';   // ★ 항상 빈 표로 새로 시작 (예전 행이 남아 번호가 겹치지 않게)
-  filters.cutSim = true; renderQuote();
+  qScreenClear(); filters.cutSim = true; renderQuote();
   if (el('pg-quote')) el('pg-quote').scrollIntoView({ block: 'start' });
 }
 function cutSimClose() { filters.cutSim = false; renderQuote(); }
@@ -9209,7 +9241,7 @@ function openCutSimModal() {
   cutRenumber();
   cutSheetChipsRefresh();
 }
-function openQuoteSettings() { filters.quoteSettings = true; renderQuote(); }
+function openQuoteSettings() { qScreenClear(); filters.quoteSettings = true; renderQuote(); }
 function quoteSettingsClose() { filters.quoteSettings = false; renderQuote(); }
 async function saveQuoteMemo() {
   const t = (el('qs-memo') && el('qs-memo').value || '');
@@ -11479,11 +11511,17 @@ function renderSettle() {
 
 function renderQuote() {
   keepScrolls();
+  /* ★★ 2026-09-16 «견적 저장하면 날아간다» 버그의 진짜 원인 ★★
+     예전에는 통장내역·설정·재단·묶음청구를 **먼저** 검사했다. 그래서 그 화면 스위치가
+     켜진 채로 견적 폼을 열면, 다른 사람이 뭘 저장해서 스냅샷이 한 번만 들어와도
+     `pg-quote.innerHTML = bankListHtml()` 이 돌아 **작성 중이던 폼이 통째로 지워졌다.**
+     (실측 재현: bankList=true 로 두고 render() 한 번 → 폼·거래처·메모 전부 사라짐)
+     이제 **작성 중인 견적이 무조건 1순위**다. 잃으면 안 되는 건 사람이 치던 글자다. */
+  if (filters.quoteEdit) { if (!document.getElementById('qform-root')) renderQuoteForm(); return; }   // ★ 제일 먼저
   if (filters.quoteSettings) { if (!document.getElementById('qset-root')) renderQuoteSettings(); return; }   // 설정 화면
   if (filters.cutSim) { const _pq = el('pg-quote'); if (!(_pq && _pq.querySelector('#cutsim-root'))) renderCutSim(); return; }   // 재단 시뮬레이션
   if (filters.bankList) { const _r = el('pg-quote'); if (_r) _r.innerHTML = bankListHtml(); return; }   // 통장 내역(입금)
   if (filters.billEdit) { renderBillEdit(); return; }   // 묶음 청구 항목 편집
-  if (filters.quoteEdit) { if (!document.getElementById('qform-root')) renderQuoteForm(); return; }   // 편집 중엔 실시간 재렌더로 폼을 덮어쓰지 않음
   if (filters.taxEdit) { if (!document.getElementById('taxform-root')) renderTaxForm(); return; }   // 세금계산서 발행 화면
   if (filters.costEdit) { if (!document.getElementById('cost-root')) renderCostForm(); return; }   // 원가 정리(관리자)
   const qy = (filters.quoteSearch || '').trim().toLowerCase();
@@ -12121,7 +12159,7 @@ function openBillEdit(qs) {
     }));
   });
   _billEdit = { qids: qs.map(q => q.id), items: items, dc: 0 };   // dc = 총액에서 한 번에 빼는 할인
-  qListSave(); filters.billEdit = true; go('quote');
+  qListSave(); qScreenClear(); filters.billEdit = true; go('quote');
 }
 function billEditClose() { filters.billEdit = false; _billEdit = null; renderQuote(); qListRestore(); }
 function _billQs() { return (_billEdit ? _billEdit.qids : []).map(id => (state.quotes || []).find(q => q.id === id)).filter(Boolean); }
