@@ -10458,29 +10458,181 @@ function downloadCrewLedger() {
   if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후'); return; }
   const sites = (state.sites || []).filter(s => (s.team || '').trim() && !isSelfTeam(s.team)).sort((a, b) => (a.team || '').localeCompare(b.team || '') || (b.constructDate || '').localeCompare(a.constructDate || ''));
   if (!sites.length) { toast('시공팀 지정된 현장이 없습니다'); return; }
-  const head = ['시공팀', '거래처', '현장', '현장 주소', '시공일', '연결 견적', '시공 매출', '시공비', '남는 금액', '정산여부', '정산일'];
+  const head = ['시공팀', '거래처', '현장', '현장 주소', '시공일', '담당자', '연결 견적', '시공 매출', '장비대', '시공비', '남는 금액', '정산여부', '정산일'];
   const aoa = [['시공비 정산 원장 (시공팀별)'], ['출력일 ' + todayStr()], [], head];
-  let tPaid = 0, tUnpaid = 0, tSale = 0, tDirect = 0;
+  let tPaid = 0, tUnpaid = 0, tSale = 0, tDirect = 0, tEquip = 0;
   sites.forEach(s => {
     const fee = +s.crewFee || 0; const sale = siteCrewSale(s);
+    const eq = siteEquip(s).sum; tEquip += eq;
     if (s.crewDirect) tDirect += fee; else if (s.crewPaid) tPaid += fee; else tUnpaid += fee;
     tSale += sale;
     aoa.push([s.team || '', s.client || '', s.name || '', s.address || '', s.constructDate || '',
-      siteQuoteNos(s).join(', '), sale, fee, s.crewDirect ? '' : (sale - fee),
+      siteQuoteStaff(s).join(', '),
+      siteQuoteNos(s).join(', '), sale, eq || '', fee, s.crewDirect ? '' : (sale - fee),
       s.crewDirect ? '업체 직불' : (s.crewPaid ? '정산완료' : '미정산'),
       s.crewDirect ? (s.crewDirectAt || '') : (s.crewPaidDate || '')]);
   });
+  const _pad = (lab, v) => ['', '', '', '', '', '', lab, v, '', '', '', '', ''];
   aoa.push([]);
-  aoa.push(['', '', '', '', '', '시공 매출 합계', tSale, '', '', '', '']);
-  aoa.push(['', '', '', '', '', '시공비 합계', tPaid + tUnpaid, '', '', '', '']);
-  aoa.push(['', '', '', '', '', '남는 금액', tSale - (tPaid + tUnpaid), '', '', '', '']);
-  aoa.push(['', '', '', '', '', '정산완료 합계', tPaid, '', '', '', '']);
-  aoa.push(['', '', '', '', '', '미정산 합계', tUnpaid, '', '', '', '']);
-  aoa.push(['', '', '', '', '', '업체 직불 합계', tDirect, '', '', '', '']);
-  const ws = XLSX.utils.aoa_to_sheet(aoa); ws['!cols'] = [{ wch: 12 }, { wch: 16 }, { wch: 20 }, { wch: 28 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 9 }, { wch: 12 }];
+  aoa.push(_pad('시공 매출 합계', tSale));
+  aoa.push(_pad('장비대 합계', tEquip));
+  aoa.push(_pad('시공비 합계', tPaid + tUnpaid));
+  aoa.push(_pad('남는 금액', tSale - (tPaid + tUnpaid)));
+  aoa.push(_pad('정산완료 합계', tPaid));
+  aoa.push(_pad('미정산 합계', tUnpaid));
+  aoa.push(_pad('업체 직불 합계', tDirect));
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 12 }, { wch: 16 }, { wch: 20 }, { wch: 28 }, { wch: 11 }, { wch: 13 }, { wch: 14 }, { wch: 12 }, { wch: 11 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 11 }];
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '시공비정산'); XLSX.writeFile(wb, '시공비정산_' + todayStr() + '.xlsx');
   toast('시공비 정산 엑셀 다운로드');
 }
+
+/* ══════════════════════════════════════════════════════════
+   ★★ 시공비 정산 — 현장을 눌러 견적 연결 · 담당자 · 장비대 (2026-09-16)
+   ─────────────────────────────────────────────────────────
+   사용자: *"시공비 왜 못잡지? … 각 현장을 누르면 견적서 띄워줘
+            시공비 견적서에 잘들어가있는데 안뜨는 이유가 머지? 현장 연결 안되어서?"*
+
+   ★ 네, 연결 문제가 맞다. 실측(2026-09-16):
+       시공팀 지정 현장 125곳 중 매출이 잡힌 곳 **49곳(39%)**
+         · 연결된 견적이 아예 없음 **67곳**
+         · 견적은 붙었는데 시공 품목이 없음 9곳
+       시공 품목이 든 견적 114장 중 현장에 연결된 건 **51장**뿐
+       견적 616장 중 `siteId` 가 박힌 건 **60장**
+     시공비 분류(`marginCat`)는 멀쩡하다 — 시공비 106건·실측비 36건·시공 1건 다 잡는다.
+     **못 잡는 게 아니라, 어느 현장 것인지 앱이 모르는 것이다.**
+
+   ★ 자동으로 이어 붙이는 건 포기했다. 실측해 보니 건질 게 거의 없다:
+       거래처+현장명 0건 · 거래처+주소 2건 · 거래처만 = 유일 12 / 여러개 13 (위험)
+     그래서 **사람이 한 번 눌러서 고르게** 한다. 두 번 클릭이면 끝난다.
+   ══════════════════════════════════════════════════════════ */
+
+/* ── 장비대 ────────────────────────────────────────────────
+   ⚠ 이름만 보고 «스카이» 같은 글자로 찾으면 **석종 「스카이 블랙」이 걸린다**(실제로 2건 있다).
+   그래서 **부대비용으로 등록된 항목**(견적에서 `extra` 로 들어간 줄)만 장비로 본다. */
+const EQUIP_RE = /장비|크레인|사다리차|스카이차|지게차|리프트|양중/;
+function isEquipItem(it) {
+  const n = ((it && it.name) || '').trim(); if (!n) return false;
+  if (!EQUIP_RE.test(n)) return false;
+  if (it.extra) return true;
+  try { return extraItemsList().some(x => _normName(x.name) === _normName(n)); } catch (e) { return false; }
+}
+/* 이 현장에 딸린 견적들의 장비대 — 합계와 줄 목록 */
+function siteEquip(s) {
+  const out = { sum: 0, lines: [] };
+  if (!s) return out;
+  (siteQuoteMap()[s.id] || []).forEach(q => {
+    (q.items || []).forEach(it => {
+      if (!isEquipItem(it)) return;
+      const amt = Math.round(+it.amt || 0); if (!amt) return;
+      out.sum += amt;
+      out.lines.push({ name: (it.name || '').trim(), qty: it.qty, amt: amt, docNo: q.docNo || '' });
+    });
+  });
+  return out;
+}
+/* 이 현장에 딸린 견적의 담당자 (여러 명이면 전부) */
+function siteQuoteStaff(s) {
+  if (!s) return [];
+  return [...new Set((siteQuoteMap()[s.id] || []).map(q => (q.by || '').trim()).filter(Boolean))];
+}
+
+/* ══ 현장 → 견적 고르기 창 ══════════════════════════════ */
+let _sqPick = '';           // 지금 고르고 있는 현장 id
+function openSiteQuotes(siteId) {
+  const s = (state.sites || []).find(x => x.id === siteId);
+  if (!s) { toast('현장을 찾을 수 없습니다'); return; }
+  _sqPick = siteId;
+  filters.sqSearch = '';
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-link"></i>견적 연결</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div id="sq-body">${siteQuotesHtml()}</div>`);
+}
+function siteQuotesFilter(v) { filters.sqSearch = v; const b = el('sq-list'); if (b) b.innerHTML = siteQuotesListHtml(); }
+function siteQuotesHtml() {
+  const s = (state.sites || []).find(x => x.id === _sqPick); if (!s) return '';
+  const linked = siteQuoteMap()[s.id] || [];
+  const sale = siteCrewSale(s), eq = siteEquip(s);
+  return `
+    <div class="card" style="padding:11px 13px;margin-bottom:11px">
+      <div style="font-weight:800;font-size:14.5px">${esc(s.name || s.client || '')}</div>
+      <div style="font-size:11.5px;color:var(--t3);margin-top:3px">${esc(s.client || '')}${s.team ? ' · 시공팀 ' + esc(s.team) : ''}${s.constructDate ? ' · 시공일 ' + esc(s.constructDate) : ''}</div>
+      ${(s.address || '').trim() ? `<div style="font-size:11.5px;color:var(--t2);margin-top:2px"><i class="ti ti-map-pin" style="font-size:11px"></i> ${esc(s.address)}</div>` : ''}
+      <div style="margin-top:8px;padding-top:7px;border-top:1px dashed var(--bd2);font-size:12.5px">
+        연결된 견적 <b>${linked.length}장</b> · 시공 매출 <b style="color:var(--gd)">${fmtWon(sale)}</b>원${eq.sum ? ` · 장비대 <b style="color:#5847b8">${fmtWon(eq.sum)}</b>원` : ''}</div>
+    </div>
+    ${linked.length ? `<div class="sec-label"><i class="ti ti-check"></i>지금 연결된 견적</div>
+      ${linked.map(q => _sqRow(q, true)).join('')}` : `
+      <div class="banner warn" style="margin-bottom:11px;font-size:12px"><i class="ti ti-alert-triangle"></i>
+        <span style="flex:1;min-width:0">연결된 견적이 없어서 <b>시공 매출이 0원</b>으로 나옵니다.<br>
+        아래에서 이 현장 견적을 눌러 연결하세요.</span></div>`}
+    <div class="sec-label" style="margin-top:12px"><i class="ti ti-file-invoice"></i>견적 고르기</div>
+    <div class="search-box" style="margin-bottom:9px"><i class="ti ti-search"></i>
+      <input id="sq-q" placeholder="견적번호·거래처·현장주소로 찾기" value="${esc(filters.sqSearch || '')}"
+        oninput="siteQuotesFilter(this.value)" autocomplete="off" lang="ko"></div>
+    <div id="sq-list" style="max-height:44vh;overflow:auto">${siteQuotesListHtml()}</div>
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">닫기</button></div>`;
+}
+/* 견적 한 줄 */
+function _sqRow(q, isLinked) {
+  const crew = (q.items || []).filter(it => marginCat(it.name) === '시공')
+    .reduce((a, it) => a + Math.round(+it.amt || 0), 0);
+  const eq = (q.items || []).filter(isEquipItem).reduce((a, it) => a + Math.round(+it.amt || 0), 0);
+  const rev = quoteSiteIdMap();
+  const otherSid = !isLinked ? rev[q.id] : '';
+  const other = otherSid && otherSid !== _sqPick ? (state.sites || []).find(x => x.id === otherSid) : null;
+  return `<div style="display:flex;align-items:center;gap:9px;padding:9px 11px;border:1.5px solid ${isLinked ? 'var(--gd)' : 'var(--bd2)'};background:${isLinked ? '#f3faf6' : 'transparent'};border-radius:11px;margin-bottom:6px">
+    <div style="flex:1;min-width:0">
+      <div style="font-weight:700;font-size:13px">${esc(q.docNo || '')} <span style="font-weight:500;color:var(--t3)">${esc(qDate(q))}</span></div>
+      <div style="font-size:11.5px;color:var(--t2);margin-top:2px">${esc(q.client || '')}${(q.by || '').trim() ? ` · 담당 <b>${esc(q.by)}</b>` : ''}</div>
+      ${(q.siteAddr || '').trim() ? `<div style="font-size:10.5px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(q.siteAddr)}</div>` : ''}
+      <div style="font-size:11.5px;margin-top:3px">
+        ${crew ? `<span style="color:var(--gd);font-weight:700">시공 ${fmtWon(crew)}</span>` : '<span style="color:var(--t3)">시공 품목 없음</span>'}
+        ${eq ? ` <span style="color:#5847b8;font-weight:700">· 장비대 ${fmtWon(eq)}</span>` : ''}
+        <span style="color:var(--t3)"> · 합계 ${fmtWon(q.total)}</span></div>
+      ${other ? `<div style="font-size:10.5px;color:var(--amber-t);margin-top:2px"><i class="ti ti-alert-circle" style="font-size:11px"></i> 지금은 「${esc(other.name || other.client || '')}」 현장에 붙어 있습니다</div>` : ''}
+    </div>
+    <div style="flex:none;display:flex;flex-direction:column;gap:4px">
+      <button class="btn btn-sm" style="padding:2px 8px;font-size:11px" onclick="openQuoteView('${q.id}')"><i class="ti ti-eye"></i>보기</button>
+      ${isLinked
+      ? `<button class="btn btn-sm" style="padding:2px 8px;font-size:11px;color:var(--red-t);border-color:var(--red-t)" onclick="siteLinkQuote('${q.id}',false)"><i class="ti ti-unlink"></i>해제</button>`
+      : `<button class="btn btn-sm btn-pri" style="padding:2px 8px;font-size:11px" onclick="siteLinkQuote('${q.id}',true)"><i class="ti ti-link"></i>연결</button>`}
+    </div></div>`;
+}
+/* 고를 수 있는 견적 목록 — 같은 거래처부터, 시공 품목 있는 것부터 */
+function siteQuotesListHtml() {
+  const s = (state.sites || []).find(x => x.id === _sqPick); if (!s) return '';
+  const linkedIds = new Set((siteQuoteMap()[s.id] || []).map(q => q.id));
+  const qy = (filters.sqSearch || '').trim().toLowerCase();
+  const sameC = _normName(s.client || '');
+  let list = (state.quotes || []).filter(q => {
+    if (linkedIds.has(q.id)) return false;
+    if (qy) {
+      const hay = [q.docNo, q.client, q.siteAddr, q.siteName, q.by, qDate(q)].join(' ').toLowerCase();
+      return hay.indexOf(qy) >= 0;
+    }
+    return sameC && _normName(q.client || '') === sameC;      // 검색 안 하면 같은 거래처만
+  });
+  const crewOf = q => (q.items || []).filter(it => marginCat(it.name) === '시공').reduce((a, it) => a + Math.round(+it.amt || 0), 0);
+  list.sort((a, b) => (crewOf(b) > 0) - (crewOf(a) > 0) || String(qDate(b)).localeCompare(String(qDate(a))));
+  list = list.slice(0, 40);
+  if (!list.length) return `<div class="empty" style="padding:18px"><i class="ti ti-search-off"></i>${qy ? '찾는 견적이 없습니다' : '이 거래처의 다른 견적이 없습니다 — 위 칸에서 견적번호로 찾아보세요'}</div>`;
+  return list.map(q => _sqRow(q, false)).join('');
+}
+/* ★ 실제 연결 — 견적에 siteId 를 적는다 (quoteLinkSiteDo 와 같은 방식) */
+async function siteLinkQuote(qid, on) {
+  if (!isAdmin()) { toast('관리자만 됩니다'); return; }
+  const q = (state.quotes || []).find(x => x.id === qid); if (!q) return;
+  const s = (state.sites || []).find(x => x.id === _sqPick); if (!s) return;
+  try {
+    if (on) await Store.update('quotes', qid, { siteDone: true, siteDoneAt: (+q.siteDoneAt || Date.now()), siteId: s.id, siteName: s.name || s.client || '' });
+    else await Store.update('quotes', qid, { siteId: '', siteName: '' });
+    _sqAt = 0; _qsRevAt = 0;                       // 연결표 캐시 즉시 버리기
+    toast(on ? ('연결됨 · ' + (q.docNo || '')) : '연결 해제됨');
+    const b = el('sq-body'); if (b) setTimeout(() => { b.innerHTML = siteQuotesHtml(); }, 250);
+    setTimeout(() => { if (tab === 'settle') renderSettle(); }, 400);
+  } catch (e) { toast('실패: ' + ((e && e.message) || e)); }
+}
+
 function crewSettleCard() {
   const sites = (state.sites || []).filter(s => (s.team || '').trim() && !isSelfTeam(s.team));
   // 업체 직불은 '우리가 주고받는 돈'이 아니라 따로 뺀다
@@ -10489,6 +10641,7 @@ function crewSettleCard() {
   const dirSites = sites.filter(s => s.crewDirect);
   const totDirect = dirSites.reduce((a, s) => a + (+s.crewFee || 0), 0);
   const totSale = sites.reduce((a, s) => a + siteCrewSale(s), 0);
+  const totEquip = sites.reduce((a, s) => a + siteEquip(s).sum, 0);      // ★ 장비대 합계
   const totFee = totUnpaid + totPaid;
   // 남는 금액은 직불 건을 빼고 계산한다 — 직불은 우리 손을 거치지 않아 마진을 단정할 수 없다
   const ownSale = sites.filter(s => !s.crewDirect).reduce((a, s) => a + siteCrewSale(s), 0);
@@ -10511,14 +10664,20 @@ function crewSettleCard() {
       const sale = siteCrewSale(s);
       const mg = sale - fee;
       const dir = !!s.crewDirect;
+      const staff = siteQuoteStaff(s);          // ★ 견적 담당자
+      const eq = siteEquip(s);                  // ★ 장비대
       return `<tr style="border-bottom:1px solid var(--soft)">
         <td style="padding:6px 8px;white-space:nowrap">${esc((s.constructDate || '').slice(5))}</td>
-        <td style="padding:6px 8px"><div style="font-weight:600">${esc(s.client || s.name || '')}</div>
-          ${(s.address || '').trim() ? `<div style="font-size:10.5px;color:var(--t2)"><i class="ti ti-map-pin" style="font-size:11px;vertical-align:-1px"></i> ${esc(s.address)}</div>` : ''}
-          ${(s.name || '').trim() && (s.name || '') !== (s.client || '') ? `<div style="font-size:10.5px;color:var(--t3)">${esc(s.name)}</div>` : ''}</td>
+        <td style="padding:6px 8px"><button type="button" onclick="openSiteQuotes('${s.id}')" title="이 현장의 견적 보기·연결하기"
+            style="all:unset;cursor:pointer;display:block;max-width:230px">
+            <div style="font-weight:600;color:var(--gd);text-decoration:underline;text-underline-offset:2px">${esc(s.client || s.name || '')}</div>
+            ${(s.address || '').trim() ? `<div style="font-size:10.5px;color:var(--t2)"><i class="ti ti-map-pin" style="font-size:11px;vertical-align:-1px"></i> ${esc(s.address)}</div>` : ''}
+            ${(s.name || '').trim() && (s.name || '') !== (s.client || '') ? `<div style="font-size:10.5px;color:var(--t3)">${esc(s.name)}</div>` : ''}</button></td>
+        <td style="padding:6px 8px;white-space:nowrap;font-size:11.5px">${staff.length ? esc(staff.join(', ')) : '<span style="color:var(--bd2)">·</span>'}</td>
         <td style="padding:6px 8px;text-align:right;white-space:nowrap">${sale > 0
           ? `<b>${fmtWon(sale)}</b>${siteQuoteNos(s).length ? `<div style="font-size:10px;color:var(--t3)">${esc(siteQuoteNos(s).join(', '))}</div>` : ''}`
-          : `<span style="color:var(--t3)">-</span>`}</td>
+          : `<button type="button" class="btn btn-sm" style="padding:1px 8px;font-size:10.5px;color:var(--gd);border-color:var(--gd)" onclick="openSiteQuotes('${s.id}')"><i class="ti ti-link"></i>견적 연결</button>`}
+          ${eq.sum ? `<div style="font-size:10.5px;color:#5847b8;font-weight:700;margin-top:2px">장비대 ${fmtWon(eq.sum)}</div>` : ''}</td>
         <td style="padding:6px 8px;text-align:right"><input inputmode="numeric" value="${fee || ''}" onchange="saveCrewFee('${s.id}',this.value)" placeholder="시공비" style="${inp}"></td>
         <td style="padding:6px 8px;text-align:right;white-space:nowrap">${dir
           ? `<span style="color:#5847b8;font-weight:700">직불</span>`
@@ -10537,7 +10696,7 @@ function crewSettleCard() {
     return `<div style="margin-top:10px"><div style="display:flex;align-items:center;justify-content:space-between;background:var(--soft);border-radius:8px;padding:6px 10px;margin-bottom:4px">
         <b style="font-size:13px">${esc(t)}${isSelfTeam(t) ? ' <span style="font-size:10px;color:var(--t3);font-weight:500">(자체)</span>' : ''}</b>
         <span style="font-size:11.5px;color:var(--t3)">매출 <b style="color:var(--gd)">${fmtWon(tSale)}</b> · 미정산 <b style="color:#c0341d">${fmtWon(tUnpaid)}</b> · 완료 <b style="color:#0f766e">${fmtWon(tPaid)}</b>${tDirect ? ` · 직불 <b style="color:#5847b8">${fmtWon(tDirect)}</b>` : ''}</span></div>
-      <table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="color:var(--t2);font-size:11px"><th style="padding:4px 8px;text-align:left">시공일</th><th style="padding:4px 8px;text-align:left">현장</th><th style="padding:4px 8px;text-align:right">시공 매출</th><th style="padding:4px 8px;text-align:right">시공비</th><th style="padding:4px 8px;text-align:right">남는 금액</th><th style="padding:4px 8px;text-align:center">정산</th><th style="padding:4px 8px;text-align:center">정산일</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="color:var(--t2);font-size:11px"><th style="padding:4px 8px;text-align:left">시공일</th><th style="padding:4px 8px;text-align:left">현장</th><th style="padding:4px 8px;text-align:left">담당자</th><th style="padding:4px 8px;text-align:right">시공 매출</th><th style="padding:4px 8px;text-align:right">시공비</th><th style="padding:4px 8px;text-align:right">남는 금액</th><th style="padding:4px 8px;text-align:center">정산</th><th style="padding:4px 8px;text-align:center">정산일</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }).join('');
   return `<div class="card" style="margin-bottom:12px;padding:13px 14px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:6px">
@@ -10549,9 +10708,16 @@ function crewSettleCard() {
       <div style="text-align:center;padding:8px;background:${ownSale - totFee >= 0 ? '#eefaf5' : '#fdf0ea'};border-radius:9px"><div style="font-size:10.5px;color:var(--t2)">남는 금액 <span style="font-size:9.5px;color:var(--t3)">(직불 제외)</span></div><div style="font-size:15px;font-weight:800;color:${ownSale - totFee >= 0 ? '#0f766e' : '#c0341d'}">${fmtWon(ownSale - totFee)}</div></div>
       <div style="text-align:center;padding:8px;background:#fdf0ea;border-radius:9px"><div style="font-size:10.5px;color:var(--t2)">시공비 미정산</div><div style="font-size:15px;font-weight:800;color:#c0341d">${fmtWon(totUnpaid)}</div></div>
       <div style="text-align:center;padding:8px;background:#eefaf5;border-radius:9px"><div style="font-size:10.5px;color:var(--t2)">시공비 정산완료</div><div style="font-size:15px;font-weight:800;color:#0f766e">${fmtWon(totPaid)}</div></div>
+      ${totEquip ? `<div style="text-align:center;padding:8px;background:#f3f1fd;border-radius:9px;grid-column:1/-1"><div style="font-size:10.5px;color:var(--t2)">장비대 <span style="font-size:9.5px;color:var(--t3)">— 견적에 들어간 장비대 합계</span></div><div style="font-size:15px;font-weight:800;color:#5847b8">${fmtWon(totEquip)}</div></div>` : ''}
       ${dirSites.length ? `<div style="text-align:center;padding:8px;background:#f3f1fd;border-radius:9px;grid-column:1/-1"><div style="font-size:10.5px;color:var(--t2)">업체 직불 <span style="font-size:9.5px;color:var(--t3)">— 시공팀이 거래처에서 직접 받음 (${dirSites.length}건)</span></div><div style="font-size:15px;font-weight:800;color:#5847b8">${fmtWon(totDirect)}</div></div>` : ''}
     </div>
-    ${totSale > 0 ? '' : `<div style="font-size:11px;color:var(--t3);margin-bottom:6px"><i class="ti ti-info-circle"></i> 시공 매출은 <b>견적이 연결된 현장</b>에서만 나옵니다. 견적 카드의 [현장 연결]로 이어두면 여기에 표시됩니다.</div>`}
+    ${(() => {
+      const noLink = sites.filter(s => !(siteQuoteMap()[s.id] || []).length).length;
+      if (!noLink) return '';
+      return `<div class="banner warn" style="margin-bottom:8px;font-size:11.5px"><i class="ti ti-alert-triangle"></i>
+        <span style="flex:1;min-width:0"><b>견적이 연결 안 된 현장 ${noLink}곳</b>은 시공 매출이 <b>0원</b>으로 나옵니다 — 시공비는 견적에 잘 들어가 있어도 <b>어느 현장 것인지 앱이 몰라서</b>입니다.<br>
+        아래 표에서 <b>현장 이름을 누르면</b> 그 거래처 견적이 뜹니다. 눌러서 연결하면 바로 잡힙니다.</span></div>`;
+    })()}
     <div data-keepscroll id="settle-crew-list" style="max-height:50vh;overflow:auto">${blocks || `<div style="font-size:12px;color:var(--t3);text-align:center;padding:14px">${onlyUnpaid ? '미정산 현장이 없습니다' : '시공팀이 지정된 현장이 없습니다'}</div>`}</div>
   </div>`;
 }
