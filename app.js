@@ -2601,11 +2601,14 @@ function companyNames() {
   return [...s].sort((a, b) => a.localeCompare(b));
 }
 /* 폼에서 입력한 거래처명이 목록에 없으면 '거래처 관리'에 자동 등록 (현장·출고·홀딩·세면대 공용) */
-async function ensureClient(name) {
+async function ensureClient(name, ctype) {
   const v = (name || '').trim();
   if (!v) return;
   if ((state.clients || []).some(c => _normName(c.value) === _normName(v))) return;   // 이미 있으면 통과
-  try { await Store.add('clients', { value: v }); } catch (e) { }
+  /* ★ 2026-09-16 — 견적에서 새로 생긴 거래처는 «업체 구분»을 비워 두지 않는다.
+     예전엔 {value} 만 넣어서 그 거래처는 유형이 빈 채로 남았다. */
+  const t = String(ctype || '').trim();
+  try { await Store.add('clients', Object.assign({ value: v }, (t && CTYPES.indexOf(t) >= 0) ? { ctype: t } : {})); } catch (e) { }
 }
 /* 입고 자재 검색 후보: 재고에 등록된 품목명만 */
 function invNames() {
@@ -5088,7 +5091,44 @@ function quoteClientChanged() {
   quoteRefillPrices();
   quoteExtraRefresh();
   bcSyncAllBiz(); bcNoteRefresh();          // 거래처가 바뀌면 세면대 계산기 업체 구분도 따라간다
+  qCtypeNoteRefresh();
   const hb = el('q-holdbox'); if (hb) hb.innerHTML = quoteHoldBoxHtml(client);
+}
+/* ══════════════════════════════════════════════════════════
+   ★★ 업체 구분을 견적서에서 바로 거래처에 저장 (2026-09-16)
+   사용자: *"업체 유형 구분을 견적서에서 직접 인테리어 소비자 유통 선택하고 저장할 수 있게"*
+
+   원래도 «견적을 저장하면» 거래처 유형이 따라 바뀌긴 했다(submitQuote 안 한 줄).
+   그런데 ① 이름표가 「단가 유형」이라 업체 구분인 줄 모르고
+        ② 조용히 바뀌어서 반영됐는지 알 수가 없고
+        ③ 견적을 저장해야만 반영돼서, 유형만 고치고 싶을 때 쓸 수가 없었다.
+   이제 고르는 즉시 **«거래처는 인테리어» [유통으로 저장]** 이 바로 밑에 뜬다.
+   ★ 누르기 전에는 안 바뀐다 — 실수로 유형만 바꿔 본 경우까지 덮어쓰지 않게. */
+function qCtypeNoteRefresh() {
+  const box = el('q-ctnote'); if (!box) return;
+  const client = (el('q-client') && el('q-client').value || '').trim();
+  const pick = (el('q-ctype') && el('q-ctype').value) || '';
+  if (!client || !pick) { box.innerHTML = ''; return; }
+  const c = (state.clients || []).find(x => _normName(x.value) === _normName(client));
+  if (!c) { box.innerHTML = `<span style="color:var(--t3)">새 거래처 — 저장하면 <b>${esc(pick)}</b>로 등록됩니다</span>`; return; }
+  const cur = (c.ctype || '').trim();
+  if (cur === pick) { box.innerHTML = `<span style="color:var(--gd)"><i class="ti ti-check" style="font-size:12px"></i> 거래처 정보와 같음</span>`; return; }
+  box.innerHTML = `<span style="color:#a2560f">거래처는 <b>${esc(cur || '미지정')}</b></span>
+    <button type="button" class="btn btn-sm" style="padding:1px 7px;font-size:10.5px;margin-left:4px;color:var(--gd);border-color:var(--gd)"
+      onclick="qCtypeSaveToClient()"><i class="ti ti-device-floppy"></i>${esc(pick)}로 저장</button>`;
+}
+/* ★ 지금 고른 업체 구분을 거래처 기본정보에 바로 적는다 */
+async function qCtypeSaveToClient() {
+  const client = (el('q-client') && el('q-client').value || '').trim();
+  const pick = (el('q-ctype') && el('q-ctype').value) || '';
+  if (!client || !pick) { toast('거래처를 먼저 넣어주세요'); return; }
+  const c = (state.clients || []).find(x => _normName(x.value) === _normName(client));
+  if (!c) { toast('아직 등록 안 된 거래처입니다 — 견적을 저장하면 같이 등록됩니다'); return; }
+  try {
+    await Store.update('clients', c.id, { ctype: pick });
+    toast(client + ' → 업체 구분 ' + pick + ' 저장됨');
+    setTimeout(qCtypeNoteRefresh, 400);
+  } catch (e) { toast('저장 실패: ' + ((e && e.message) || e)); }
 }
 /* 단가 유형(업체 유형)을 '직접 고른' 경우 — 그 유형 단가로 다시 채운다.
    상호만 바뀐 것과 다르다. 유형을 고르는 건 "이 단가로 가겠다"는 뜻이라 덮어쓴다. */
@@ -5096,6 +5136,7 @@ function quoteTypeChanged() {
   const n = quoteRefillPrices(true);
   quoteExtraRefresh(); bcSyncAllBiz(); bcNoteRefresh();
   const t = el('q-ctype') ? el('q-ctype').value : '';
+  qCtypeNoteRefresh();
   if (n) toast(t + ' 단가로 ' + n + '개 품목을 다시 채웠습니다');
 }
 /* 안내 문구만 다시 그린다 (업체 구분 select 는 건드리지 않음) */
@@ -5546,7 +5587,8 @@ function renderQuoteForm() {
       <div class="frm" style="display:block">
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
           <div class="fld" style="flex:2;min-width:180px;margin:0"><label>거래처 <span class="req">*</span></label>${searchBox('q-client', '업체명 검색·입력', v.client || '', 'companyNames', 'quoteClientChanged')}</div>
-          <div class="fld" style="flex:1;min-width:130px;margin:0"><label>단가 유형</label><select id="q-ctype" onchange="quoteTypeChanged()" style="width:100%;font-size:15px;padding:9px 10px;border:1.5px solid var(--bd2);border-radius:10px">${CTYPES.map(t => `<option ${((editing && v.ctype) || clientType(v.client || '')) === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+          <div class="fld" style="flex:1;min-width:150px;margin:0"><label>업체 구분 <span style="color:var(--t3);font-weight:500">(이 단가로 나갑니다)</span></label><select id="q-ctype" onchange="quoteTypeChanged()" style="width:100%;font-size:15px;padding:9px 10px;border:1.5px solid var(--bd2);border-radius:10px">${CTYPES.map(t => `<option ${((editing && v.ctype) || clientType(v.client || '')) === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
+            <div id="q-ctnote" style="font-size:11px;margin-top:4px;line-height:1.5"></div></div>
           <div class="fld" style="flex:1;min-width:130px;margin:0"><label>분류</label><select id="q-cat" onchange="quoteCatChanged(this.value)" style="width:100%;font-size:15px;padding:9px 10px;border:1.5px solid var(--bd2);border-radius:10px">${QCATS.map(cc => `<option ${_formCat === cc ? 'selected' : ''}>${cc}</option>`).join('')}</select></div>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
@@ -5641,6 +5683,7 @@ function renderQuoteForm() {
   quoteRecalc();
   /* ★ 적어 둔 초안이 있으면 되살리고, 이후로는 치는 대로 이 기기에 적어 둔다.
      폼 전체에 한 번만 귀를 달아 둔다(줄을 새로 추가해도 그대로 잡힌다). */
+  try { qCtypeNoteRefresh(); } catch (e) { }
   try {
     qDraftRestore();
     const _root = document.getElementById('qform-root');
@@ -5879,7 +5922,7 @@ async function submitQuote(id) {
   if (_busy) { toast('앞 작업을 끝내는 중입니다 — 잠시 후 다시 눌러주세요'); return; }
   _busy = true;
   try {
-    await ensureClient(client);
+    await ensureClient(client, ctype);          // ★ 새 거래처면 업체 구분까지 같이 등록
     const q = id ? (state.quotes || []).find(x => x.id === id) : null;
     const docNo = (q && q.docNo) || quoteNextDocNo();
     const useSalesRep = !!(el('q-userep') && el('q-userep').checked);
@@ -5892,7 +5935,15 @@ async function submitQuote(id) {
        «저장이 안 됐나?» 하고 다시 누르곤 했다. */
     qDraftDrop(id || 'new');
     filters.quoteEdit = ''; filters.quoteCopy = false; toast('견적 저장됨'); renderQuote();
-    try { const cdoc = (state.clients || []).find(x => _normName(x.value) === _normName(client)); if (cdoc && (cdoc.ctype || '') !== ctype) await Store.update('clients', cdoc.id, { ctype }); } catch (e) { }   // 거래처 유형 기억
+    /* ★ 거래처 «업체 구분» 을 견적에서 고른 값으로 맞춘다 — 바뀌면 말해 준다(예전엔 조용했다) */
+    try {
+      const cdoc = (state.clients || []).find(x => _normName(x.value) === _normName(client));
+      if (cdoc && (cdoc.ctype || '') !== ctype) {
+        const _was = (cdoc.ctype || '').trim();
+        await Store.update('clients', cdoc.id, { ctype });
+        setTimeout(() => toast(client + ' 업체 구분 ' + (_was ? (_was + ' → ') : '') + ctype + ' 로 저장됨'), 900);
+      }
+    } catch (e) { }
     /* ══════════════════════════════════════════════════════
        ★★★ 2026-09-16 — 견적 저장은 **기준단가를 절대 안 건드린다.**
        사용자: *"단가 기준 단가를 변경하는 시스템 만들지 마"*
