@@ -5134,6 +5134,17 @@ function quoteRefillPricesForce() {
 /* ── 거래처별 '이전 판매 단가' ──────────────────────────────
    지난 견적에서 그 거래처에 실제로 판 단가를 자재줄·운송비 밑에 띄운다.
    따로 저장하는 게 아니라 견적 기록에서 그때그때 뽑는다. */
+/* ══════════════════════════════════════════════════════════
+   ★★ 2026-09-16 — «한 건»이 아니라 «지난 내역»을 보여준다
+   사용자: *"단가 기억하는 이유는 해당 업체 운송비 얼마나갔었는지 기억하려고 그러는 거임"*
+
+   실측(신성그룹 · 운송비(창고-공장)): 같은 날에도 70,000 / 100,000 / 140,000 이다.
+   거리·차량·물량마다 달라서 **«기준단가» 라는 게 애초에 없다.**
+   그래서 예전처럼 마지막 한 건만 띄우면 우연히 걸린 값이 «정답»처럼 보인다.
+   이제 **지난 몇 번을 날짜와 함께 늘어놓고**, 제일 싼값~비싼값과 «제일 자주 나온 값»을 같이 적는다.
+   ★ 이건 전부 **지난 견적에서 그때그때 읽는 것**이다 — 단가표에는 한 글자도 안 쓴다.
+   ══════════════════════════════════════════════════════════ */
+const CPV_KEEP = 12;                 // 항목마다 최근 몇 건까지 들고 있을까
 let _cpvMap = null, _cpvAt = 0;
 function clientPrevPriceMap() {
   if (_cpvMap && Date.now() - _cpvAt < 8000) return _cpvMap;
@@ -5142,20 +5153,39 @@ function clientPrevPriceMap() {
     const c = _normName(q.client || ''); if (!c) return;
     const d = qDate(q) || '';
     (q.items || []).forEach(it => {
-      const n = _normName(it.name || ''); const p = +it.price || 0;
+      const n = _normName(it.name || ''); const p = Math.round(+it.price || 0);
       if (!n || !(p > 0)) return;
       const k = c + '' + n;
-      const cur = m[k];
-      if (!cur || d >= cur.date) m[k] = { price: p, date: d, docNo: q.docNo || '' };
+      (m[k] || (m[k] = [])).push({ price: p, date: d, docNo: q.docNo || '', qty: it.qty });
     });
+  });
+  Object.keys(m).forEach(k => {
+    m[k].sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.docNo).localeCompare(String(a.docNo)));
+    if (m[k].length > CPV_KEEP) m[k].length = CPV_KEEP;
   });
   _cpvMap = m; _cpvAt = Date.now();
   return m;
 }
+/* 지난 내역 목록 (최신순) */
+function clientPrevList(client, name, n) {
+  const c = _normName(client || ''), nm = _normName(name || '');
+  if (!c || !nm) return [];
+  const l = clientPrevPriceMap()[c + '' + nm] || [];
+  return n ? l.slice(0, n) : l.slice();
+}
+/* 제일 최근 한 건 (예전 그대로 — 자재줄이 쓴다) */
 function clientPrevPrice(client, name) {
-  const c = _normName(client || ''), n = _normName(name || '');
-  if (!c || !n) return null;
-  return clientPrevPriceMap()[c + '' + n] || null;
+  const l = clientPrevList(client, name, 1);
+  return l.length ? l[0] : null;
+}
+/* 지난 내역 요약 — 제일 싼값~비싼값 · 제일 자주 나온 값 */
+function clientPrevStat(list) {
+  if (!list || !list.length) return null;
+  const ps = list.map(x => x.price);
+  const cnt = {}; ps.forEach(p => { cnt[p] = (cnt[p] || 0) + 1; });
+  let mode = ps[0], mx = 0;
+  Object.keys(cnt).forEach(k => { if (cnt[k] > mx) { mx = cnt[k]; mode = +k; } });
+  return { n: list.length, min: Math.min.apply(null, ps), max: Math.max.apply(null, ps), mode: mode, modeN: mx };
 }
 /* 이전 판매 단가 한 줄 만들기 (자재줄·운송비줄 공용) */
 function _prevPriceHtml(h, cur, applyFn) {
@@ -5197,16 +5227,29 @@ function qPrevApply(btn, p) {
   const pe = row.querySelector('.q-price'); if (pe) pe.value = p;
   quoteRecalc();
 }
+/* ★ 부대비용(운송비·가공비·시공비 …) 줄 밑 — 이 거래처에 지난번 얼마 받았는지.
+   예전엔 운송비만·한 건만 보여줬다. 이제 전부·여러 건 보여준다. */
 function qxPrevRefresh(row) {
   const box = row && row.querySelector('.qx-prev'); if (!box) return;
   box.innerHTML = '';
   const name = row.getAttribute('data-name') || '';
   const client = (el('q-client') && el('q-client').value || '').trim();
   if (!name || !client) return;
-  let cat = ''; try { cat = marginCat(name); } catch (e) { }
-  if (cat !== '운송') return;                              // 운송비만 (요청 범위)
-  const h = clientPrevPrice(client, name); if (!h) return;
-  box.innerHTML = _prevPriceHtml(h, _numv((row.querySelector('.qx-price') || {}).value), 'qxPrevApply');
+  const list = clientPrevList(client, name, 6); if (!list.length) return;
+  const cur = Math.round(_numv((row.querySelector('.qx-price') || {}).value));
+  const st = clientPrevStat(list);
+  const sd = d => { try { return _shortDate(d); } catch (e) { return d || ''; } };
+  /* 지난 건들을 «날짜 + 금액» 알약으로. 누르면 그 값이 단가칸에 들어간다. */
+  const chips = list.slice(0, 4).map(h => {
+    const same = cur > 0 && cur === h.price;
+    return `<button type="button" class="btn btn-sm" title="${esc(h.docNo || '')}"
+      style="padding:1px 7px;font-size:11px;margin-left:4px;border-color:${same ? 'var(--gd)' : 'var(--bd2)'};color:${same ? 'var(--gd)' : 'var(--t1)'}"
+      onclick="qxPrevApply(this,${h.price})"><span style="color:var(--t3);font-weight:500">${esc(sd(h.date))}</span> <b>${fmtWon(h.price)}</b></button>`;
+  }).join('');
+  const spread = st.min !== st.max
+    ? `<span style="color:var(--t3)"> · 지난 ${st.n}번 <b style="color:#a2560f">${fmtWon(st.min)}~${fmtWon(st.max)}</b>${st.modeN > 1 ? ` · 제일 잦은 값 <b>${fmtWon(st.mode)}</b>` : ''}</span>`
+    : `<span style="color:var(--t3)"> · 지난 ${st.n}번 모두 <b style="color:var(--gd)">${fmtWon(st.min)}</b></span>`;
+  box.innerHTML = `<span style="color:var(--t3)"><i class="ti ti-history" style="font-size:12px;vertical-align:-1px"></i> 이 거래처 지난 단가</span>${chips}${spread}`;
 }
 function qxPrevApply(btn, p) {
   const row = btn.closest('.qx-row'); if (!row) return;
