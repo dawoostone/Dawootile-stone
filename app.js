@@ -6786,7 +6786,9 @@ function _txFromPopbill(x, acc) {
 /* ── 통장 한 줄이 입금인가 출금인가 ────────────────────────────
    amount = 들어온 돈, out = 나간 돈. 둘 중 하나만 0보다 크다.
    예전에 가져온 줄에는 out 이 아예 없으므로 전부 입금으로 본다(그때는 입금만 가져왔다). */
-function txIsOut(t) { return (+((t && t.out) || 0)) > 0 && !((+((t && t.amount) || 0)) > 0); }
+/* ★ 2026-09-16 — 파일로 올린 «취소» 줄은 출금이 마이너스다(나갔던 돈이 돌아옴).
+   0보다 큰 것만 출금으로 보면 그 줄이 어디에도 안 잡혀 그 달 계정과목 합계가 부풀어 오른다. */
+function txIsOut(t) { return (+((t && t.out) || 0)) !== 0 && !((+((t && t.amount) || 0)) > 0); }
 function txIsIn(t) { return (+((t && t.amount) || 0)) > 0; }
 function txMoney(t) { return txIsOut(t) ? Math.round(+t.out || 0) : Math.round(+((t && t.amount) || 0)); }
 /* 출금 내역은 관리자만 본다 — 급여·세금·개인 이체가 섞여 있어서 */
@@ -7127,7 +7129,9 @@ function bankListHtml() {
     <div class="ph"><div><h2><i class="ti ti-building-bank"></i>통장 내역</h2>
       <p>통장에 들어온 입금 ${all.length}건${per ? ` · ${esc(per[0])} ~ ${esc(per[1])}` : ''}</p></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        ${isAdmin() ? `<button class="btn btn-sm" onclick="openBankSync()"><i class="ti ti-download"></i>가져오기</button>` : ''}
+        ${isAdmin() ? `<button class="btn btn-sm" onclick="openBankSync()"><i class="ti ti-download"></i>가져오기</button>
+        <button class="btn btn-sm" onclick="openBankUpload()"><i class="ti ti-upload"></i>파일 올리기</button>
+        ${bkupBatches().length ? `<button class="btn btn-sm" onclick="openBkupUndo()" title="파일로 올린 것 되돌리기"><i class="ti ti-arrow-back-up"></i></button>` : ''}` : ''}
         <button class="btn btn-sm" onclick="bankXlsx()"><i class="ti ti-file-spreadsheet"></i>엑셀</button>
         <button class="btn btn-sm" onclick="bankListBack()"><i class="ti ti-arrow-left"></i>견적 목록</button></div></div>
 
@@ -7150,6 +7154,386 @@ function bankListHtml() {
 
     <div class="card" style="padding:10px 13px;margin-bottom:10px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap" id="bk-sumbar">${_bankSumInner()}</div>
     <div id="bk-listwrap">${listHtml}</div>`;
+}
+
+
+/* ══════════════════════════════════════════════════════════
+   ★★ 입출금 내역 «파일 올리기» (2026-09-16)
+   ─────────────────────────────────────────────────────────
+   사용자: *"입출금내역 업로드 하면 장부 입력할 수 있게 해줘"*
+
+   지금까지는 팝빌 계좌조회로만 통장을 가져왔다. 그런데
+     · 팝빌은 **법인 입금계좌 한 개**만 붙어 있다 (농협이체통장·법인 출금계좌는 못 가져온다)
+     · 팝빌이 주는 «입금자명»은 은행이 9글자쯤에서 잘라 보내서 거래처를 못 찾는 게 많다
+   반면 **회계 프로그램에서 뽑은 입출금 엑셀**에는
+     거래처 · 계정과목 · 전표번호가 **이미 사람 손으로 정리되어** 들어 있다.
+   그래서 그 파일을 그대로 받아 장부에 넣는다.
+
+   ★★ 지켜야 할 것 세 가지
+   ① **거래후잔액은 절대 저장하지 않는다** — 사장님 규칙(통장 잔액은 앱 어디에도 안 남긴다).
+      파일에 있어도 읽기만 하고 버린다.
+   ② **같은 건이 두 번 들어가면 안 된다.** 2026-09-07 에 팝빌 문서이름을 잘못 잡아
+      입금이 5억 9천만원어치 겹쳐 잡힌 적이 있다(_txDocId 주석 참고).
+      그래서 여기서는 **두 겹**으로 막는다 —
+        · 문서이름이 같으면 = 같은 파일을 또 올린 것 → 덮어쓰기만 (건수 안 늘어남)
+        · 문서이름은 달라도 «같은 계좌·같은 날·같은 금액»이 이미 있으면
+          = 팝빌로 이미 가져온 건 → **기본으로 체크를 꺼 둔다** (사람이 보고 켜야 들어감)
+   ③ **미리보기를 먼저 보여주고, 누르기 전에는 한 건도 저장하지 않는다.**
+
+   ★ 한 번에 올린 건 한 덩어리(`upBatch`)로 묶어 두므로 **통째로 되돌릴 수 있다.**
+   ══════════════════════════════════════════════════════════ */
+
+/* 열 이름 별칭 — 은행·회계 프로그램마다 이름이 다르다. 위에 있는 것부터 찾는다. */
+const BKUP_ALIAS = {
+  date: ['거래일자', '거래일시', '거래일', '거래날짜', '일자', '날짜'],
+  time: ['거래시간', '시각', '시간'],
+  in: ['입금금액', '입금액', '맡기신금액', '입금', '받은금액'],
+  out: ['출금금액', '출금액', '찾으신금액', '지급금액', '출금', '보낸금액'],
+  bal: ['거래후잔액', '거래후 잔액', '잔액'],          // ★ 읽기만 하고 버린다
+  payer: ['의뢰인명', '의뢰인', '입금자', '보낸분', '기재내용', '거래내용', '내용', '적요'],
+  acc: ['계좌명', '계좌구분', '계좌번호', '계좌'],
+  bank: ['취급점', '취급기관', '상대은행', '거래점', '은행'],
+  way: ['거래매체', '거래구분', '매체'],
+  client: ['거래처명', '거래처'],
+  acct: ['계정과목', '계정', '과목'],
+  slip: ['전표번호', '전표']
+};
+const BKUP_KEYS = ['date', 'in', 'out', 'bal', 'payer', 'acc', 'bank', 'way', 'client', 'acct', 'slip', 'time'];
+function _bkupNorm(s) { return String(s == null ? '' : s).replace(/[\s()（）\[\]·.\-_/]/g, '').toLowerCase(); }
+
+/* 머리글 한 줄 → 어느 칸이 무엇인지 */
+function bkupMapCols(row) {
+  const cells = (row || []).map(_bkupNorm);
+  const used = new Set(), map = {};
+  // ① 이름이 «딱» 같은 칸부터 집는다
+  BKUP_KEYS.forEach(k => {
+    for (const a of BKUP_ALIAS[k]) {
+      const i = cells.indexOf(_bkupNorm(a));
+      if (i >= 0 && !used.has(i)) { map[k] = i; used.add(i); return; }
+    }
+  });
+  // ② 못 찾은 것만 «글자가 들어있나»로 한 번 더
+  BKUP_KEYS.forEach(k => {
+    if (map[k] != null) return;
+    for (const a of BKUP_ALIAS[k]) {
+      const na = _bkupNorm(a);
+      const i = cells.findIndex((c, ix) => c && !used.has(ix) && c.indexOf(na) >= 0);
+      if (i >= 0) { map[k] = i; used.add(i); return; }
+    }
+  });
+  return map;
+}
+function bkupMapOk(m) { return m && m.date != null && (m.in != null || m.out != null); }
+
+/* 날짜 칸 → 'YYYY-MM-DD' (엑셀 날짜값·문자열·20260731 다 받는다) */
+function _bkupDate(v) {
+  if (v instanceof Date) return _ymd(v);
+  const t = String(v == null ? '' : v).replace(/[^0-9]/g, '');
+  if (t.length >= 8) return t.slice(0, 4) + '-' + t.slice(4, 6) + '-' + t.slice(6, 8);
+  return '';
+}
+/* 시각 칸 → 'HH:MM' (없으면 빈칸) */
+function _bkupTime(v) {
+  if (v instanceof Date) return ('0' + v.getHours()).slice(-2) + ':' + ('0' + v.getMinutes()).slice(-2);
+  const s = String(v == null ? '' : v);
+  const m = /(\d{1,2})\s*[:시]\s*(\d{2})/.exec(s);
+  if (m) return ('0' + m[1]).slice(-2) + ':' + m[2];
+  const t = s.replace(/[^0-9]/g, '');
+  if (t.length >= 12) return t.slice(8, 10) + ':' + t.slice(10, 12);      // 20260731193706
+  if (t.length === 4 || t.length === 6) return t.slice(0, 2) + ':' + t.slice(2, 4);
+  return '';
+}
+/* 문서이름에 쓸 짧은 해시 — 계좌명 같은 한글을 안전한 글자로 줄인다 */
+function _bkupHash(s) {
+  let h = 5381; const x = String(s == null ? '' : s);
+  for (let i = 0; i < x.length; i++) h = (((h << 5) + h) ^ x.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+/* ★ 파일에서 읽은 한 줄 → 문서이름
+   팝빌은 「계좌번호_날짜_일련번호」라서 앞에 'X' 를 붙인 이 이름과 **절대 안 겹친다.**
+   전표번호가 있으면 그게 세상에 하나뿐인 번호라 그대로 쓰고,
+   없으면 날짜+입금자+금액을 해시해서 쓴다(같은 파일을 또 올려도 같은 이름이 나온다). */
+function _bkupId(it, seq) {
+  const a = _bkupHash(it.accName || '기본');
+  const d = String(it.date || '').replace(/[^0-9]/g, '');
+  const slip = String(it.slip || '').replace(/[^0-9A-Za-z가-힣]/g, '');
+  const tail = slip ? slip : ('H' + _bkupHash([it.time, it.payer, it.amount, it.out].join('|')));
+  return ('X' + a + '_' + d + '_' + tail + (seq ? '_' + seq : '')).slice(0, 120);
+}
+
+/* 엑셀/CSV 한 장 → 우리가 쓸 줄 목록 */
+function bkupParse(rows) {
+  let hi = -1, map = {};
+  for (let r = 0; r < Math.min(rows.length, 20); r++) {
+    const m = bkupMapCols(rows[r]);
+    if (bkupMapOk(m)) { hi = r; map = m; break; }
+  }
+  if (hi < 0) return { ok: false, map: {}, items: [], head: [] };
+  const g = (cells, k) => (map[k] == null ? '' : cells[map[k]]);
+  const gs = (cells, k) => String(g(cells, k) == null ? '' : g(cells, k)).trim();
+  const items = [], bad = [];
+  const seen = new Map();          // 파일 안에서 «완전히 똑같은 줄»이 두 번 나올 때 번호를 붙인다
+  for (let r = hi + 1; r < rows.length; r++) {
+    const cells = rows[r] || [];
+    if (!cells.some(c => String(c == null ? '' : c).trim())) continue;     // 빈 줄
+    const date = _bkupDate(g(cells, 'date'));
+    let inv = map.in == null ? 0 : Math.round(_numv(g(cells, 'in')));
+    let outv = map.out == null ? 0 : Math.round(_numv(g(cells, 'out')));
+    if (!date) { bad.push({ r: r + 1, why: '날짜를 못 읽음', raw: cells.slice(0, 6).join(' | ') }); continue; }
+    if (!inv && !outv) { bad.push({ r: r + 1, why: '입금·출금이 모두 0', raw: cells.slice(0, 6).join(' | ') }); continue; }
+    /* ★ 취소 줄 — 출금이 마이너스면 «나갔던 돈이 돌아온 것». 부호를 그대로 살려 둔다.
+       (입금으로 옮겨 버리면 계정과목별 출금 합계에서 그 달 운반비가 부풀어 오른다) */
+    const it = {
+      row: r + 1,
+      date: date,
+      time: map.time != null ? _bkupTime(g(cells, 'time')) : _bkupTime(g(cells, 'date')),
+      amount: inv, out: outv,
+      payer: gs(cells, 'payer'),
+      accName: gs(cells, 'acc'),
+      bankNm: gs(cells, 'bank'),
+      way: gs(cells, 'way'),
+      client: gs(cells, 'client'),
+      acct: gs(cells, 'acct'),
+      slip: gs(cells, 'slip')
+    };
+    it.dt = it.date + (it.time ? ' ' + it.time : '');
+    const base = _bkupId(it, 0);
+    const n = (seen.get(base) || 0); seen.set(base, n + 1);
+    it.id = n ? _bkupId(it, n) : base;
+    items.push(it);
+  }
+  return { ok: true, map: map, head: rows[hi] || [], headRow: hi + 1, items: items, bad: bad };
+}
+
+/* ★ 이미 앱에 있는 건과 대조 — 두 겹으로 막는다 */
+function bkupReview(items) {
+  const byId = new Map((state.banktx || []).map(t => [t.id, t]));
+  /* 같은 날·같은 금액이 이미 있나 (팝빌로 가져온 것과 겹치는지) */
+  const k2 = new Map();
+  (state.banktx || []).forEach(t => {
+    const key = String(t.date || '') + '|' + Math.round(+t.amount || 0) + '|' + Math.round(+t.out || 0);
+    if (!k2.has(key)) k2.set(key, []);
+    k2.get(key).push(t);
+  });
+  const fresh = [], again = [], maybe = [];
+  const usedTwin = new Set();
+  items.forEach(it => {
+    if (byId.has(it.id)) { it.why = '같은 파일을 이미 올렸습니다'; again.push(it); return; }
+    const key = it.date + '|' + it.amount + '|' + it.out;
+    const twins = (k2.get(key) || []).filter(t => !usedTwin.has(t.id));
+    if (twins.length) {
+      usedTwin.add(twins[0].id);
+      it.twin = twins[0];
+      it.why = '팝빌로 이미 가져온 건으로 보입니다 (' + (twins[0].payer || '이름없음') + ')';
+      maybe.push(it); return;
+    }
+    fresh.push(it);
+  });
+  return { fresh: fresh, again: again, maybe: maybe };
+}
+
+/* 계좌별 요약 */
+function bkupByAcc(items) {
+  const m = {};
+  items.forEach(it => {
+    const k = it.accName || '(계좌명 없음)';
+    if (!m[k]) m[k] = { n: 0, inN: 0, inAmt: 0, outN: 0, outAmt: 0, d0: '', d1: '' };
+    const o = m[k]; o.n++;
+    if (it.amount) { o.inN++; o.inAmt += it.amount; }
+    if (it.out) { o.outN++; o.outAmt += it.out; }
+    if (!o.d0 || it.date < o.d0) o.d0 = it.date;
+    if (!o.d1 || it.date > o.d1) o.d1 = it.date;
+  });
+  return m;
+}
+
+/* ── 화면 ─────────────────────────────────────────── */
+let _bkup = null;       // {file, parsed, rev, pick:{fresh:true, maybe:false}}
+
+function openBankUpload() {
+  if (!isAdmin()) { toast('관리자만 올릴 수 있습니다'); return; }
+  _bkup = null;
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-upload"></i>입출금 내역 올리기</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div id="bkup-body">${bkupPickHtml()}</div>`);
+}
+function bkupPickHtml() {
+  return `<div style="font-size:12px;color:var(--t2);background:var(--soft);border-radius:11px;padding:11px 13px;margin-bottom:12px;line-height:1.75">
+      은행이나 회계 프로그램에서 받은 <b>입출금 내역 파일</b>(엑셀·CSV)을 그대로 올리면 됩니다.<br>
+      <b>거래처·계정과목</b> 칸이 있으면 그대로 가져옵니다 — 팝빌보다 정확합니다.<br>
+      <span style="color:var(--t3)">칸 이름은 자동으로 알아봅니다 (거래일자·입금금액·출금금액·의뢰인명·거래처·계정과목·전표번호 …)</span>
+    </div>
+    <div class="banner info" style="margin-bottom:12px;font-size:11.5px"><i class="ti ti-shield-check"></i>
+      <span style="flex:1;min-width:0"><b>거래후잔액은 저장하지 않습니다.</b> 파일에 있어도 읽고 버립니다.<br>
+      이미 있는 건은 <b>다시 들어가지 않습니다</b> — 미리 보여드리고, 누르기 전엔 한 건도 저장되지 않습니다.</span></div>
+    <label class="btn btn-pri btn-block" style="cursor:pointer"><i class="ti ti-file-spreadsheet"></i>파일 선택
+      <input type="file" accept=".xlsx,.xls,.csv" onchange="bkupPick(this)" style="display:none"></label>
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">닫기</button></div>`;
+}
+function bkupPick(input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후 다시'); input.value = ''; return; }
+  const body = el('bkup-body'); if (body) body.innerHTML = '<div style="padding:26px;text-align:center;color:var(--t3)">파일 읽는 중…</div>';
+  const rd = new FileReader();
+  rd.onload = e => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      const parsed = bkupParse(rows);
+      if (!parsed.ok) {
+        if (body) body.innerHTML = `<div class="banner warn" style="margin-bottom:12px"><i class="ti ti-alert-triangle"></i>
+          <span style="flex:1">칸 이름을 못 찾았습니다. <b>거래일자</b>와 <b>입금금액(또는 출금금액)</b> 칸이 있어야 합니다.<br>
+          <span style="font-size:11.5px;color:var(--t3)">첫 줄: ${esc((rows[0] || []).join(' | ').slice(0, 160))}</span></span></div>` + bkupPickHtml();
+        input.value = ''; return;
+      }
+      if (!parsed.items.length) {
+        if (body) body.innerHTML = `<div class="banner warn" style="margin-bottom:12px"><i class="ti ti-alert-triangle"></i><span style="flex:1">읽을 줄이 없습니다.</span></div>` + bkupPickHtml();
+        input.value = ''; return;
+      }
+      _bkup = { name: f.name, parsed: parsed, rev: bkupReview(parsed.items), pick: { fresh: true, maybe: false } };
+      bkupRender();
+    } catch (err) {
+      if (body) body.innerHTML = `<div class="banner warn" style="margin-bottom:12px"><i class="ti ti-alert-triangle"></i><span style="flex:1">파일을 읽지 못했습니다 — ${esc((err && err.message) || '')}</span></div>` + bkupPickHtml();
+    }
+    input.value = '';
+  };
+  rd.readAsArrayBuffer(f);
+}
+function bkupToggle(k) { if (!_bkup) return; _bkup.pick[k] = !_bkup.pick[k]; bkupRender(); }
+function bkupCount() {
+  if (!_bkup) return 0;
+  return (_bkup.pick.fresh ? _bkup.rev.fresh.length : 0) + (_bkup.pick.maybe ? _bkup.rev.maybe.length : 0);
+}
+function bkupRender() {
+  const body = el('bkup-body'); if (!body || !_bkup) return;
+  const P = _bkup.parsed, R = _bkup.rev;
+  const accs = bkupByAcc(P.items);
+  const won = v => fmtWon(v) + '원';
+  const found = BKUP_KEYS.filter(k => P.map[k] != null);
+  const lbl = { date: '거래일자', time: '시각', in: '입금', out: '출금', bal: '잔액', payer: '의뢰인·적요', acc: '계좌명', bank: '취급점', way: '거래매체', client: '거래처', acct: '계정과목', slip: '전표번호' };
+  const box = (on, k, n, title, desc, col) => `<label style="display:flex;gap:10px;align-items:flex-start;cursor:${n ? 'pointer' : 'default'};padding:10px 12px;border:1.5px solid ${on && n ? col : 'var(--bd2)'};background:${on && n ? col + '12' : 'transparent'};border-radius:11px;margin-bottom:7px;opacity:${n ? 1 : .5}">
+      <input type="checkbox" ${on ? 'checked' : ''} ${n ? '' : 'disabled'} onchange="bkupToggle('${k}')" style="width:18px;height:18px;margin-top:1px;flex:none">
+      <span style="flex:1;min-width:0"><b style="font-size:13.5px;color:${col}">${title} ${n}건</b>
+        <div style="font-size:11.5px;color:var(--t3);margin-top:2px;line-height:1.55">${desc}</div></span></label>`;
+  const pickN = bkupCount();
+  const accRows = Object.keys(accs).map(k => {
+    const o = accs[k];
+    return `<tr><td style="white-space:nowrap"><b>${esc(k)}</b><div style="font-size:10.5px;color:var(--t3)">${esc(o.d0)} ~ ${esc(o.d1)}</div></td>
+      <td style="text-align:right;white-space:nowrap">${o.inN ? `${o.inN}건<div style="font-size:11px;color:var(--gd);font-weight:700">${won(o.inAmt)}</div>` : '<span style="color:var(--bd2)">·</span>'}</td>
+      <td style="text-align:right;white-space:nowrap">${o.outN ? `${o.outN}건<div style="font-size:11px;color:var(--red-t);font-weight:700">${won(o.outAmt)}</div>` : '<span style="color:var(--bd2)">·</span>'}</td></tr>`;
+  }).join('');
+  const newAccts = [...new Set(P.items.map(i => (i.acct || '').trim()).filter(Boolean))].filter(a => acctCats().indexOf(a) < 0);
+  const sample = R.fresh.slice(0, 6);
+  body.innerHTML = `
+    <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      <b style="font-size:14px"><i class="ti ti-file-spreadsheet"></i> ${esc(_bkup.name)}</b>
+      <span style="font-size:11.5px;color:var(--t3)">${P.headRow}번째 줄이 머리글 · ${P.items.length}줄을 읽었습니다</span></div>
+
+    <div style="font-size:11.5px;color:var(--t3);background:var(--soft);border-radius:9px;padding:8px 11px;margin-bottom:11px;line-height:1.7">
+      알아본 칸: ${found.map(k => `<b style="color:${k === 'bal' ? 'var(--t3)' : 'var(--t1)'}">${lbl[k]}${k === 'bal' ? '(버림)' : ''}</b>`).join(' · ')}
+      ${P.map.client == null ? '<div style="color:var(--amber-t)">거래처 칸이 없어 입금자 이름으로 찾아 붙입니다</div>' : ''}
+      ${P.map.acct == null ? '<div style="color:var(--amber-t)">계정과목 칸이 없어 출금은 적요로 추정합니다</div>' : ''}
+    </div>
+
+    <div class="tbl-wrap" style="margin-bottom:12px"><table class="tbl">
+      <thead><tr><th>계좌</th><th style="text-align:right;width:120px">입금</th><th style="text-align:right;width:120px">출금</th></tr></thead>
+      <tbody>${accRows}</tbody></table></div>
+
+    <div class="sec-label"><i class="ti ti-checklist"></i>무엇을 넣을까요</div>
+    ${box(_bkup.pick.fresh, 'fresh', R.fresh.length, '새로 들어갈 건', '앱에 없는 거래입니다.', 'var(--gd)')}
+    ${box(_bkup.pick.maybe, 'maybe', R.maybe.length, '겹쳐 보이는 건', '같은 날짜·같은 금액이 <b>이미 앱에 있습니다</b> (팝빌로 가져온 것으로 보입니다). 켜면 <b>같은 돈이 두 번 잡힐 수 있어</b> 기본으로 꺼 둡니다.', 'var(--amber-t)')}
+    ${R.again.length ? `<div style="font-size:11.5px;color:var(--t3);padding:8px 12px;border:1.5px dashed var(--bd2);border-radius:11px;margin-bottom:7px">
+      <b>이미 올린 건 ${R.again.length}건</b> — 같은 파일을 다시 올리셨습니다. 건너뜁니다(건수가 늘어나지 않습니다).</div>` : ''}
+    ${P.bad.length ? `<div style="font-size:11.5px;color:var(--t3);padding:8px 12px;border:1.5px dashed var(--bd2);border-radius:11px;margin-bottom:7px">
+      <b>못 읽은 줄 ${P.bad.length}줄</b> — ${esc([...new Set(P.bad.map(b => b.why))].join(' · '))}</div>` : ''}
+
+    ${newAccts.length ? `<div class="banner info" style="margin:10px 0;font-size:11.5px"><i class="ti ti-plus"></i>
+      <span style="flex:1;min-width:0">계정과목 <b>${newAccts.length}개</b>가 앱에 없어서 함께 추가됩니다 — ${esc(newAccts.slice(0, 8).join(', '))}${newAccts.length > 8 ? ' 외' : ''}</span></div>` : ''}
+
+    ${sample.length ? `<div class="sec-label" style="margin-top:12px"><i class="ti ti-eye"></i>이렇게 들어갑니다 <span style="font-weight:500;color:var(--t3)">(새로 들어갈 건 중 처음 ${sample.length}줄)</span></div>
+    <div class="tbl-wrap" style="margin-bottom:12px"><table class="tbl" style="font-size:11.5px">
+      <thead><tr><th style="width:86px">일시</th><th>의뢰인·적요</th><th style="width:130px">거래처</th><th style="width:96px">계정과목</th><th style="text-align:right;width:98px">금액</th></tr></thead>
+      <tbody>${sample.map(it => `<tr>
+        <td style="white-space:nowrap;color:var(--t3)">${esc(it.dt.slice(2))}</td>
+        <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.payer || '(이름 없음)')}</td>
+        <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${it.client ? esc(it.client) : '<span style="color:var(--bd2)">·</span>'}</td>
+        <td style="white-space:nowrap">${it.acct ? esc(it.acct) : '<span style="color:var(--bd2)">·</span>'}</td>
+        <td style="text-align:right;white-space:nowrap;font-weight:700;color:${it.amount ? 'var(--gd)' : 'var(--red-t)'}">${fmtWon(it.amount || it.out)}</td></tr>`).join('')}
+      </tbody></table></div>` : ''}
+
+    <div id="bkup-st" style="font-size:12px;color:var(--t3);min-height:18px;margin-bottom:6px"></div>
+    <div class="frm-foot">
+      <button class="btn" style="flex:1" onclick="closeModal()">취소</button>
+      <button class="btn btn-pri" style="flex:1.6" ${pickN ? '' : 'disabled'} onclick="bkupSave()"><i class="ti ti-database-import"></i>${pickN ? pickN + '건 장부에 넣기' : '넣을 건이 없습니다'}</button></div>`;
+}
+
+/* ★ 실제 저장 — 여기서만 쓴다 */
+async function bkupSave() {
+  if (!_bkup) return;
+  const list = [].concat(_bkup.pick.fresh ? _bkup.rev.fresh : [], _bkup.pick.maybe ? _bkup.rev.maybe : []);
+  if (!list.length) { toast('넣을 건이 없습니다'); return; }
+  const setSt = h => { const e2 = el('bkup-st'); if (e2) e2.innerHTML = h; };
+  const batch = 'UP' + Date.now();
+  const who = (me && me.name) || '';
+  /* 계정과목 중 앱에 없는 것 먼저 추가 */
+  try {
+    const cur = acctCats().slice();
+    const add = [...new Set(list.map(i => (i.acct || '').trim()).filter(Boolean))].filter(a => cur.indexOf(a) < 0);
+    if (add.length) { await saveAcctCats(cur.concat(add)); setSt('계정과목 ' + add.length + '개 추가함'); }
+  } catch (e) { }
+  let n = 0, fail = 0;
+  for (const it of list) {
+    /* ★ 거래후잔액은 담지 않는다 */
+    const row = {
+      date: it.date, dt: it.dt, payer: it.payer, pkey: _bankKey(it.payer),
+      amount: Math.round(it.amount || 0), out: Math.round(it.out || 0),
+      bankNm: it.bankNm || '', way: it.way || '',
+      accName: it.accName || '', slip: it.slip || '',
+      src: 'file', upBatch: batch, upName: _bkup.name, upBy: who, syncedAt: Date.now()
+    };
+    if (it.client) row.client = it.client;                    // 파일이 정해 준 거래처를 그대로
+    if (it.acct) { row.acct = it.acct; row.acctBy = who; row.acctAt = Date.now(); }
+    try { await Store.setMerge('banktx', it.id, row); n++; }
+    catch (e) { fail++; }
+    if (n % 25 === 0) setSt('저장 중… ' + n + ' / ' + list.length);
+  }
+  moneyBust();
+  toast(n + '건 넣었습니다' + (fail ? (' · 실패 ' + fail + '건') : ''));
+  closeModal();
+  setTimeout(() => { if (filters.bankList) renderLedger(); }, 400);
+}
+
+/* ★ 방금 올린 덩어리를 통째로 되돌리기 — 잘못 올렸을 때 */
+function bkupBatches() {
+  const m = {};
+  (state.banktx || []).forEach(t => {
+    if (!t.upBatch) return;
+    if (!m[t.upBatch]) m[t.upBatch] = { n: 0, name: t.upName || '', at: +String(t.upBatch).replace(/[^0-9]/g, '') || 0, by: t.upBy || '' };
+    m[t.upBatch].n++;
+  });
+  return Object.entries(m).map(([k, v]) => Object.assign({ batch: k }, v)).sort((a, b) => b.at - a.at);
+}
+function openBkupUndo() {
+  if (!isAdmin()) { toast('관리자만 됩니다'); return; }
+  const bs = bkupBatches();
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-arrow-back-up"></i>올린 파일 되돌리기</h3><button class="x" onclick="closeModal()">×</button></div>
+    ${bs.length ? `<div style="font-size:11.5px;color:var(--t3);margin-bottom:10px;line-height:1.7">파일로 올린 덩어리만 지웁니다. <b>팝빌로 가져온 건은 손대지 않습니다.</b></div>
+    ${bs.map(b => `<div style="display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid var(--bd2);border-radius:11px;margin-bottom:7px">
+      <div style="flex:1;min-width:0"><b style="font-size:13px">${esc(b.name || '(이름 없음)')}</b>
+        <div style="font-size:11px;color:var(--t3)">${b.n}건 · ${b.at ? esc(new Date(b.at).toLocaleString('ko-KR')) : ''}${b.by ? ' · ' + esc(b.by) : ''}</div></div>
+      <button class="btn btn-sm" style="color:var(--red-t);border-color:var(--red-t)" onclick="bkupUndo('${b.batch}')"><i class="ti ti-trash"></i>되돌리기</button></div>`).join('')}`
+      : '<div class="empty"><i class="ti ti-file-off"></i>파일로 올린 내역이 없습니다</div>'}
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">닫기</button></div>`);
+}
+async function bkupUndo(batch) {
+  const ids = (state.banktx || []).filter(t => t.upBatch === batch).map(t => t.id);
+  if (!ids.length) { toast('지울 것이 없습니다'); return; }
+  if (!confirm(ids.length + '건을 지웁니다. 되돌릴 수 없습니다.\n\n계속할까요?')) return;
+  let n = 0;
+  for (const id of ids) { try { await Store.remove('banktx', id); n++; } catch (e) { } }
+  moneyBust(); toast(n + '건 되돌렸습니다');
+  closeModal(); setTimeout(() => { if (filters.bankList) renderLedger(); }, 400);
 }
 
 /* 지금 화면에 뜬 줄 그대로 엑셀로 */
