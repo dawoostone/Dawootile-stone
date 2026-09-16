@@ -9640,7 +9640,8 @@ function renderQuoteSettings() {
           <button class="btn btn-sm" onclick="priceListTemplate()"><i class="ti ti-download"></i> 양식 다운로드</button>
           <input type="file" id="pl-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="priceListImport(this)">
         </div>
-        <div style="font-size:11px;color:var(--t3);margin-bottom:8px">엑셀/CSV 열: <b>자재명 · 규격 · 유통 · 대리점 · 인테리어 · 소비자 · 별도</b> (열 이름만 맞으면 순서 무관). <b style="color:#1a6dc0">별도</b>=예외 업체(신성그룹·현대엘앤씨 등) 단가. PDF는 자동 인식이 안 되니 엑셀/CSV로 올려주세요.</div>
+        <div style="font-size:11px;color:var(--t3);margin-bottom:8px">엑셀/CSV 열: <b>자재명 · 규격 · 유통 · 대리점 · 인테리어 · 소비자 · 신성그룹 · 현대엘앤씨</b> (열 이름만 맞으면 순서 무관).
+          <b style="color:#5847b8">신성그룹·현대엘앤씨</b> 칸을 <b>비워 두면</b> 신성그룹은 <b>유통가 기준</b>(−7,000원/㎡ 규칙), 현대엘앤씨는 <b>대리점가</b>로 나갑니다. PDF는 자동 인식이 안 되니 엑셀/CSV로 올려주세요.</div>
         <div class="search-box" style="margin-bottom:8px"><i class="ti ti-search"></i><input placeholder="자재명·규격 검색" value="${esc(filters.qsMatSearch || '')}" oninput="qsFilterPrices(this.value)" autocomplete="off" lang="ko"></div>
         <div data-keepscroll id="qs-prices" style="max-height:52vh;overflow:auto">
           <table class="tbl"><thead><tr><th style="text-align:left">자재</th><th>유통</th><th>대리점</th><th>인테리어</th><th>소비자</th><th style="color:#5847b8;white-space:nowrap" title="비워 두면 유통가 기준(−7,000원/㎡ 규칙)으로 나갑니다">신성그룹</th><th style="color:#5847b8;white-space:nowrap" title="비워 두면 대리점가로 나갑니다">현대엘앤씨</th>${isAdmin() ? '<th style="color:#c0341d">원가🔒</th>' : ''}<th></th></tr></thead><tbody>${_qsPriceRowsHtml()}</tbody></table>
