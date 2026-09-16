@@ -7123,7 +7123,7 @@ async function txSkipSet(id, on) {
       : { noQuote: false });
     moneyBust();
     toast(on ? '무시함 — 미수 계산에서 빠집니다' : '되돌렸습니다');
-    setTimeout(renderLedger, 250);
+    setTimeout(() => { if (filters.bankList) renderQuote(); else renderLedger(); }, 250);
   } catch (e) { toast('실패: ' + ((e && e.message) || e)); }
 }
 /* 같은 입금자명 여러 건을 한꺼번에 */
@@ -7136,7 +7136,7 @@ async function txSkipPayer(pkey) {
   let n = 0;
   for (const t of list) { try { await Store.update('banktx', t.id, { noQuote: true, noQuoteBy: (me && me.name) || '', noQuoteAt: Date.now() }); n++; } catch (e) { } }
   moneyBust(); toast(n + '건 무시함');
-  setTimeout(renderLedger, 300);
+  setTimeout(() => { if (filters.bankList) renderQuote(); else renderLedger(); }, 300);
 }
 /* 견적 목록 위 알림 — 거래처를 못 정한 입금이 있으면 알려준다 */
 function _pmBanner() {
@@ -7165,8 +7165,12 @@ function bankOpenList() {
 /* 견적 목록의 초록 배너에서 바로 — '견적 연결 필요'만 걸러 연다 */
 function bankOpenNoClient() { filters.bankSearch = ''; filters.bankKind = 'noclient'; filters.bankRange = 'all'; bankOpenList(); }
 function bankListBack() { filters.bankList = false; renderQuote(); qListRestore(); }
-function bankSetKind(v) { filters.bankKind = v; renderLedger(); }
-function bankSetRange(v) { filters.bankRange = v; renderLedger(); }
+/* ★★ 2026-09-16 버그 수정 — 구분·기간 칩이 아무 일도 안 하고 있었다.
+   통장 내역은 **견적 탭(`pg-quote`)** 에 그려지는데 `renderLedger()` 는
+   **거래처 탭(`pg-clients`)** 에 쓴다. 그래서 칩을 눌러도 화면이 그대로였다.
+   (2026-09-07 에 원장을 거래처 탭으로 옮기면서 같이 안 고쳐진 자리) */
+function bankSetKind(v) { filters.bankKind = v; if (filters.bankList) renderQuote(); else renderLedger(); }
+function bankSetRange(v) { filters.bankRange = v; if (filters.bankList) renderQuote(); else renderLedger(); }
 /* 검색은 목록만 다시 그린다 — 화면 전체를 다시 그리면 글자 치던 칸에서 커서가 빠진다 */
 function bankListFilter() {
   const w = el('bk-listwrap'); if (w) w.innerHTML = _bankListInner();
