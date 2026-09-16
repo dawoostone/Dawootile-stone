@@ -5104,6 +5104,14 @@ function quoteClientChanged() {
         ③ 견적을 저장해야만 반영돼서, 유형만 고치고 싶을 때 쓸 수가 없었다.
    이제 고르는 즉시 **«거래처는 인테리어» [유통으로 저장]** 이 바로 밑에 뜬다.
    ★ 누르기 전에는 안 바뀐다 — 실수로 유형만 바꿔 본 경우까지 덮어쓰지 않게. */
+/* 「유통으로」 / 「인테리어로」 — 받침에 따라 조사를 고른다 (ㄹ 받침은 «로») */
+function _koRo(w) {
+  const t = String(w || '').trim(); if (!t) return '로';
+  const ch = t.charCodeAt(t.length - 1) - 0xAC00;
+  if (ch < 0 || ch > 11171) return '로';
+  const jong = ch % 28;
+  return (jong === 0 || jong === 8) ? '로' : '으로';
+}
 function qCtypeNoteRefresh() {
   const box = el('q-ctnote'); if (!box) return;
   const client = (el('q-client') && el('q-client').value || '').trim();
@@ -5115,7 +5123,7 @@ function qCtypeNoteRefresh() {
   if (cur === pick) { box.innerHTML = `<span style="color:var(--gd)"><i class="ti ti-check" style="font-size:12px"></i> 거래처 정보와 같음</span>`; return; }
   box.innerHTML = `<span style="color:#a2560f">거래처는 <b>${esc(cur || '미지정')}</b></span>
     <button type="button" class="btn btn-sm" style="padding:1px 7px;font-size:10.5px;margin-left:4px;color:var(--gd);border-color:var(--gd)"
-      onclick="qCtypeSaveToClient()"><i class="ti ti-device-floppy"></i>${esc(pick)}로 저장</button>`;
+      onclick="qCtypeSaveToClient()"><i class="ti ti-device-floppy"></i>${esc(pick)}${_koRo(pick)} 저장</button>`;
 }
 /* ★ 지금 고른 업체 구분을 거래처 기본정보에 바로 적는다 */
 async function qCtypeSaveToClient() {
@@ -5126,7 +5134,7 @@ async function qCtypeSaveToClient() {
   if (!c) { toast('아직 등록 안 된 거래처입니다 — 견적을 저장하면 같이 등록됩니다'); return; }
   try {
     await Store.update('clients', c.id, { ctype: pick });
-    toast(client + ' → 업체 구분 ' + pick + ' 저장됨');
+    toast(client + ' → 업체 구분 ' + pick + _koRo(pick) + ' 저장됨');
     setTimeout(qCtypeNoteRefresh, 400);
   } catch (e) { toast('저장 실패: ' + ((e && e.message) || e)); }
 }
@@ -5941,7 +5949,7 @@ async function submitQuote(id) {
       if (cdoc && (cdoc.ctype || '') !== ctype) {
         const _was = (cdoc.ctype || '').trim();
         await Store.update('clients', cdoc.id, { ctype });
-        setTimeout(() => toast(client + ' 업체 구분 ' + (_was ? (_was + ' → ') : '') + ctype + ' 로 저장됨'), 900);
+        setTimeout(() => toast(client + ' 업체 구분 ' + (_was ? (_was + ' → ') : '') + ctype + _koRo(ctype) + ' 저장됨'), 900);
       }
     } catch (e) { }
     /* ══════════════════════════════════════════════════════
