@@ -8957,7 +8957,7 @@ function cutMakeGroup() {
   } else if (sameW && sameL === false) {   // 폭만 같음 → 나란히(폭방향). 안 들어가면 기장방향 불가하므로 경고만
     dir = 'W';
   } else dir = 'L';
-  if (!fits(blk(dir))) toast('⚠ 연결 블록이 판재보다 큽니다 — 판재 규격/톱날 확인');
+  if (!fits(blk(dir))) { const _b = blk(dir); toast('⚠ ' + N + '장 연결 블록 ' + Math.round(_b.L) + '×' + Math.round(_b.W) + ' — 판재 ' + Ws + '×' + Hs + ' 에 안 들어갑니다'); }
   _cutGroups.push({ cids: items.map(x => x.cid), dir, rot: !grainOn });   // ★ 연결 블록을 돌려도 되는지 — 결방향 자재면 처음부터 꺼둔다
   const _nos = items.map(x => _rowNo(x.cid)).join('+');
   sel.forEach(r => { const c = r.querySelector('.ct-sel'); if (c) c.checked = false; });
@@ -9099,7 +9099,7 @@ function _packOrderG(order, Ws, Hs, kerf, mode) {
     if (!ok) {
       const sh = { placed: [], cuts: [], free: [{ x: 0, y: 0, w: Ws, h: Hs }] };
       sheets.push(sh);
-      if (!place(sh, pc)) sh.placed.push({ x: 0, y: 0, l: Math.min(pc.l, Ws), w: Math.min(pc.w, Hs), idx: pc.idx, subs: pc.subs, over: true });
+      if (!place(sh, pc)) sh.placed.push({ x: 0, y: 0, l: Math.min(pc.l, Ws), w: Math.min(pc.w, Hs), idx: pc.idx, subs: pc.subs, over: true, realL: pc.l, realW: pc.w });
     }
   }
   return sheets;
@@ -9128,6 +9128,12 @@ function cutSheetSvg(sh, Ws, Hs, n) {
   const colors = ['#FCE9B8', '#D8ECB0', '#F7C9A8', '#C9DAF0', '#E8CDEA', '#CDEAE0', '#F5D0D0', '#D0E8F0'];
   const rects = sh.placed.map(pc => {
     const x = pc.x * sc, y = pc.y * sc, w = pc.l * sc, h = pc.w * sc;
+    if (pc.subs && pc.subs.length && pc.over) {
+      /* ★ 판재에 안 들어가는 연결 블록 — 잘린 모습을 그리면 되는 줄 알기 쉬워서 빨간 경고로 대신한다 */
+      return `<g><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="#fdecea" stroke="#c0341d" stroke-width="2"/>` +
+        `<text x="${(x + w / 2).toFixed(1)}" y="${(y + h / 2 - 4).toFixed(1)}" text-anchor="middle" font-size="12" font-weight="800" fill="#c0341d">⚠ 연결 블록 ${Math.round(pc.realL || pc.l)}×${Math.round(pc.realW || pc.w)} — 판재에 안 들어감</text>` +
+        `<text x="${(x + w / 2).toFixed(1)}" y="${(y + h / 2 + 12).toFixed(1)}" text-anchor="middle" font-size="10.5" fill="#8a2b1a">연결을 줄이거나 판재 규격을 확인하세요</text></g>`;
+    }
     if (pc.subs && pc.subs.length) {
       const inner = pc.subs.map(sp => {
         // 블록이 회전되어 배치된 경우 서브 무늬조각도 함께 회전 (pc.l = 배치된 블록의 가로폭)
@@ -9198,7 +9204,7 @@ function runCutSim() {
   if (!parts.length) { toast('부재 치수를 입력하세요'); return; }
   const grainOn = el('cut-grain') && el('cut-grain').checked;
   const rem = {}; const dimOf = {}; parts.forEach(p => { rem[p.cid] = p.q; dimOf[p.cid] = p; });
-  const pieces = [];
+  const pieces = []; const gOver = [];   // gOver = 판재에 못 들어가는 연결 블록
   _cutGroups.forEach(g => {
     const mem = g.cids.map(c => dimOf[c]).filter(Boolean);
     if (mem.length < 2) return;
@@ -9208,7 +9214,13 @@ function runCutSim() {
     let L, W; const subs = [];
     if (g.dir === 'W') { const w = mem[0].w; let x = 0; mem.forEach((m, i) => { if (i > 0) x += kerf; subs.push({ x: x, y: 0, l: m.l, w: w, idx: m.idx }); x += m.l; }); L = x; W = w; }
     else { const l = mem[0].l; let yy = 0; mem.forEach((m, i) => { if (i > 0) yy += kerf; subs.push({ x: 0, y: yy, l: l, w: m.w, idx: m.idx }); yy += m.w; }); L = l; W = yy; }
-    pieces.push({ l: L, w: W, idx: 0, rot: (g.rot !== false) && !grainOn, subs });   // ★ 연결마다 지정한 회전 허용 여부를 따른다 (결방향 자재면 무조건 고정)
+    /* ★ 2026-09-17 — 연결 블록이 판재보다 크면 «못 들어감»으로 딱지를 붙인다.
+       예전에는 3장 이상 연결해 블록이 판재보다 길어져도 조용히 3200 으로 «잘려서» 그려졌다.
+       (사용자: "3장 이상 연결하면 반영이 제대로 안되는 것 같음") */
+    const _rotOK = (g.rot !== false) && !grainOn;
+    const _fit = (L <= Ws + 0.01 && W <= Hs + 0.01) || (_rotOK && W <= Ws + 0.01 && L <= Hs + 0.01);
+    if (!_fit) gOver.push({ nos: mem.map(m => m.idx).join('+'), L: Math.round(L), W: Math.round(W), n: mem.length, rotOK: _rotOK });
+    pieces.push({ l: L, w: W, idx: 0, rot: _rotOK, subs, gOver: !_fit });   // ★ 연결마다 지정한 회전 허용 여부를 따른다 (결방향 자재면 무조건 고정)
   });
   parts.forEach(p => { for (let k = 0; k < rem[p.cid]; k++) pieces.push({ l: p.l, w: p.w, idx: p.idx, rot: p.rot }); });
   const sheets = _packPieces(Ws, Hs, pieces, kerf);
@@ -9227,6 +9239,11 @@ function runCutSim() {
       ${sc('자투리(로스)', m2(Math.max(0, sheetArea - partArea)) + ' ㎡')}
     </div>
     ${over ? '<div style="color:#c0341d;font-size:12px;margin-bottom:8px"><i class="ti ti-alert-triangle"></i> 판재보다 큰 부재가 있습니다 — 치수를 확인하세요</div>' : ''}
+    ${gOver.length ? `<div class="banner" style="margin-bottom:9px;font-size:12.5px;background:#fdecea;border-left:4px solid #c0341d;border-radius:0 10px 10px 0;padding:10px 13px;color:#8a2b1a"><span style="flex:1;min-width:0">
+      <b><i class="ti ti-alert-triangle"></i> 무늬연결 ${gOver.length}개가 판재(${Ws}×${Hs})에 들어가지 않습니다</b><br>
+      ${gOver.map(o => `· <b>${esc(o.nos)}번</b> ${o.n}장 연결 → 블록 <b>${o.L}×${o.W}</b>${o.rotOK ? '' : ' <span style="color:#a8341f">(결방향/회전 끔 — 돌려서 넣을 수 없음)</span>'}`).join('<br>')}<br>
+      <span style="font-size:11.5px">아래 빨간 칸이 그 블록입니다. <b>연결 장수를 줄이거나</b>, 판재 규격을 키우거나, 회전을 켜 보세요. 이 상태의 판재 장수·로스는 믿을 수 없습니다.</span>
+    </span></div>` : ''}
     ${sheets.map((sh, i) => cutSheetSvg(sh, Ws, Hs, i + 1)).join('')}`;
   cutPlanAutoSave(sheets.length, partArea);   // ★ 돌릴 때마다 '최근 커팅플랜'에 자동 저장
 }
