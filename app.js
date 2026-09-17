@@ -8958,23 +8958,37 @@ function cutMakeGroup() {
     dir = 'W';
   } else dir = 'L';
   if (!fits(blk(dir))) toast('⚠ 연결 블록이 판재보다 큽니다 — 판재 규격/톱날 확인');
-  _cutGroups.push({ cids: items.map(x => x.cid), dir });
+  _cutGroups.push({ cids: items.map(x => x.cid), dir, rot: !grainOn });   // ★ 연결 블록을 돌려도 되는지 — 결방향 자재면 처음부터 꺼둔다
   const _nos = items.map(x => _rowNo(x.cid)).join('+');
   sel.forEach(r => { const c = r.querySelector('.ct-sel'); if (c) c.checked = false; });
   const gb = el('cut-groups'); if (gb) gb.innerHTML = cutGroupsInner();
   toast(_nos + '번 ' + (dir === 'W' ? '폭 방향 무늬연결' : '기장 방향 무늬연결') + ' · ' + N + '장');
 }
 function cutDelGroup(i) { _cutGroups.splice(i, 1); const gb = el('cut-groups'); if (gb) gb.innerHTML = cutGroupsInner(); }
+/* ★ 2026-09-17 — 연결 블록만 따로 회전을 막을 수 있게 (사용자: "무늬연결 판재 회전하면 안되는 경우?")
+   무늬는 돌려도 이어지지만, 타공 위치·45도 마감면처럼 «부재에 방향이 있는» 경우엔 돌리면 안 된다.
+   예전에는 「결방향 자재」 체크 하나로만 정해져서, 결은 없는데 방향은 고정해야 하는 경우를 못 잡았다. */
+function cutGroupRot(i, on) {
+  if (!_cutGroups[i]) return;
+  _cutGroups[i].rot = !!on;
+  const gb = el('cut-groups'); if (gb) gb.innerHTML = cutGroupsInner();
+}
 function cutGroupsInner() {
   if (!_cutGroups.length) return '<span style="font-size:11.5px;color:var(--t3)">연결 없음 · <b>짝을 이룰 두 부재만</b> 체크하고 [선택 연결]을 누르세요 (예: 1·2번 → 연결, 다시 5·6번 → 연결)</span>';
   return _cutGroups.map((g, i) => {
     const nos = g.cids.map(_rowNo).join('+') + '번';
     const dims = g.cids.map(_rowDims).filter(Boolean).map(d => d.l + '×' + d.w).join(' + ');
-    return `<span style="display:inline-flex;align-items:center;gap:6px;background:#eaf3ff;border:1px solid #b5d4f4;border-radius:8px;padding:4px 9px;margin:3px 3px 0 0;font-size:12px;color:#185fa5"><i class="ti ti-link"></i><b>${esc(nos)}</b> ${g.dir === 'W' ? '폭 연결' : '기장 연결'} <span style="color:#4a7fb5">${esc(dims)}</span> <i class="ti ti-x" style="cursor:pointer;color:var(--red-t)" onclick="cutDelGroup(${i})"></i></span>`;
+    const rotOn = g.rot !== false;
+    return `<span style="display:inline-flex;align-items:center;gap:6px;background:#eaf3ff;border:1px solid #b5d4f4;border-radius:8px;padding:4px 9px;margin:3px 3px 0 0;font-size:12px;color:#185fa5"><i class="ti ti-link"></i><b>${esc(nos)}</b> ${g.dir === 'W' ? '폭 연결' : '기장 연결'} <span style="color:#4a7fb5">${esc(dims)}</span><label style="display:inline-flex;align-items:center;gap:3px;cursor:pointer;color:${rotOn ? '#185fa5' : 'var(--t3)'}" title="이 연결 블록을 가로세로 돌려 배치해도 되는지"><input type="checkbox" ${rotOn ? 'checked' : ''} onchange="cutGroupRot(${i},this.checked)" style="width:14px;height:14px;margin:0"> 회전</label> <i class="ti ti-x" style="cursor:pointer;color:var(--red-t)" onclick="cutDelGroup(${i})"></i></span>`;
   }).join('');
 }
 function addCutRow() { const b = el('cut-parts'); if (b) { const grain = el('cut-grain') && el('cut-grain').checked; b.insertAdjacentHTML('beforeend', cutRowHtml({ rot: !grain })); cutRenumber(); } }
-function cutGrainToggle() { const on = el('cut-grain') && el('cut-grain').checked; _cutRows().forEach(r => { const c = r.querySelector('.ct-rot'); if (c) c.checked = !on; }); }
+function cutGrainToggle() {
+  const on = el('cut-grain') && el('cut-grain').checked;
+  _cutRows().forEach(r => { const c = r.querySelector('.ct-rot'); if (c) c.checked = !on; });
+  _cutGroups.forEach(g => { g.rot = !on; });                       // 연결 블록도 같이 (그 뒤 개별로 다시 켤 수 있다)
+  const gb = el('cut-groups'); if (gb) gb.innerHTML = cutGroupsInner();
+}
 function _collectCutParts() {
   const parts = [];
   _cutRows().forEach((r, i) => {
@@ -9194,7 +9208,7 @@ function runCutSim() {
     let L, W; const subs = [];
     if (g.dir === 'W') { const w = mem[0].w; let x = 0; mem.forEach((m, i) => { if (i > 0) x += kerf; subs.push({ x: x, y: 0, l: m.l, w: w, idx: m.idx }); x += m.l; }); L = x; W = w; }
     else { const l = mem[0].l; let yy = 0; mem.forEach((m, i) => { if (i > 0) yy += kerf; subs.push({ x: 0, y: yy, l: l, w: m.w, idx: m.idx }); yy += m.w; }); L = l; W = yy; }
-    pieces.push({ l: L, w: W, idx: 0, rot: !grainOn, subs });   // 무늬결 없으면 블록 통째 회전 허용 → 판재에 들어가는 방향으로
+    pieces.push({ l: L, w: W, idx: 0, rot: (g.rot !== false) && !grainOn, subs });   // ★ 연결마다 지정한 회전 허용 여부를 따른다 (결방향 자재면 무조건 고정)
   });
   parts.forEach(p => { for (let k = 0; k < rem[p.cid]; k++) pieces.push({ l: p.l, w: p.w, idx: p.idx, rot: p.rot }); });
   const sheets = _packPieces(Ws, Hs, pieces, kerf);
@@ -9237,6 +9251,7 @@ function cutPlanSnapshot() {
   const pos = {}; parts.forEach((p, i) => { pos[String(p.cid)] = i; });   // 행번호 → 저장 순번
   const groups = _cutGroups.map(g => ({
     dir: g.dir,
+    rot: g.rot !== false,
     at: (g.cids || []).map(c => pos[String(c)]).filter(v => v != null)
   })).filter(g => g.at.length >= 2);
   return {
@@ -9347,7 +9362,7 @@ function cutPlanApply(p) {
   box.innerHTML = (p.parts || []).map(x => { const cid = ++_cutCid; cids.push(String(cid)); return cutRowHtml({ cid: cid, l: x.l, w: x.w, q: x.q, rot: x.rot }); }).join('')
     || cutRowHtml({}) + cutRowHtml({});
   _cutGroups = (p.groups || []).map(g => ({
-    dir: g.dir, cids: (g.at || []).map(i => cids[i]).filter(Boolean)
+    dir: g.dir, rot: g.rot !== false, cids: (g.at || []).map(i => cids[i]).filter(Boolean)
   })).filter(g => g.cids.length >= 2);
   cutRenumber();   // 왼쪽 # 번호 다시 매김 (연결 칩의 «몇 번» 표시도 같이 갱신)
   cutSheetChipsRefresh();
