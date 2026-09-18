@@ -14028,6 +14028,7 @@ function basinDrawNew() {
     id: 'BD' + Date.now(), title: '', stone: '',
     L: 1200, W: 550, H: 170,
     sl: false, sr: false, sf: true,          // 치마 — 좌 / 우 / 전
+    sfRound: false, sfR: 50,                 // ★ 전면 라운드 (R꺾임) · 반지름
     mold: 'square-550x350', moldD: 150, bowls: 1,
     moldFlip: '',                            // ★ 물방울형 좌우 반전 ('' | 'flip' | 'out' | 'in')
     offL: '', offR: '', offF: '', offB: '', offMid: '',   // 비우면 센터
@@ -14037,8 +14038,25 @@ function basinDrawNew() {
     note: ''
   };
 }
+/* ★★ 2026-09-18 — 전면 라운드 (사용자: *"전면 라운드만 되는거고 좌우는 직각으로 붙는거임"*)
+   · 앞 치마가 R 로 둥글게 꺾여 내려간다. 45° 뒷도메가 아니다.
+   · 좌우 치마는 그때 **직각으로 붙인다**(粘接) — 45° 가 아니다.
+   · 공장 제작 한계: **치마 200 이하 · 기장 1200 이하**. 넘으면 저장을 막는다. */
+const BD_ROUND_MAX_H = 200, BD_ROUND_MAX_L = 1200;
+function bdIsRound(d) { return !!(d && d.sf && d.sfRound); }
+function bdRoundBad(d) {
+  if (!bdIsRound(d)) return '';
+  const H = Math.round(+d.H || 0), L = Math.round(+d.L || 0), out = [];
+  if (H > BD_ROUND_MAX_H) out.push('치마 ' + H + ' → ' + BD_ROUND_MAX_H + ' 이하');
+  if (L > BD_ROUND_MAX_L) out.push('기장 ' + L + ' → ' + BD_ROUND_MAX_L + ' 이하');
+  return out.length ? out.join(' · ') : '';
+}
 /* 치마 면 표기 — 「3면 치마」 / 「좌·전 2면 치마」 / 「전면 치마」 / 「치마 없음」 */
 function basinSkirtText(d, lang) {
+  const _r = bdIsRound(d) ? (lang === 'cn' ? (' · 前面 R' + (+d.sfR || 50) + ' 圆角') : (' · 전면 R' + (+d.sfR || 50) + ' 라운드')) : '';
+  return _basinSkirtText0(d, lang) + _r;
+}
+function _basinSkirtText0(d, lang) {
   const on = [];
   if (d.sl) on.push(lang === 'cn' ? '左' : '좌');
   if (d.sr) on.push(lang === 'cn' ? '右' : '우');
@@ -14132,6 +14150,19 @@ function _bdDimV(y1, y2, x, label, o) {
   s += _bdT(x - 5, (y1 + y2) / 2, label, { fs: Math.abs(y2 - y1) > 26 ? (o.fs || 13) : 10.5, rot: -90 });
   return s;
 }
+/* 라운드 꺾임 표시 — 사다리 틱 (중국 도면의 ++++ 표기) */
+function _bdTick(x1, y1, x2, y2, amp, step) {
+  amp = amp || 5; step = step || 9;
+  const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy); if (len < 1) return '';
+  const ux = dx / len, uy = dy / len, nx = -uy, ny = ux;
+  let s = `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#111" stroke-width="1.3"/>`;
+  const n = Math.max(2, Math.round(len / step));
+  for (let i = 0; i <= n; i++) {
+    const t = len * i / n, bx = x1 + ux * t, by = y1 + uy * t;
+    s += `<line x1="${(bx - nx * amp).toFixed(1)}" y1="${(by - ny * amp).toFixed(1)}" x2="${(bx + nx * amp).toFixed(1)}" y2="${(by + ny * amp).toFixed(1)}" stroke="#111" stroke-width="1"/>`;
+  }
+  return s;
+}
 /* 치마 표시 — 지그재그(톱니) */
 function _bdZig(x1, y1, x2, y2, amp, step) {
   amp = amp || 6; step = step || 12;
@@ -14218,6 +14249,38 @@ function _bdBowl(x, y, w, h, g, rpx, flip) {
   const rr = Math.max(2, Math.min(rpx || 12, w / 3, h / 3));
   return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="${rr.toFixed(1)}" ry="${rr.toFixed(1)}"${st}/>`;
 }
+/* ★★ 전면 라운드 단면 — 상판이 R 로 둥글게 꺾여 치마로 내려간다 (한 장을 구부린 모양).
+   좌우 치마는 이때 «직각으로 붙인다»(粘接)는 것도 같이 적어 준다. */
+function _bdRound(ox, oy, H, thick, R, lang, sides) {
+  const cn = lang === 'cn';
+  const tp = Math.max(12, Math.min(20, thick * 1.15));
+  const hh = Math.max(64, Math.min(84, H * 0.5));
+  const topLen = 190;
+  const rr = Math.max(tp + 10, Math.min(46, (R || 50) * 0.75));   // 그림상 반지름 (상세도라 실척 아님)
+  const ri = Math.max(2, rr - tp);
+  const f = n => n.toFixed(1);
+  let s = `<defs><pattern id="bdmh" width="5" height="5" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><rect width="5" height="5" fill="#fff"/><line x1="0" y1="0" x2="0" y2="5" stroke="#111" stroke-width="1"/></pattern></defs>`;
+  // ㄱ자 한 덩어리 — 바깥은 R, 안쪽은 R−두께
+  s += `<path d="M${f(ox + topLen)},${f(oy)} L${f(ox + rr)},${f(oy)}`
+    + ` A${f(rr)},${f(rr)} 0 0 0 ${f(ox)},${f(oy + rr)}`
+    + ` L${f(ox)},${f(oy + hh)} L${f(ox + tp)},${f(oy + hh)} L${f(ox + tp)},${f(oy + rr)}`
+    + ` A${f(ri)},${f(ri)} 0 0 1 ${f(ox + rr)},${f(oy + tp)}`
+    + ` L${f(ox + topLen)},${f(oy + tp)} Z" fill="url(#bdmh)" stroke="#111" stroke-width="1.4"/>`;
+  // R 표시 — 중심에서 바깥 호까지
+  const cx = ox + rr, cy = oy + rr, k = Math.SQRT1_2;
+  s += _bdL(cx, cy, cx - rr * k, cy - rr * k, { w: 0.8, d: '4 3' });
+  s += _bdT(cx - rr * k - 6, cy - rr * k - 5, 'R' + Math.round(R || 50), { a: 'end', fs: 14, w: 800 });
+  s += `<circle cx="${f(cx)}" cy="${f(cy)}" r="1.8" fill="#111"/>`;
+  // 치수 — 치마 높이 / 판 두께
+  s += _bdDimV(oy, oy + hh, ox - 24, String(H), { fs: 13.5 });
+  s += _bdDimH(ox + topLen - 52, ox + topLen, oy - 18, String(thick), { from: oy, fs: 12 });
+  // 부재 이름
+  s += _bdT(ox + topLen - 8, oy - 6, cn ? '台面' : '상판', { a: 'end', fs: 12.5, c: '#444' });
+  s += _bdT(ox + tp + 12, oy + hh - 8, cn ? '裙边' : '치마', { a: 'start', fs: 12.5, c: '#444' });
+  s += _bdT(ox - 96, oy + hh + 17, cn ? ('前面 R' + Math.round(R || 50) + ' 圆角折弯（一体成型）') : ('전면 R' + Math.round(R || 50) + ' 로 둥글게 꺾어 내림 (한 장)'), { a: 'start', fs: 11.5, c: '#555' });
+  if (sides) s += _bdT(ox - 96, oy + hh + 35, cn ? '左右裙边：直角粘接（非45°）' : '좌·우 치마는 직각으로 붙임 (45° 아님)', { a: 'start', fs: 11.5, w: 700, c: '#b42318' });
+  return s;
+}
 /* ★★ 45° 뒷도메 단면 — 상판과 치마를 45°로 맞대 붙이는 것을 그림으로 보여준다.
    ㄱ자 한 덩어리가 아니라 «두 장»이고, 모서리에서 45° 로 만난다는 게 핵심이다. */
 function _bdMitre(ox, oy, H, thick, lang) {
@@ -14300,7 +14363,7 @@ function basinDrawSvg(d, lang) {
   const pw = A.L * sc, ph = A.W * sc;
   const px = boxX + (boxW - pw) / 2, py = boxY + (boxH - ph) / 2 + 10;
   s += _bdR(px, py, pw, ph, { w: 1.5 });
-  if (d.sf) s += _bdZig(px, py + ph, px + pw, py + ph);
+  if (d.sf) s += (bdIsRound(d) ? _bdTick(px, py + ph, px + pw, py + ph) : _bdZig(px, py + ph, px + pw, py + ph));
   if (d.sl) s += _bdZig(px, py, px, py + ph);
   if (d.sr) s += _bdZig(px + pw, py, px + pw, py + ph);
 
@@ -14358,18 +14421,23 @@ function basinDrawSvg(d, lang) {
   const c1 = L8, c2 = 330, c3 = 640;
   s += _bdL(c2, pnT, c2, pnB, { w: 1 }) + _bdL(c3, pnT, c3, pnB, { w: 1 });
   const hd = (x, w2, t) => _bdR(x, pnT, w2, 26, { f: '#eef1f5', w: 0.9 }) + _bdT(x + w2 / 2, pnT + 18, t, { fs: 13.5, w: 700 });
-  s += hd(c1, c2 - c1, K('치마 사양', '裙边规格')) + hd(c2, c3 - c2, K('타공 사양', '开孔规格')) + hd(c3, R8 - c3, K('단면 상세 · 45° 뒷도메', '断面详图 · 45°拼接'));
+  s += hd(c1, c2 - c1, K('치마 사양', '裙边规格')) + hd(c2, c3 - c2, K('타공 사양', '开孔规格'))
+    + hd(c3, R8 - c3, bdIsRound(d) ? K('단면 상세 · 전면 R' + (+d.sfR || 50) + ' 라운드', '断面详图 · 前面 R' + (+d.sfR || 50) + ' 圆角') : K('단면 상세 · 45° 뒷도메', '断面详图 · 45°拼接'));
 
   // 치마 — ★ 한 줄에 한 면씩
   const box = (x, y, on) => _bdR(x, y - 11, 14, 14, { w: 1.2 }) + (on ? _bdL(x + 2.5, y - 4.5, x + 6, y - 1, { w: 2 }) + _bdL(x + 6, y - 1, x + 11.5, y - 8.5, { w: 2 }) : '');
   const sides = [[!!d.sl, K('좌측 치마', '左侧裙边')], [!!d.sr, K('우측 치마', '右侧裙边')], [!!d.sf, K('전면 치마', '前面裙边')]];
   sides.forEach((sd, i) => {
-    const y = pnT + 56 + i * 30;
+    const y = pnT + 52 + i * 28;
     s += box(c1 + 20, y, sd[0]);
     s += _bdT(c1 + 44, y, sd[1], { a: 'start', fs: 15, w: sd[0] ? 800 : 500, c: sd[0] ? '#111' : '#999' });
     if (!sd[0]) s += _bdT(c2 - 18, y, K('없음', '无'), { a: 'end', fs: 12.5, c: '#999' });
   });
-  s += _bdT(c1 + 20, pnT + 152, K('치마 높이', '裙边高') + '  ' + (+d.H || 0), { a: 'start', fs: 14, w: 700 });
+  s += _bdT(c1 + 20, pnT + 136, K('치마 높이', '裙边高') + '  ' + (+d.H || 0), { a: 'start', fs: 14, w: 700 });
+  s += _bdT(c1 + 20, pnT + 160, bdIsRound(d)
+    ? K('전면 R' + (+d.sfR || 50) + ' 라운드 · 좌우 직각 붙임', '前面 R' + (+d.sfR || 50) + ' 圆角 · 左右直角粘接')
+    : K('전면 45° 뒷도메', '前面 45° 拼接'),
+    { a: 'start', fs: 13, w: 700, c: bdIsRound(d) ? '#b42318' : '#444' });
 
   // 타공
   const tapLines = d.tap
@@ -14385,8 +14453,10 @@ function basinDrawSvg(d, lang) {
     s += _bdT(c3 - 20, y, ln[1], { a: 'end', fs: 15, w: 700, c: (!d.tap && i === 0) ? '#b42318' : '#111' });
   });
 
-  // 단면 — 45° 뒷도메
-  s += _bdMitre(c3 + 200, pnT + 64, +d.H || 0, +d.thick || 15, lang);
+  // 단면 — 전면 라운드면 R 꺾임, 아니면 45° 뒷도메
+  s += bdIsRound(d)
+    ? _bdRound(c3 + 200, pnT + 64, +d.H || 0, +d.thick || 15, +d.sfR || 50, lang, !!(d.sl || d.sr))
+    : _bdMitre(c3 + 200, pnT + 64, +d.H || 0, +d.thick || 15, lang);
 
   /* ── ⑤ 맨 아래 공장 기입란 ── */
   const fT = pnB, fH = Hc - 8 - fT;
@@ -14489,6 +14559,19 @@ function _openDrawFor(coll, docId, drawId, itemIdx) {
         <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:6px">
           ${ck('bd-sl', _bdCur.sl, '좌측')}${ck('bd-sr', _bdCur.sr, '우측')}${ck('bd-sf', _bdCur.sf, '전면')}
         </div>
+        <div id="bd-sfrwrap" style="display:none;margin-top:10px;padding-top:9px;border-top:1px dashed #e6cf95">
+          <label style="color:#8a5a00">전면 마감 <span style="font-weight:500;color:#a07a2a">— 라운드는 좌·우를 직각으로 붙입니다</span></label>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+            <select id="bd-sfRound" onchange="basinDrawPreview()" style="${inp};flex:1;min-width:170px">
+              <option value="0" ${_bdCur.sfRound ? '' : 'selected'}>45° 뒷도메 (기본)</option>
+              <option value="1" ${_bdCur.sfRound ? 'selected' : ''}>전면 R 라운드</option>
+            </select>
+            <span id="bd-sfrRwrap" style="display:none;align-items:center;gap:6px;font-size:14px;font-weight:700;color:#8a5a00">R
+              <input id="bd-sfR" inputmode="numeric" value="${esc(_bdCur.sfR == null ? 50 : _bdCur.sfR)}" oninput="basinDrawPreview()" style="${inp};width:80px;text-align:center">
+            </span>
+          </div>
+          <div id="bd-sfrmsg" style="font-size:11.5px;margin-top:6px;line-height:1.6"></div>
+        </div>
       </div>
       <div class="fld"><label>볼 금형<span class="req">*</span></label><select id="bd-mold" onchange="basinDrawPreview()" style="${inp}">${moldOpts}</select></div>
       <div class="fld"><label>볼 개수</label><select id="bd-bowls" onchange="basinDrawPreview()" style="${inp}"><option value="1" ${+_bdCur.bowls !== 2 ? 'selected' : ''}>1개</option><option value="2" ${+_bdCur.bowls === 2 ? 'selected' : ''}>2개 (쌍볼)</option></select></div>
@@ -14571,6 +14654,8 @@ function basinDrawRead() {
   d.moldFlip = String(g('bd-moldFlip') || '');   // ★ 물방울형 좌우 반전
   if (d.bowls !== 2 && (d.moldFlip === 'out' || d.moldFlip === 'in')) d.moldFlip = '';
   d.sl = !!(el('bd-sl') && el('bd-sl').checked); d.sr = !!(el('bd-sr') && el('bd-sr').checked); d.sf = !!(el('bd-sf') && el('bd-sf').checked);
+  d.sfRound = d.sf && g('bd-sfRound') === '1';                 // ★ 전면 라운드
+  d.sfR = Math.max(5, _numv(g('bd-sfR')) || 50);
   ['offL', 'offR', 'offF', 'offB', 'offMid'].forEach(k => { d[k] = String(g('bd-' + k) || '').trim(); });
   d.tap = g('bd-tap') !== '0'; d.tapDia = _numv(g('bd-tapDia')) || 35;
   /* ★ 볼에서부터가 기준. 비우면 60. 값을 넣는 순간 예전 «뒤에서부터» 값은 버린다. */
@@ -14600,6 +14685,19 @@ function basinDrawPreview() {
       ? `도면에 <b>${esc(bdFlipText(d, 'ko'))}</b> / 중문본 <b>${esc(bdFlipText(d, 'cn'))}</b> 으로 적힙니다`
       + (_two ? '' : ' <span style="color:#8a8f8a">· 쌍볼 대칭은 볼 2개일 때만 고를 수 있습니다</span>')
       : '';
+  }
+  /* ★ 전면 마감 칸 — 전면 치마가 있을 때만 보인다 */
+  const _rw = el('bd-sfrwrap');
+  if (_rw) {
+    _rw.style.display = d.sf ? '' : 'none';
+    const _rr = el('bd-sfrRwrap'); if (_rr) _rr.style.display = (d.sf && d.sfRound) ? 'inline-flex' : 'none';
+    const _rm = el('bd-sfrmsg');
+    if (_rm) {
+      const _bad = bdRoundBad(d);
+      if (!d.sf || !d.sfRound) _rm.innerHTML = '';
+      else if (_bad) _rm.innerHTML = `<span style="color:#b42318;font-weight:700"><i class="ti ti-alert-triangle"></i> 라운드는 <b>치마 ${BD_ROUND_MAX_H} 이하 · 기장 ${BD_ROUND_MAX_L} 이하</b>만 제작됩니다 — ${esc(_bad)}</span>`;
+      else _rm.innerHTML = `<span style="color:#2f6b3a">앞 치마가 <b>R${Math.round(+d.sfR || 50)}</b> 으로 둥글게 꺾여 내려갑니다. 좌·우 치마는 <b>직각으로 붙입니다</b> (45° 아님).</span>`;
+    }
   }
   const A = basinDrawLayout(d);
   const bad = [];
@@ -14653,6 +14751,8 @@ async function basinDrawSave() {
   if (!_bdColl || !_bdDocId) { toast('저장할 곳이 없습니다 — 먼저 저장한 뒤 다시 열어 주세요'); return; }
   const doc = (state[_bdColl] || []).find(x => x.id === _bdDocId); if (!doc) { toast('원본을 찾을 수 없습니다'); return; }
   const d = basinDrawRead();
+  const _rb = bdRoundBad(d);
+  if (_rb) { toast('전면 라운드는 치마 ' + BD_ROUND_MAX_H + ' 이하 · 기장 ' + BD_ROUND_MAX_L + ' 이하만 제작됩니다 — ' + _rb); return; }
   const row = Object.assign({}, d, { at: Date.now(), by: (me && me.name) || '' });
   const list = basinDrawsOf(doc).slice();
   const i = list.findIndex(x => x.id === row.id);
