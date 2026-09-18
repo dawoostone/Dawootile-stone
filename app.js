@@ -9077,7 +9077,7 @@ function _packOrderG(order, Ws, Hs, kerf, mode) {
     if (!best) return false;
     const f = sh.free[best.fi];
     const R = { x: f.x, y: f.y, w: best.ol, h: best.ow };
-    sh.placed.push({ x: R.x, y: R.y, l: best.ol, w: best.ow, idx: pc.idx, subs: pc.subs, rotated: pc.subs && pc.subs.length ? (Math.abs(best.ol - pc.l) > 0.01) : false });
+    sh.placed.push({ x: R.x, y: R.y, l: best.ol, w: best.ow, idx: pc.idx, subs: pc.subs, rot: pc.rot !== false, rotated: pc.subs && pc.subs.length ? (Math.abs(best.ol - pc.l) > 0.01) : false });
     // 이 빈 자리를 가르는 재단선 기록 (실제 톱질 선)
     const rightW = f.w - R.w - kerf, bottomH = f.h - R.h - kerf;
     const m = (mode === 'auto') ? ((R.w * bottomH >= rightW * R.h) ? 'H' : 'V') : mode;
@@ -9099,7 +9099,7 @@ function _packOrderG(order, Ws, Hs, kerf, mode) {
     if (!ok) {
       const sh = { placed: [], cuts: [], free: [{ x: 0, y: 0, w: Ws, h: Hs }] };
       sheets.push(sh);
-      if (!place(sh, pc)) sh.placed.push({ x: 0, y: 0, l: Math.min(pc.l, Ws), w: Math.min(pc.w, Hs), idx: pc.idx, subs: pc.subs, over: true, realL: pc.l, realW: pc.w });
+      if (!place(sh, pc)) sh.placed.push({ x: 0, y: 0, l: Math.min(pc.l, Ws), w: Math.min(pc.w, Hs), idx: pc.idx, subs: pc.subs, rot: pc.rot !== false, over: true, realL: pc.l, realW: pc.w });
     }
   }
   return sheets;
@@ -9123,10 +9123,232 @@ function _packPieces(Ws, Hs, pieces, kerf) {
   }
   return best.sheets;
 }
-function cutSheetSvg(sh, Ws, Hs, n) {
+/* ══════════════════════════════════════════════════════════
+   ★★ 커팅플랜 손으로 고치기 (2026-09-17)
+   ─────────────────────────────────────────────────────────
+   사용자: *"위치를 임의로 편집할 수 있는 기능도 가능한지? 커팅플랜 실현 가능한지 확인용도"*
+
+   · 조각을 마우스로 끌면 옆 조각·판재 모서리에 **톱날 3mm 를 띄우고 찰칵 붙는다**
+   · 조각을 누르면 위에 조그만 줄이 뜬다 — 회전 / 앞판재 / 뒤판재로 옮기기
+   · 겹치거나 판재 밖으로 나가면 **빨갛게** 되고 못 놓는다 (되돌아간다)
+   · 손으로 한 번이라도 옮기면 톱질선은 지운다 — 다시 계산하지 않으므로 «맞는 척» 하면 안 된다
+   · 손으로 옮긴 배치는 «확인용»이라 플랜에 저장되지 않는다 ([자동배치로 되돌리기] 로 언제든 원복)
+   ══════════════════════════════════════════════════════════ */
+let _cutSheets = null;      // 지금 화면에 그려진 배치 (손으로 옮기면 이게 바뀐다)
+let _cutCtx = null;         // { Ws, Hs, kerf, partArea, edgeLen, over, gOver }
+let _cutTouched = false;    // 손으로 한 번이라도 옮겼나
+let _cutSel = null;         // 고른 조각 { si, pi }
+
+/* ── 이 자리에 놓아도 되나 ─────────────────────────────── */
+function _cutBad(si, pi, x, y, l, w) {
+  const c = _cutCtx, k = c.kerf;
+  if (x < -0.01 || y < -0.01 || x + l > c.Ws + 0.01 || y + w > c.Hs + 0.01) return '판재 밖으로 나갑니다';
+  const hit = _cutSheets[si].placed.some((o, j) => j !== pi &&
+    x < o.x + o.l + k - 0.01 && o.x < x + l + k - 0.01 &&
+    y < o.y + o.w + k - 0.01 && o.y < y + w + k - 0.01);
+  return hit ? '다른 조각과 겹칩니다 (톱날 ' + k + 'mm 포함)' : '';
+}
+/* ── 옆 조각·모서리에 찰칵 붙이기 ──────────────────────── */
+function _cutSnap(si, pi, nx, ny, l, w) {
+  const c = _cutCtx, k = c.kerf, TOL = 18;          // 18mm 안에 있으면 붙인다
+  const xs = [0, c.Ws - l], ys = [0, c.Hs - w];
+  _cutSheets[si].placed.forEach((o, j) => {
+    if (j === pi) return;
+    xs.push(o.x, o.x + o.l + k, o.x - l - k, o.x + o.l - l);
+    ys.push(o.y, o.y + o.w + k, o.y - w - k, o.y + o.w - w);
+  });
+  const near = (v, arr) => { let b = v, d = TOL; arr.forEach(t => { const dd = Math.abs(t - v); if (dd < d) { d = dd; b = t; } }); return b; };
+  return { x: Math.round(near(nx, xs)), y: Math.round(near(ny, ys)) };
+}
+/* ── 남는 자리 중 «가장 큰 네모» 하나 (손으로 옮긴 뒤엔 이것만 믿을 수 있다) ──
+   조각 모서리로 칸을 나눠 빈 칸을 표시한 뒤, 가장 큰 빈 직사각형을 찾는다. */
+function _cutBigFree(sh) {
+  const c = _cutCtx, k = c.kerf;
+  const xs = [0, c.Ws], ys = [0, c.Hs];
+  sh.placed.forEach(p => { xs.push(p.x, Math.min(c.Ws, p.x + p.l + k)); ys.push(p.y, Math.min(c.Hs, p.y + p.w + k)); });
+  const ux = [...new Set(xs.map(v => Math.round(v)))].filter(v => v >= 0 && v <= c.Ws).sort((a, b) => a - b);
+  const uy = [...new Set(ys.map(v => Math.round(v)))].filter(v => v >= 0 && v <= c.Hs).sort((a, b) => a - b);
+  const R = uy.length - 1, C = ux.length - 1;
+  if (R < 1 || C < 1) return null;
+  const busy = [];
+  for (let r = 0; r < R; r++) {
+    busy.push([]);
+    for (let q = 0; q < C; q++) {
+      const cx = (ux[q] + ux[q + 1]) / 2, cy = (uy[r] + uy[r + 1]) / 2;
+      busy[r].push(sh.placed.some(p => cx > p.x - 0.01 && cx < p.x + p.l + 0.01 && cy > p.y - 0.01 && cy < p.y + p.w + 0.01) ? 1 : 0);
+    }
+  }
+  let best = null;
+  for (let r0 = 0; r0 < R; r0++) for (let r1 = r0; r1 < R; r1++) {
+    for (let q0 = 0; q0 < C; q0++) {
+      if (busy[r0][q0]) continue;
+      for (let q1 = q0; q1 < C; q1++) {
+        let okAll = true;
+        for (let r = r0; r <= r1 && okAll; r++) for (let q = q0; q <= q1; q++) if (busy[r][q]) { okAll = false; break; }
+        if (!okAll) break;
+        const w = ux[q1 + 1] - ux[q0], h = uy[r1 + 1] - uy[r0];
+        if (!best || w * h > best.w * best.h) best = { x: ux[q0], y: uy[r0], w: w, h: h };
+      }
+    }
+  }
+  return best && best.w > 1 && best.h > 1 ? best : null;
+}
+/* ── 조각 고르기 ───────────────────────────────────────── */
+function cutPick(si, pi) {
+  _cutSel = (_cutSel && _cutSel.si === si && _cutSel.pi === pi) ? null : { si: si, pi: pi };
+  cutRenderResult();
+}
+function cutSelPc() { return (_cutSel && _cutSheets && _cutSheets[_cutSel.si]) ? _cutSheets[_cutSel.si].placed[_cutSel.pi] : null; }
+/* ── 고른 조각 90도 돌리기 ─────────────────────────────── */
+function cutPcRotate() {
+  const p = cutSelPc(); if (!p) return;
+  if (p.rot === false) { toast('이 조각은 회전 금지로 되어 있습니다 (결방향 또는 연결 설정)'); return; }
+  const bad = _cutBad(_cutSel.si, _cutSel.pi, p.x, p.y, p.w, p.l);
+  if (bad) { toast('돌리면 ' + bad); return; }
+  const t = p.l; p.l = p.w; p.w = t;
+  if (p.subs && p.subs.length) p.rotated = !p.rotated;
+  _cutTouched = true; cutRenderResult();
+}
+/* ── 고른 조각을 다른 판재로 ───────────────────────────── */
+function cutPcMove(d) {
+  const p = cutSelPc(); if (!p) return;
+  const from = _cutSel.si, to = from + d;
+  if (to < 0 || to >= _cutSheets.length) { toast('그 쪽에는 판재가 없습니다 — [판재 추가]를 눌러보세요'); return; }
+  const spot = _cutFindSpot(to, p.l, p.w);
+  if (!spot) { toast('판재 ' + (to + 1) + ' 에 빈 자리가 없습니다'); return; }
+  _cutSheets[from].placed.splice(_cutSel.pi, 1);
+  p.x = spot.x; p.y = spot.y;
+  _cutSheets[to].placed.push(p);
+  _cutSel = { si: to, pi: _cutSheets[to].placed.length - 1 };
+  _cutTouched = true; cutRenderResult();
+  toast('판재 ' + (to + 1) + ' 로 옮겼습니다');
+}
+/* 빈 자리 찾기 — 왼쪽 위부터 25mm 씩 훑는다 */
+function _cutFindSpot(si, l, w) {
+  const c = _cutCtx, step = 25;
+  for (let y = 0; y + w <= c.Hs + 0.01; y += step)
+    for (let x = 0; x + l <= c.Ws + 0.01; x += step)
+      if (!_cutBad(si, -1, x, y, l, w)) return { x: Math.round(x), y: Math.round(y) };
+  return null;
+}
+function cutAddSheet() {
+  if (!_cutSheets) return;
+  _cutSheets.push({ placed: [], cuts: [], free: [] });
+  _cutTouched = true; cutRenderResult();
+  toast('빈 판재를 한 장 더 놓았습니다');
+}
+function cutAutoAgain() { _cutTouched = false; _cutSel = null; runCutSim(); toast('자동배치로 되돌렸습니다'); }
+
+/* ── 끌어서 옮기기 ─────────────────────────────────────── */
+function cutDragBind() {
+  const root = el('cut-result'); if (!root || root._cutBound) return;
+  root._cutBound = true;
+  root.addEventListener('pointerdown', _cutDown);
+}
+function _cutDown(e) {
+  const g = e.target.closest && e.target.closest('g[data-pi]'); if (!g) return;
+  if (!_cutSheets || !_cutCtx) return;
+  const si = +g.getAttribute('data-sh'), pi = +g.getAttribute('data-pi');
+  const sh = _cutSheets[si]; if (!sh || !sh.placed[pi]) return;
+  const p = sh.placed[pi];
+  const svg = g.closest('svg'); if (!svg) return;
+  const box = svg.getBoundingClientRect();
+  const mmPx = _cutCtx.Ws / box.width;                 // 화면 1px 이 몇 mm 인가
+  const uu = (620 / _cutCtx.Ws);                       // mm → SVG 안쪽 단위
+  const x0 = e.clientX, y0 = e.clientY, px = p.x, py = p.y;
+  let moved = false, last = { x: px, y: py };
+  g.style.cursor = 'grabbing';
+  const warn = el('cut-dragmsg');
+  const move = ev => {
+    const dx = (ev.clientX - x0) * mmPx, dy = (ev.clientY - y0) * mmPx;
+    if (!moved && Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - y0) < 4) return;
+    moved = true;
+    const s = _cutSnap(si, pi, px + dx, py + dy, p.l, p.w);
+    last = s;
+    g.setAttribute('transform', `translate(${((s.x - px) * uu).toFixed(1)},${((s.y - py) * uu).toFixed(1)})`);
+    const bad = _cutBad(si, pi, s.x, s.y, p.l, p.w);
+    g.setAttribute('opacity', bad ? '0.45' : '1');
+    if (warn) { warn.textContent = bad ? ('⚠ ' + bad) : (s.x + ' , ' + s.y); warn.style.color = bad ? '#c0341d' : 'var(--t2)'; }
+    ev.preventDefault();
+  };
+  const up = () => {
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+    g.style.cursor = 'grab';
+    if (warn) warn.textContent = '';
+    if (!moved) { cutPick(si, pi); return; }
+    const bad = _cutBad(si, pi, last.x, last.y, p.l, p.w);
+    if (bad) { toast('놓을 수 없습니다 — ' + bad); cutRenderResult(); return; }
+    p.x = last.x; p.y = last.y; _cutTouched = true;
+    _cutSel = { si: si, pi: pi };
+    cutRenderResult();
+  };
+  document.addEventListener('pointermove', move, { passive: false });
+  document.addEventListener('pointerup', up);
+  e.preventDefault();
+}
+
+/* ── 결과 화면 그리기 (자동배치·손배치 공통) ───────────── */
+function cutRenderResult() {
+  if (!_cutSheets || !_cutCtx) return;
+  const c = _cutCtx;
+  // 빈 판재는 맨 뒤 한 장만 남기고 치운다
+  _cutSheets = _cutSheets.filter((s, i) => s.placed.length || i === _cutSheets.length - 1);
+  if (_cutSheets.length > 1 && !_cutSheets[_cutSheets.length - 1].placed.length && !_cutTouched) _cutSheets.pop();
+  if (_cutSel && (!_cutSheets[_cutSel.si] || !_cutSheets[_cutSel.si].placed[_cutSel.pi])) _cutSel = null;
+
+  const used = _cutSheets.filter(s => s.placed.length).length;
+  const sheetArea = used * c.Ws * c.Hs;
+  const sawLen = _cutTouched ? null : cutSawLength(_cutSheets);
+  const m2 = v => (v / 1e6).toFixed(3);
+  const sc = (lab, val, sub, col) => `<div style="background:var(--soft);border-radius:10px;padding:9px 8px;text-align:center"><div style="font-size:10.5px;color:var(--t2)">${lab}</div><div style="font-size:16px;font-weight:800;color:${col || 'var(--gd)'}">${val}</div>${sub ? `<div style="font-size:10px;color:var(--t3)">${sub}</div>` : ''}</div>`;
+  const p = cutSelPc();
+  const bar = `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:var(--soft);border-radius:10px;padding:7px 10px;margin-bottom:8px;font-size:12px">
+      <i class="ti ti-hand-move" style="color:var(--gd)"></i><b>조각을 끌어서 옮길 수 있습니다</b>
+      <span style="color:var(--t3)">— 옆 조각·모서리에 톱날 ${c.kerf}mm 띄우고 붙습니다</span>
+      <span id="cut-dragmsg" style="margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums"></span>
+    </div>
+    ${p ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:#eaf3ff;border:1px solid #b5d4f4;border-radius:10px;padding:7px 10px;margin-bottom:8px;font-size:12px;color:#185fa5">
+      <b>고른 조각</b> ${p.subs && p.subs.length ? '연결블록' : ('#' + (p.idx || '?'))} · ${Math.round(p.l)}×${Math.round(p.w)} · 판재 ${_cutSel.si + 1} (${Math.round(p.x)}, ${Math.round(p.y)})
+      <span style="margin-left:auto;display:flex;gap:5px;flex-wrap:wrap">
+        <button class="btn btn-sm" style="padding:2px 8px;font-size:11px" onclick="cutPcRotate()"><i class="ti ti-rotate-clockwise"></i>90° 돌리기</button>
+        <button class="btn btn-sm" style="padding:2px 8px;font-size:11px" onclick="cutPcMove(-1)"><i class="ti ti-arrow-left"></i>앞 판재로</button>
+        <button class="btn btn-sm" style="padding:2px 8px;font-size:11px" onclick="cutPcMove(1)">뒤 판재로<i class="ti ti-arrow-right"></i></button>
+        <button class="btn btn-sm btn-ghost" style="padding:2px 8px;font-size:11px" onclick="_cutSel=null;cutRenderResult()">선택 해제</button>
+      </span></div>` : ''}
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px">
+      <button class="btn btn-sm" onclick="cutAddSheet()"><i class="ti ti-plus"></i>판재 추가</button>
+      ${_cutTouched ? `<button class="btn btn-sm" style="color:var(--gd);border-color:var(--gd)" onclick="cutAutoAgain()"><i class="ti ti-refresh"></i>자동배치로 되돌리기</button>` : ''}
+    </div>`;
+
+  el('cut-result').innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:8px">
+      ${sc('부재 총 면적', m2(c.partArea) + ' ㎡')}
+      ${sc('재단 길이 (톱질)', sawLen == null ? '—' : ((sawLen / 1000).toFixed(2) + ' m'), sawLen == null ? '손으로 옮김 — 다시 계산 안 함' : '빨간 점선 길이 합', '#d94a3d')}
+      ${sc('마구리 둘레 합', (c.edgeLen / 1000).toFixed(2) + ' m', '부재 4면 · 연마용')}
+      ${sc('사용 판재', used + ' 장', c.Ws + '×' + c.Hs)}
+      ${sc('자투리(로스)', m2(Math.max(0, sheetArea - c.partArea)) + ' ㎡')}
+    </div>
+    ${c.over ? '<div style="color:#c0341d;font-size:12px;margin-bottom:8px"><i class="ti ti-alert-triangle"></i> 판재보다 큰 부재가 있습니다 — 치수를 확인하세요</div>' : ''}
+    ${c.gOver.length ? `<div class="banner" style="margin-bottom:9px;font-size:12.5px;background:#fdecea;border-left:4px solid #c0341d;border-radius:0 10px 10px 0;padding:10px 13px;color:#8a2b1a"><span style="flex:1;min-width:0">
+      <b><i class="ti ti-alert-triangle"></i> 무늬연결 ${c.gOver.length}개가 판재(${c.Ws}×${c.Hs})에 들어가지 않습니다</b><br>
+      ${c.gOver.map(o => `· <b>${esc(o.nos)}번</b> ${o.n}장 연결 → 블록 <b>${o.L}×${o.W}</b>${o.rotOK ? '' : ' <span style="color:#a8341f">(결방향/회전 끔 — 돌려서 넣을 수 없음)</span>'}`).join('<br>')}<br>
+      <span style="font-size:11.5px">아래 빨간 칸이 그 블록입니다. <b>연결 장수를 줄이거나</b>, 판재 규격을 키우거나, 회전을 켜 보세요. 이 상태의 판재 장수·로스는 믿을 수 없습니다.</span>
+    </span></div>` : ''}
+    ${_cutTouched ? `<div class="banner" style="margin-bottom:9px;font-size:12px;background:#fff8e8;border-left:4px solid #d69e2e;border-radius:0 10px 10px 0;padding:9px 12px;color:#7a5b12"><span style="flex:1;min-width:0">
+      <b><i class="ti ti-hand-move"></i> 손으로 옮긴 배치입니다</b> — 톱질선은 다시 계산하지 않아 지웠습니다. 이 배치는 <b>플랜에 저장되지 않습니다</b> (확인용).</span></div>` : ''}
+    ${bar}
+    ${_cutSheets.map((sh, i) => cutSheetSvg(sh, c.Ws, c.Hs, i + 1, i)).join('')}`;
+  cutDragBind();
+}
+
+function cutSheetSvg(sh, Ws, Hs, n, si) {
   const maxW = 620; const sc = maxW / Ws; const W = Ws * sc, H = Hs * sc;
   const colors = ['#FCE9B8', '#D8ECB0', '#F7C9A8', '#C9DAF0', '#E8CDEA', '#CDEAE0', '#F5D0D0', '#D0E8F0'];
-  const rects = sh.placed.map(pc => {
+  /* ★ si 가 있으면 «손으로 옮길 수 있는» 그림이다 — 조각마다 번호표를 붙인다 */
+  const _dg = pi => (si == null ? '' : ` data-sh="${si}" data-pi="${pi}" style="cursor:grab"`);
+  const _selQ = pi => (si != null && _cutSel && _cutSel.si === si && _cutSel.pi === pi);
+  const rects = sh.placed.map((pc, pi) => {
     const x = pc.x * sc, y = pc.y * sc, w = pc.l * sc, h = pc.w * sc;
     if (pc.subs && pc.subs.length && pc.over) {
       /* ★ 판재에 안 들어가는 연결 블록 — 잘린 모습을 그리면 되는 줄 알기 쉬워서 빨간 경고로 대신한다 */
@@ -9142,17 +9364,19 @@ function cutSheetSvg(sh, Ws, Hs, n) {
         else { ex = sp.x; ey = sp.y; ew = sp.l; eh = sp.w; }
         const sx = (pc.x + ex) * sc, sy = (pc.y + ey) * sc, sw = ew * sc, sh2 = eh * sc; const cc = colors[((sp.idx || 1) - 1) % colors.length];
         return `<rect x="${sx.toFixed(1)}" y="${sy.toFixed(1)}" width="${sw.toFixed(1)}" height="${sh2.toFixed(1)}" fill="${cc}" stroke="#555" stroke-width="0.7"/>` + (sw > 40 && sh2 > 16 ? `<text x="${(sx + sw / 2).toFixed(1)}" y="${(sy + sh2 / 2 + 3).toFixed(1)}" text-anchor="middle" font-size="10" fill="#333">${sp.l}×${sp.w}${sp.idx ? ' #' + sp.idx : ''}</text>` : ''); }).join('');
-      return `<g>${inner}<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="none" stroke="#185fa5" stroke-width="1.8" stroke-dasharray="5 3"/></g>`;
+      return `<g${_dg(pi)}>${inner}<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="none" stroke="${_selQ(pi) ? '#d97706' : '#185fa5'}" stroke-width="${_selQ(pi) ? 3 : 1.8}" stroke-dasharray="5 3"/></g>`;
     }
     const c = pc.over ? '#f2b0b0' : colors[((pc.idx || 1) - 1) % colors.length];
-    return `<g><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="${c}" stroke="#555" stroke-width="0.7"/>` +
+    return `<g${_dg(pi)}><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="${c}" stroke="${_selQ(pi) ? '#d97706' : '#555'}" stroke-width="${_selQ(pi) ? 2.6 : 0.7}"/>` +
       (w > 40 && h > 16 ? `<text x="${(x + w / 2).toFixed(1)}" y="${(y + h / 2 + 3).toFixed(1)}" text-anchor="middle" font-size="10" fill="#333">${pc.l}×${pc.w}${pc.idx ? ' #' + pc.idx : ''}</text>` : '') + `</g>`;
   }).join('');
   /* ★ 2026-09-09 — 「남는 부분(자투리) 치수도 표기해줘」
      배치가 끝나고 남은 빈 자리(sh.free)를 회색 빗금으로 칠하고 «가로×세로»를 적는다.
      가장 큰 한 장은 초록으로 구분한다 — 다음에 다시 쓸 수 있는 조각이라 눈에 띄어야 한다.
      ※ sh.free 는 톱날(3mm)을 이미 뺀 «실제로 쓸 수 있는» 크기다. */
-  const frees = (sh.free || []).filter(f => f.w > 1 && f.h > 1).slice().sort((a, b) => (b.w * b.h) - (a.w * a.h));
+  const frees = _cutTouched
+    ? (() => { const b = (typeof _cutBigFree === 'function') ? _cutBigFree(sh) : null; return b ? [b] : []; })()
+    : (sh.free || []).filter(f => f.w > 1 && f.h > 1).slice().sort((a, b) => (b.w * b.h) - (a.w * a.h));
   const pid = 'hx' + n;
   const scrapSvg = frees.map((f, i) => {
     const x = f.x * sc, y = f.y * sc, w = f.w * sc, h = f.h * sc;
@@ -9166,11 +9390,11 @@ function cutSheetSvg(sh, Ws, Hs, n) {
   }).join('');
   // 그림에 글씨가 안 들어가는 작은 자투리까지 빠짐없이 보이도록 아래에 한 줄로 적는다
   const scrapList = frees.length
-    ? `<div style="font-size:11.5px;color:var(--t2);margin-top:3px;line-height:1.6"><b style="color:#2e7d5b">남는 부분</b> ${frees.map((f, i) => `<span style="display:inline-block;background:${i === 0 && f.w >= 200 && f.h >= 200 ? '#e7f3ed' : 'var(--soft)'};border:1px solid ${i === 0 && f.w >= 200 && f.h >= 200 ? '#bcdccd' : 'var(--bd2)'};border-radius:7px;padding:1px 7px;margin:2px 3px 0 0;font-weight:${i === 0 ? 700 : 500}">${Math.round(f.w)}×${Math.round(f.h)}<span style="color:var(--t3);font-weight:500"> · ${((f.w * f.h) / 1e6).toFixed(2)}㎡</span></span>`).join('')}</div>`
+    ? `<div style="font-size:11.5px;color:var(--t2);margin-top:3px;line-height:1.6"><b style="color:#2e7d5b">${_cutTouched ? '가장 큰 빈 자리' : '남는 부분'}</b> ${frees.map((f, i) => `<span style="display:inline-block;background:${i === 0 && f.w >= 200 && f.h >= 200 ? '#e7f3ed' : 'var(--soft)'};border:1px solid ${i === 0 && f.w >= 200 && f.h >= 200 ? '#bcdccd' : 'var(--bd2)'};border-radius:7px;padding:1px 7px;margin:2px 3px 0 0;font-weight:${i === 0 ? 700 : 500}">${Math.round(f.w)}×${Math.round(f.h)}<span style="color:var(--t3);font-weight:500"> · ${((f.w * f.h) / 1e6).toFixed(2)}㎡</span></span>`).join('')}</div>`
     : `<div style="font-size:11.5px;color:var(--t3);margin-top:3px">남는 부분 없음 — 판재를 다 썼습니다</div>`;
   // 톱질 선 — 한 번 들어가면 그 조각 끝까지 쭉 나가는 직선만 그린다
-  const cuts = (sh.cuts || []).map(c => `<line x1="${(c.x1 * sc).toFixed(1)}" y1="${(c.y1 * sc).toFixed(1)}" x2="${(c.x2 * sc).toFixed(1)}" y2="${(c.y2 * sc).toFixed(1)}" stroke="#d94a3d" stroke-width="1.1" stroke-dasharray="6 4" opacity=".85"/>`).join('');
-  return `<div style="margin-bottom:12px"><div style="font-size:12px;color:var(--t3);margin-bottom:3px">판재 ${n} · ${Ws}×${Hs} <span style="color:#d94a3d">— 빨간 점선 = 톱질 선</span> <span style="color:#2e7d5b">· 빗금 = 남는 부분</span></div><svg viewBox="0 0 ${W.toFixed(1)} ${H.toFixed(1)}" style="width:100%;max-width:${W.toFixed(0)}px;border:1px solid #999;background:#fff">
+  const cuts = (_cutTouched ? [] : (sh.cuts || [])).map(c => `<line x1="${(c.x1 * sc).toFixed(1)}" y1="${(c.y1 * sc).toFixed(1)}" x2="${(c.x2 * sc).toFixed(1)}" y2="${(c.y2 * sc).toFixed(1)}" stroke="#d94a3d" stroke-width="1.1" stroke-dasharray="6 4" opacity=".85"/>`).join('');
+  return `<div style="margin-bottom:12px"><div style="font-size:12px;color:var(--t3);margin-bottom:3px">판재 ${n} · ${Ws}×${Hs}${_cutTouched ? ' <span style="color:#d69e2e">— 손으로 옮긴 배치</span>' : ' <span style="color:#d94a3d">— 빨간 점선 = 톱질 선</span> <span style="color:#2e7d5b">· 빗금 = 남는 부분</span>'}</div><svg viewBox="0 0 ${W.toFixed(1)} ${H.toFixed(1)}" style="width:100%;max-width:${W.toFixed(0)}px;border:1px solid #999;background:#fff">
     <defs><pattern id="${pid}" width="7" height="7" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><rect width="7" height="7" fill="#f7f8f9"/><line x1="0" y1="0" x2="0" y2="7" stroke="#c9ced6" stroke-width="1.6"/></pattern></defs>
     ${scrapSvg}${rects}${cuts}<rect x="0.5" y="0.5" width="${(W - 1).toFixed(1)}" height="${(H - 1).toFixed(1)}" fill="none" stroke="#333" stroke-width="1"/></svg>${scrapList}</div>`;
 }
@@ -9226,25 +9450,10 @@ function runCutSim() {
   const sheets = _packPieces(Ws, Hs, pieces, kerf);
   let partArea = 0, edgeLen = 0, over = false;
   parts.forEach(p => { partArea += p.l * p.w * p.q; edgeLen += 2 * (p.l + p.w) * p.q; const big = Math.max(p.l, p.w), small = Math.min(p.l, p.w); if (big > Math.max(Ws, Hs) + 0.001 || small > Math.min(Ws, Hs) + 0.001) over = true; });
-  const sawLen = cutSawLength(sheets);
-  const sheetArea = sheets.length * Ws * Hs;
-  const m2 = v => (v / 1e6).toFixed(3);
-  const sc = (lab, val, sub, col) => `<div style="background:var(--soft);border-radius:10px;padding:9px 8px;text-align:center"><div style="font-size:10.5px;color:var(--t2)">${lab}</div><div style="font-size:16px;font-weight:800;color:${col || 'var(--gd)'}">${val}</div>${sub ? `<div style="font-size:10px;color:var(--t3)">${sub}</div>` : ''}</div>`;
-  el('cut-result').innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:8px">
-      ${sc('부재 총 면적', m2(partArea) + ' ㎡')}
-      ${sc('재단 길이 (톱질)', (sawLen / 1000).toFixed(2) + ' m', '빨간 점선 길이 합', '#d94a3d')}
-      ${sc('마구리 둘레 합', (edgeLen / 1000).toFixed(2) + ' m', '부재 4면 · 연마용')}
-      ${sc('사용 판재', sheets.length + ' 장', Ws + '×' + Hs)}
-      ${sc('자투리(로스)', m2(Math.max(0, sheetArea - partArea)) + ' ㎡')}
-    </div>
-    ${over ? '<div style="color:#c0341d;font-size:12px;margin-bottom:8px"><i class="ti ti-alert-triangle"></i> 판재보다 큰 부재가 있습니다 — 치수를 확인하세요</div>' : ''}
-    ${gOver.length ? `<div class="banner" style="margin-bottom:9px;font-size:12.5px;background:#fdecea;border-left:4px solid #c0341d;border-radius:0 10px 10px 0;padding:10px 13px;color:#8a2b1a"><span style="flex:1;min-width:0">
-      <b><i class="ti ti-alert-triangle"></i> 무늬연결 ${gOver.length}개가 판재(${Ws}×${Hs})에 들어가지 않습니다</b><br>
-      ${gOver.map(o => `· <b>${esc(o.nos)}번</b> ${o.n}장 연결 → 블록 <b>${o.L}×${o.W}</b>${o.rotOK ? '' : ' <span style="color:#a8341f">(결방향/회전 끔 — 돌려서 넣을 수 없음)</span>'}`).join('<br>')}<br>
-      <span style="font-size:11.5px">아래 빨간 칸이 그 블록입니다. <b>연결 장수를 줄이거나</b>, 판재 규격을 키우거나, 회전을 켜 보세요. 이 상태의 판재 장수·로스는 믿을 수 없습니다.</span>
-    </span></div>` : ''}
-    ${sheets.map((sh, i) => cutSheetSvg(sh, Ws, Hs, i + 1)).join('')}`;
+  /* ★ 배치를 기억해 둔다 — 손으로 옮길 수 있게 (cutRenderResult 가 그린다) */
+  _cutSheets = sheets; _cutTouched = false; _cutSel = null;
+  _cutCtx = { Ws: Ws, Hs: Hs, kerf: kerf, partArea: partArea, edgeLen: edgeLen, over: over, gOver: gOver };
+  cutRenderResult();
   cutPlanAutoSave(sheets.length, partArea);   // ★ 돌릴 때마다 '최근 커팅플랜'에 자동 저장
 }
 /* ══════════════════════════════════════════════════════════
@@ -9883,7 +10092,7 @@ function quoteCardHtml(q) {
            <div style="font-size:10.5px;color:var(--t3);margin-top:3px;white-space:nowrap;border-top:1px dashed var(--bd);padding-top:3px">${_rem > 0 ? `이 건 미수 ${fmtWon(_rem)}` : (_pa > 0 ? '<span style="color:var(--gd);font-weight:700">이 건 결제완료</span>' : '이 건 미결제')}</div>`
         : (_pa > 0 ? `<div style="font-size:12px;font-weight:700;color:var(--gd);margin-top:6px"><i class="ti ti-check"></i> 결제완료</div>` : (_rem > 0 ? `<div style="font-size:13.5px;font-weight:800;color:var(--red-t);margin-top:6px">미수 ${fmtWon(_rem)}</div>` : ''))}</div>
       </div>
-      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px">${catBadge}${paidPill}${taxPill}${depBadge}${shipBadge}${siteBadge}${basinBadge}${basinDrawsOf(q).length ? `<button class="pill" style="border:none;cursor:pointer;background:#eef4ff;color:#1b4fb0" onclick="event.stopPropagation();openQuoteDraw('${q.id}','${esc(basinDrawsOf(q)[0].id)}')" title="세면대 도면 보기"><i class="ti ti-ruler-2"></i> 도면 ${basinDrawsOf(q).length}</button>` : ''}${doneBadge}${canLedger() && _cRem > 0 ? `<button class="pill p-issue" style="border:none;cursor:pointer" onclick="openLedgerFor(${JSON.stringify(q.client || '').replace(/"/g, '&quot;')})" title="이 거래처 원장 보기"><i class="ti ti-book"></i> 거래처 미수 ${fmtWon(_cRem)}</button>` : ''}</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px">${catBadge}${paidPill}${taxPill}${depBadge}${shipBadge}${siteBadge}${basinBadge}${basinDrawsOf(q).length ? `<button class="pill" style="border:none;cursor:pointer;background:#eef4ff;color:#1b4fb0" onclick="event.stopPropagation();${basinDrawsOf(q).length > 1 ? `openQuoteView('${q.id}')` : `openQuoteDraw('${q.id}','${esc(basinDrawsOf(q)[0].id)}')`}" title="세면대 도면 보기"><i class="ti ti-ruler-2"></i> 도면 ${basinDrawsOf(q).length}</button>` : ''}${doneBadge}${canLedger() && _cRem > 0 ? `<button class="pill p-issue" style="border:none;cursor:pointer" onclick="openLedgerFor(${JSON.stringify(q.client || '').replace(/"/g, '&quot;')})" title="이 거래처 원장 보기"><i class="ti ti-book"></i> 거래처 미수 ${fmtWon(_cRem)}</button>` : ''}</div>
       <div class="frm-foot" style="margin-top:9px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
         ${(q.shipped || q.siteDone || q.basinDone) ? '' : (q.manualDone ? (isAdmin() ? `<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteUnmarkDone('${q.id}')" title="완료 취소"><i class="ti ti-arrow-back-up"></i>완료 취소</button>` : '') : (q.ordered ? `<button class="btn btn-sm btn-pri" onclick="quoteRegister('${q.id}')"><i class="ti ${_regIcon}"></i>${_regLabel}</button><button class="btn btn-sm" onclick="quoteLinkSite('${q.id}')" title="이미 등록된 현장에 연결"><i class="ti ti-link"></i>현장 연결</button>${isAdmin() ? `<button class="btn btn-sm" style="color:#0f766e;border-color:#0f766e" onclick="quoteMarkDone('${q.id}')" title="바로 완료 처리 (관리자)"><i class="ti ti-checks"></i>완료 처리</button>` : ''}<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteCancelOrder('${q.id}')" title="확정 주문 취소"><i class="ti ti-arrow-back-up"></i>확정취소</button>` : `<button class="btn btn-sm btn-pri" onclick="quoteConfirmOrder('${q.id}')"><i class="ti ti-clipboard-check"></i>확정주문</button>`))}
         <button class="btn btn-sm" onclick="openQuoteInline('${q.id}')"><i class="ti ti-edit"></i>수정</button>
@@ -14198,14 +14407,36 @@ function basinDrawSvg(d, lang) {
    견적에서 그린 도면은 그 견적으로 세면대 발주를 낼 때 **발주 건으로 그대로 따라간다**. */
 let _bdCur = null, _bdColl = '', _bdDocId = '';
 function basinDrawsOf(b) { return (b && Array.isArray(b.draws)) ? b.draws : []; }
+/* ★ 2026-09-18 — 세면대가 여러 개면 «품목마다» 도면을 그린다
+   사용자: *"세면대 여러개 인 경우 각 도면 그리기 필요"*
+   예전에는 견적서의 «첫 번째» 세면대 항목 하나만 보고 치수를 미리 채웠다.
+   그래서 세면대가 2종류 이상이면 두 번째부터는 치수를 손으로 다시 넣어야 했고,
+   그려 놓고도 어느 품목 도면인지 구분이 안 됐다. */
+const BD_ITEM_RE = /세면대|세면기|워시볼|washbasin/i;
+const BD_ITEM_SKIP = /부속|브라켓|팝업|폽업|트랩|받침|악세|볼트|실리콘|본드|배수|사이펀/;
+function quoteBasinItems(q) {
+  const out = [];
+  ((q && q.items) || []).forEach((it, i) => {
+    const nm = String((it && it.name) || '').trim();
+    if (!BD_ITEM_RE.test(nm) || BD_ITEM_SKIP.test(nm)) return;
+    out.push({
+      idx: i, ord: out.length + 1, name: nm,
+      spec: String((it && it.spec) || '').trim(),
+      qty: Math.max(1, Math.round(+(it && it.qty) || 0) || 1),
+      stone: String((it && it.stone) || '').trim()
+    });
+  });
+  return out;
+}
+function _bdNo(n) { return '①②③④⑤⑥⑦⑧⑨⑩⑪⑫'[n - 1] || ('(' + n + ')'); }
 /* 규격 문자열에서 기장·폭·높이 뽑기 — '1060*473*550' / '1060x473' 둘 다 */
 function _bdParseSpec(spec) {
   const m = String(spec || '').match(/(\d{2,5})\s*[*xX×]\s*(\d{2,5})(?:\s*[*xX×]\s*(\d{2,5}))?/);
   return m ? { L: +m[1], W: +m[2], H: m[3] ? +m[3] : 0 } : null;
 }
 function openBasinDraw(basinId, drawId) { _openDrawFor('basins', basinId, drawId); }
-function openQuoteDraw(quoteId, drawId) { _openDrawFor('quotes', quoteId, drawId); }
-function _openDrawFor(coll, docId, drawId) {
+function openQuoteDraw(quoteId, drawId, itemIdx) { _openDrawFor('quotes', quoteId, drawId, itemIdx); }
+function _openDrawFor(coll, docId, drawId, itemIdx) {
   if (isCustomerRole()) { toast('권한이 없습니다'); return; }
   const doc = docId ? (state[coll] || []).find(x => x.id === docId) : null;
   _bdColl = doc ? coll : ''; _bdDocId = doc ? docId : '';
@@ -14224,10 +14455,12 @@ function _openDrawFor(coll, docId, drawId) {
     _bdCur.client = doc.vendor || '';
     _bdCur.orderNo = it.orderNo || doc.orderNo || '';
     const sp = _bdParseSpec(it.spec); if (sp) { _bdCur.L = sp.L; _bdCur.W = sp.W; if (sp.H) _bdCur.H = sp.H; }
-  } else if (doc && !old && coll === 'quotes') {  // 새 도면 — 견적서의 세면대 항목에서 미리 채운다
+  } else if (doc && !old && coll === 'quotes') {  // 새 도면 — 견적서의 «고른» 세면대 항목에서 미리 채운다
     _bdCur.client = doc.client || '';
     _bdCur.orderNo = doc.docNo || '';
-    const bi = (doc.items || []).find(x => (x.name || '').includes('세면대')) || (doc.items || [])[0] || {};
+    const _pick = (itemIdx != null && itemIdx !== '' && (doc.items || [])[+itemIdx]) ? (doc.items || [])[+itemIdx] : null;
+    const bi = _pick || (doc.items || []).find(x => (x.name || '').includes('세면대')) || (doc.items || [])[0] || {};
+    if (_pick) { _bdCur.itemIdx = +itemIdx; _bdCur.itemName = String(_pick.name || '').trim(); }
     const st = BASIN_STONES.find(s => String(bi.stone || bi.name || '').includes(s.k));
     if (st) _bdCur.stone = st.k; else if (bi.stone) _bdCur.stone = bi.stone;
     const sp = _bdParseSpec(bi.spec) || _bdParseSpec(bi.name); if (sp) { _bdCur.L = sp.L; _bdCur.W = sp.W; if (sp.H) _bdCur.H = sp.H; }
@@ -14440,14 +14673,32 @@ function basinDrawListHtml(doc, coll) {
   coll = coll || 'basins';
   const ds = basinDrawsOf(doc);
   const openFn = coll === 'quotes' ? 'openQuoteDraw' : 'openBasinDraw';
-  return `<div class="sec-label" style="margin-top:10px"><i class="ti ti-ruler-2"></i>세면대 도면 ${ds.length ? `<span style="color:var(--gd)">${ds.length}</span>` : ''}
-      <button class="btn btn-sm btn-pri" style="float:right" onclick="${openFn}('${doc.id}')"><i class="ti ti-plus"></i>도면 그리기</button></div>
+  /* ★ 견적서에 세면대 품목이 여러 개면 «품목마다» 그리게 한다 */
+  const bis = coll === 'quotes' ? quoteBasinItems(doc) : [];
+  const ordOf = {}; bis.forEach(b => { ordOf[b.idx] = b.ord; });
+  const nOf = i => ds.filter(d => d.itemIdx === i).length;
+  const noItem = ds.filter(d => d.itemIdx == null).length;
+  const itemBox = bis.length ? `<div style="border:1.5px solid var(--bd2);border-radius:11px;overflow:hidden;margin-bottom:9px">
+      ${bis.map((b, k) => { const n = nOf(b.idx);
+    return `<div style="display:flex;align-items:center;gap:9px;padding:8px 11px;${k ? 'border-top:1px solid var(--bd2);' : ''}${n ? '' : 'background:#fffaf0;'}">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:700"><span style="color:#1b4fb0">${_bdNo(b.ord)}</span> ${esc(b.name)}</div>
+          <div style="font-size:11.5px;color:var(--t3)">${esc(b.spec || '규격 미기재')} · ${b.qty}개${b.stone ? ' · ' + esc(b.stone) : ''}</div>
+        </div>
+        <span style="flex:none;font-size:11.5px;font-weight:700;color:${n ? 'var(--gd)' : '#b47e12'}">${n ? '도면 ' + n + '장' : '도면 없음'}</span>
+        <button class="btn btn-sm ${n ? '' : 'btn-pri'}" style="flex:none;padding:3px 9px;font-size:11.5px" onclick="${openFn}('${doc.id}','',${b.idx})"><i class="ti ti-plus"></i>도면</button>
+      </div>`; }).join('')}
+    </div>` : '';
+  return `<div class="sec-label" style="margin-top:10px"><i class="ti ti-ruler-2"></i>세면대 도면 ${ds.length ? `<span style="color:var(--gd)">${ds.length}장</span>` : ''}
+      ${bis.length ? '' : `<button class="btn btn-sm btn-pri" style="float:right" onclick="${openFn}('${doc.id}')"><i class="ti ti-plus"></i>도면 그리기</button>`}</div>
+    ${itemBox}
+    ${bis.length && noItem ? `<div style="font-size:11.5px;color:var(--t3);padding:2px 2px 6px">품목이 지정되지 않은 옛 도면 ${noItem}장 — 아래에서 열어 다시 저장하면 품목이 붙습니다.</div>` : ''}
     ${ds.length ? ds.map(d => {
     const M = basinMoldOf(d.mold);
     return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--bd2);border-radius:10px;margin-bottom:6px">
       <div style="flex:1;min-width:0">
-        <div style="font-weight:700;font-size:13.5px">${esc(d.L)}×${esc(d.W)}×${esc(d.H)} <span style="font-weight:500;color:var(--t3)">· ${esc(M.ko)} ${M.l}×${M.w}${+d.bowls === 2 ? ' ×2' : ''}</span>${M.g === 'drop' ? `<span style="font-weight:600;font-size:11.5px;color:#2f6b3a;background:#eaf3ea;border-radius:6px;padding:1px 6px;margin-left:5px">${esc(bdFlipText(d, 'ko'))}</span>` : ''}</div>
-        <div style="font-size:11.5px;color:var(--t3)">${esc(basinSkirtText(d, 'ko'))} · ${d.tap ? '수전타공 Ø' + esc(d.tapDia) : '매립수전(타공X)'}${d.stone ? ' · ' + esc(d.stone) : ''}</div>
+        <div style="font-weight:700;font-size:13.5px">${d.itemIdx != null && ordOf[d.itemIdx] ? `<span style="color:#1b4fb0">${_bdNo(ordOf[d.itemIdx])}</span> ` : ''}${esc(d.L)}×${esc(d.W)}×${esc(d.H)} <span style="font-weight:500;color:var(--t3)">· ${esc(M.ko)} ${M.l}×${M.w}${+d.bowls === 2 ? ' ×2' : ''}</span>${M.g === 'drop' ? `<span style="font-weight:600;font-size:11.5px;color:#2f6b3a;background:#eaf3ea;border-radius:6px;padding:1px 6px;margin-left:5px">${esc(bdFlipText(d, 'ko'))}</span>` : ''}</div>
+        <div style="font-size:11.5px;color:var(--t3)">${esc(basinSkirtText(d, 'ko'))} · ${d.tap ? '수전타공 Ø' + esc(d.tapDia) : '매립수전(타공X)'}${d.stone ? ' · ' + esc(d.stone) : ''}${d.itemName ? ' · ' + esc(d.itemName) : ''}</div>
       </div>
       <button class="btn btn-sm" onclick="${openFn}('${doc.id}','${d.id}')"><i class="ti ti-edit"></i></button>
       <button class="btn btn-sm" style="color:var(--red-t)" onclick="basinDrawDel('${coll}','${doc.id}','${d.id}')"><i class="ti ti-trash"></i></button>
