@@ -3351,9 +3351,34 @@ function catUsesStone(cat) { return cat === '세면대'; }   // 석종(자재종
 function basinStoneNames() { const set = new Set(BASIN_STONES.map(s => s.k)); (state.inventory || []).forEach(i => { if (itemCat(i) === '세면대' && i.stone) set.add(i.stone); }); return [...set]; }
 function catColor(c) { return { '세라믹': '#0F6E56', '석재': '#7a5b2e', '세면대': '#2f6fed', '무늬목': '#9a6a12', '기타': '#6b7280' }[c || '세라믹'] || '#6b7280'; }
 function catBadge(cat) { const c = cat || '세라믹'; const col = catColor(c); return `<span style="display:inline-block;font-size:9.5px;font-weight:700;color:${col};background:${col}1a;border:1px solid ${col}55;border-radius:7px;padding:1px 6px;vertical-align:middle;margin-left:4px">${esc(c)}</span>`; }
+/* ★★ 2026-09-18 — 재고를 두께별로 보고, 머리글을 눌러 정렬한다
+   사용자: *"재고볼 때 6티, 12티, 이름순, 오름차 내림차 순 정렬로 볼 수 있게 해줘"*
+   두께 칩은 **실제 재고에 있는 두께만** 만든다 (지금은 6T·9T·12T·15T). */
+function stockThickList() {
+  const c = {}; let none = 0;
+  (state.inventory || []).forEach(i => { const t = parseThick(i.name, i.spec); if (t) c[t] = (c[t] || 0) + 1; else none++; });
+  const out = Object.keys(c).sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0)).map(t => ({ t: t, n: c[t] }));
+  if (none) out.push({ t: 'none', n: none });
+  return out;
+}
+function stockThickCur() { return filters.stockThick || _viewPref('stockThick', 'all'); }
+function stockSortCur() { return filters.stockSort == null ? _viewPref('stockSort', '') : filters.stockSort; }
+function chipThick(v, label, n) {
+  const on = stockThickCur() === v;
+  return `<button class="chip ${on ? 'active' : ''}" onclick="stockSetThick('${v}')">${label}${n != null ? ` <span style="opacity:.65">${n}</span>` : ''}</button>`;
+}
+function stockSetThick(v) { filters.stockThick = v; _viewSave('stockThick', v); renderStock(); }
+function stockSetSort(v) {
+  filters.stockSort = (stockSortCur() === v ? '' : v);
+  _viewSave('stockSort', filters.stockSort);
+  const list = stockBaseList();
+  const hd = el('stock-thead'); if (hd) hd.innerHTML = stockHeadHtml();
+  const tb = el('stock-tbody'); if (tb) tb.innerHTML = stockRowsHtml(list);
+  const ct = el('stock-count'); if (ct) ct.textContent = list.length + '종';
+}
 function stockBaseList() {
   const f = filters.stock;
-  let list = state.inventory.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  let list = state.inventory.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'));
   if (f === 'none') list = list.filter(i => stockState(i).k === '없음');
   else if (f === 'short') list = list.filter(i => ['부족', '임박'].includes(stockState(i).k));
   else if (f === 'low') list = list.filter(i => ['부족', '없음'].includes(stockState(i).k));
@@ -3361,9 +3386,21 @@ function stockBaseList() {
   else if (f === 'dmg') list = list.filter(i => damagedStock(i.name) > 0);
   const cat = filters.stockCat || 'all';
   if (cat !== 'all') list = list.filter(i => itemCat(i) === cat);
+  const th = stockThickCur();
+  if (th === 'none') list = list.filter(i => !parseThick(i.name, i.spec));
+  else if (th !== 'all') list = list.filter(i => parseThick(i.name, i.spec) === th);
   const q = (filters.stockSearch || '').trim().toLowerCase();
   if (q) list = list.filter(i => (i.name || '').toLowerCase().includes(q) || (i.spec || '').toLowerCase().includes(q) || (i.vendor || '').toLowerCase().includes(q) || itemCat(i).includes(q));
-  return list;
+  /* 머리글 정렬 — 고른 게 없으면 자재명 오름차순(위에서 이미 정렬해 둔 상태) */
+  const ORD = ['없음', '부족', '임박', '정상'];
+  return _tblSorted(list, stockSortCur(), {
+    nm: i => i.name || '',
+    sp: i => i.spec || '',
+    jg: i => +i.jang || 0,
+    av: i => (+i.jang || 0) - heldJangFor(i.name),
+    hb: i => itemHebe(i),
+    st: i => { let k = ''; try { k = stockState(i).k; } catch (e) { } return Math.max(0, ORD.indexOf(k)); }
+  });
 }
 /* ★ 2026-09-08 — 재고표의 「창고」 열은 품목에 적어 둔 «기본 창고» 하나만 보여줬다.
    그래서 어느 창고에 몇 장 있는지는 품목을 하나씩 열어봐야 알 수 있었다.
@@ -3391,7 +3428,11 @@ function depotSummaryHtml() {
 }
 function stockHeadHtml() {
   const cols = stockDepotCols();
-  const base = `<th>자재명</th><th>규격</th><th>패턴별</th><th>실재고</th><th>가용</th><th>헤베(㎡)</th><th>상태</th>`;
+  const S = stockSortCur();
+  const base = _thSort(S, 'nm', '자재명', 'stockSetSort') + _thSort(S, 'sp', '규격', 'stockSetSort')
+    + `<th>패턴별</th>`
+    + _thSort(S, 'jg', '실재고', 'stockSetSort') + _thSort(S, 'av', '가용', 'stockSetSort')
+    + _thSort(S, 'hb', '헤베(㎡)', 'stockSetSort') + _thSort(S, 'st', '상태', 'stockSetSort');
   if (!cols) return base + `<th>창고</th>`;
   return base + cols.map(d => `<th style="text-align:right;white-space:nowrap"><i class="ti ti-building-warehouse" style="font-size:11px;color:var(--t3)"></i> ${esc(d === HOME_DEPOT ? '본사' : d)}</th>`).join('');
 }
@@ -3507,12 +3548,13 @@ function renderStock() {
       ${filters.stockSearch ? `<button class="search-x" onclick="el('stock-search').value='';filterStockTable()"><i class="ti ti-x"></i></button>` : ''}
     </div>
     <div class="chips">${['all'].concat(ITEM_CATS).map(chipCat).join('')}</div>
+    <div class="chips">${chipThick('all', '전체두께')}${stockThickList().map(x => chipThick(x.t, x.t === 'none' ? '두께없음' : x.t, x.n)).join('')}</div>
     <div class="chips">${chipS('all', '전체', f)}${chipS('none', '없음', f)}${chipS('short', '부족', f)}${chipS('ok', '정상', f)}${chipS('dmg', '파손', f)}</div>
     ${f === 'low' ? `<div class="banner warn"><i class="ti ti-alert-triangle"></i><span><b>입고가 필요한 자재</b>만 모았습니다. 자재명과 현재 수량을 확인하세요.</span></div>` : ''}
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:12px;color:var(--t3)">검색 결과 <b id="stock-count" style="color:var(--t1)">${list.length}종</b></span><button class="btn btn-sm" onclick="stockExportExcel()"><i class="ti ti-download"></i>재고 엑셀</button></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:12px;color:var(--t3)">검색 결과 <b id="stock-count" style="color:var(--t1)">${list.length}종</b> <span style="color:var(--bd2)">·</span> 머리글을 누르면 정렬</span><button class="btn btn-sm" onclick="stockExportExcel()"><i class="ti ti-download"></i>재고 엑셀</button></div>
     <div class="tbl-wrap" id="stock-wrap" data-keepscroll style="max-height:calc(100vh - 360px);min-height:220px;overflow:auto">
       <table class="tbl">
-        <thead><tr>${stockHeadHtml()}</tr></thead>
+        <thead><tr id="stock-thead">${stockHeadHtml()}</tr></thead>
         <tbody id="stock-tbody">${stockRowsHtml(list)}</tbody>
       </table>
     </div>
