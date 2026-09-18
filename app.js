@@ -14085,6 +14085,10 @@ function basinDrawNew() {
    · 좌우 치마는 그때 **직각으로 붙인다**(粘接) — 45° 가 아니다.
    · 공장 제작 한계: **치마 200 이하 · 기장 1200 이하**. 넘으면 저장을 막는다. */
 const BD_ROUND_MAX_H = 200, BD_ROUND_MAX_L = 1200;
+/* ★ 전면 라운드는 «앞쪽 여백»이 80 으로 고정이다 (사용자: *"라운드형은 전면값 80 고정"*).
+   앞이 80 으로 박히면 뒤쪽 여백은 폭에서 자동으로 정해지므로 뒤쪽 칸은 비우고 잠근다.
+   — 그림 계산(basinDrawLayout)이 «뒤쪽 여백»을 앞쪽보다 먼저 보기 때문에, 비워 두지 않으면 80 이 안 먹는다. */
+const BD_ROUND_OFF_F = 80;
 function bdIsRound(d) { return !!(d && d.sf && d.sfRound); }
 function bdRoundBad(d) {
   if (!bdIsRound(d)) return '';
@@ -14561,6 +14565,7 @@ function _openDrawFor(coll, docId, drawId, itemIdx) {
     try { _bdCur.tapFromBowl = Math.round((+basinDrawLayout(_bdCur).back || 0) - (+old.tapFromBack || 0)); } catch (e) { }
   }
   _bdCur.tapFromBack = '';
+  if (_bdCur.sf && _bdCur.sfRound) { _bdCur.offF = String(BD_ROUND_OFF_F); _bdCur.offB = ''; }   // ★ 라운드 도면은 열 때도 앞쪽 80
   if (doc && !old && coll === 'basins') {        // 새 도면 — 발주 건의 값을 미리 채운다
     const it = (basinItems(doc) || [])[0] || {};
     _bdCur.stone = it.stone || doc.stone || '';
@@ -14634,6 +14639,7 @@ function _openDrawFor(coll, docId, drawId, itemIdx) {
           <input id="bd-offF" inputmode="numeric" placeholder="앞쪽 여백" value="${esc(_bdCur.offF)}" oninput="basinDrawPreview()" style="${inp}">
           <input id="bd-offMid" inputmode="numeric" placeholder="볼 사이 (쌍볼)" value="${esc(_bdCur.offMid)}" oninput="basinDrawPreview()" style="${inp}">
         </div>
+        <div id="bd-offnote" style="font-size:11.5px;margin-top:6px;line-height:1.6"></div>
       </div>
       <div class="fld full" style="background:#eef4ff;border:1.5px solid #c3d6f5;border-radius:11px;padding:10px 12px">
         <label style="color:#1b4fb0">수전 타공</label>
@@ -14698,6 +14704,7 @@ function basinDrawRead() {
   d.sl = !!(el('bd-sl') && el('bd-sl').checked); d.sr = !!(el('bd-sr') && el('bd-sr').checked); d.sf = !!(el('bd-sf') && el('bd-sf').checked);
   d.sfRound = d.sf && g('bd-sfRound') === '1';                 // ★ 전면 라운드
   d.sfR = Math.max(5, _numv(g('bd-sfR')) || 50);
+  if (d.sfRound) { d.offF = String(BD_ROUND_OFF_F); d.offB = ''; }   // ★ 라운드는 앞쪽 80 고정 · 뒤쪽은 자동
   ['offL', 'offR', 'offF', 'offB', 'offMid'].forEach(k => { d[k] = String(g('bd-' + k) || '').trim(); });
   d.tap = g('bd-tap') !== '0'; d.tapDia = _numv(g('bd-tapDia')) || 35;
   /* ★ 볼에서부터가 기준. 비우면 60. 값을 넣는 순간 예전 «뒤에서부터» 값은 버린다. */
@@ -14742,6 +14749,14 @@ function basinDrawPreview() {
     }
   }
   const A = basinDrawLayout(d);
+  /* ★ 라운드면 앞쪽 여백 80 고정 — 칸을 잠그고 그렇게 보이게 한다 (뒤쪽은 폭에서 자동) */
+  const _rnd = bdIsRound(d), _oF = el('bd-offF'), _oB = el('bd-offB'), _on = el('bd-offnote');
+  if (_oF) { if (_rnd) _oF.value = String(BD_ROUND_OFF_F); _oF.disabled = _rnd; _oF.style.background = _rnd ? '#f1f3f5' : ''; }
+  if (_oB) { if (_rnd) _oB.value = ''; _oB.disabled = _rnd; _oB.style.background = _rnd ? '#f1f3f5' : ''; }
+  if (_on) _on.innerHTML = _rnd
+    ? `<span style="color:#b42318;font-weight:700"><i class="ti ti-lock"></i> 전면 라운드는 <b>앞쪽 여백 ${BD_ROUND_OFF_F} 고정</b></span>`
+    + `<span style="color:var(--t3)"> — 뒤쪽 여백은 폭에서 자동으로 <b>${Math.round(A.back)}</b> 로 정해집니다</span>`
+    : '';
   const bad = [];
   if (!(A.L > 0) || !(A.W > 0)) bad.push('기장·폭을 입력하세요');
   if (A.bl * A.n > A.L) bad.push(`볼이 판보다 깁니다 (볼 ${A.bl}${A.n === 2 ? '×2' : ''} > 기장 ${A.L})`);
