@@ -14081,8 +14081,8 @@ function basinDrawNew() {
   };
 }
 /* ★★ 2026-09-18 — 전면 라운드 (사용자: *"전면 라운드만 되는거고 좌우는 직각으로 붙는거임"*)
-   · 앞 치마가 R 로 둥글게 꺾여 내려간다. 45° 뒷도메가 아니다.
-   · 좌우 치마는 그때 **직각으로 붙인다**(粘接) — 45° 가 아니다.
+   · 앞 치마만 R 로 둥글게 꺾여 내려간다 (전면은 45° 졸리가 아니다).
+   · **좌·우 치마는 라운드여도 45° 졸리 그대로다** — 모서리가 직각이라 예전 방식과 같다.
    · 공장 제작 한계: **치마 200 이하 · 기장 1200 이하**. 넘으면 저장을 막는다. */
 const BD_ROUND_MAX_H = 200, BD_ROUND_MAX_L = 1200;
 /* ★ 전면 라운드는 «앞쪽 여백»이 80 으로 고정이다 (사용자: *"라운드형은 전면값 80 고정"*).
@@ -14317,12 +14317,6 @@ function _bdSecMini(ox, oy, w, kind, o) {
     const cx = gx + rr, cy = gy + rr, q = Math.SQRT1_2;
     s += _bdL(cx, cy, cx - rr * q, cy - rr * q, { w: 0.7, d: '3 3' });
     s += _bdT(cx - rr * q - 6, gy - 7, 'R' + Math.round(R || 50), { a: 'end', fs: 12.5, w: 800 });
-  } else if (kind === 'glue') {
-    s += `<path d="M${f(gx)},${f(gy)} L${f(gx + topLen)},${f(gy)} L${f(gx + topLen)},${f(gy + tp)} L${f(gx)},${f(gy + tp)} Z" fill="url(#bdmh)" stroke="#111" stroke-width="1.3"/>`;
-    s += `<path d="M${f(gx)},${f(gy + tp)} L${f(gx + tp)},${f(gy + tp)} L${f(gx + tp)},${f(gy + hh)} L${f(gx)},${f(gy + hh)} Z" fill="url(#bdmh)" stroke="#111" stroke-width="1.3"/>`;
-    s += _bdL(gx, gy + tp, gx + tp, gy + tp, { w: 2.4 });
-    s += _bdL(gx + tp, gy + tp, gx + tp + 22, gy + tp - 15, { w: 0.7 });
-    s += _bdT(gx + tp + 25, gy + tp - 13, cn ? '粘接' : '붙임면', { a: 'start', fs: 11.5, w: 700 });
   } else {
     s += `<path d="M${f(gx)},${f(gy)} L${f(gx + topLen)},${f(gy)} L${f(gx + topLen)},${f(gy + tp)} L${f(gx + tp)},${f(gy + tp)} Z" fill="url(#bdmh)" stroke="#111" stroke-width="1.3"/>`;
     s += `<path d="M${f(gx)},${f(gy)} L${f(gx + tp)},${f(gy + tp)} L${f(gx + tp)},${f(gy + hh)} L${f(gx)},${f(gy + hh)} Z" fill="url(#bdmh)" stroke="#111" stroke-width="1.3"/>`;
@@ -14457,8 +14451,8 @@ function basinDrawSvg(d, lang) {
   });
   s += _bdT(c1 + 20, pnT + 136, K('치마 높이', '裙边高') + '  ' + (+d.H || 0), { a: 'start', fs: 14, w: 700 });
   s += _bdT(c1 + 20, pnT + 160, bdIsRound(d)
-    ? K('전면 R' + (+d.sfR || 50) + ' 라운드 · 좌우 직각 붙임', '前面 R' + (+d.sfR || 50) + ' 圆角 · 左右直角粘接')
-    : K('전면 45° 뒷도메', '前面 45° 拼接'),
+    ? K('전면 R' + (+d.sfR || 50) + ' 라운드 · 좌우 45° 졸리', '前面 R' + (+d.sfR || 50) + ' 圆角 · 左右45°拼接')
+    : K('전 · 좌 · 우 모두 45° 졸리', '前·左·右 均 45°拼接'),
     { a: 'start', fs: 13, w: 700, c: bdIsRound(d) ? '#b42318' : '#444' });
 
   // 타공
@@ -14479,15 +14473,17 @@ function basinDrawSvg(d, lang) {
   s += `<defs><pattern id="bdmh" width="5" height="5" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><rect width="5" height="5" fill="#fff"/><line x1="0" y1="0" x2="0" y2="5" stroke="#111" stroke-width="1"/></pattern></defs>`;
   const _rnd = bdIsRound(d), _RR = +d.sfR || 50, _HH = +d.H || 0, _TK = +d.thick || 15;
   const secs = [];
+  /* ★ 좌·우는 «라운드여도» 45° 졸리 그대로다 (사용자: *"라운드여도 양쪽은 졸리야"*).
+     라운드는 «전면만» 둥글게 꺾이고, 좌·우 모서리는 직각 그대로 45° 로 맞댄다. */
   if (d.sl || d.sr) secs.push({
-    kind: _rnd ? 'glue' : 'mitre45', mark: 'zig',
+    kind: 'mitre45', mark: 'zig',
     title: K((d.sl && d.sr) ? '좌·우 치마' : (d.sl ? '좌측 치마' : '우측 치마'), (d.sl && d.sr) ? '左右裙边' : (d.sl ? '左侧裙边' : '右侧裙边')),
-    note: _rnd ? K('직각으로 맞대 붙임 (45° 아님)', '直角粘接（非45°）') : K('상판과 45°로 맞댐 (뒷도메)', '与台面45°拼接')
+    note: K('상판과 45° 졸리 접합', '与台面45°拼接')
   });
   if (d.sf) secs.push({
     kind: _rnd ? 'round' : 'mitre45', mark: 'tick',
     title: K('전면 치마', '前面裙边'),
-    note: _rnd ? K('R' + _RR + ' 로 둥글게 꺾어 내림 (한 장)', 'R' + _RR + ' 圆角折弯（一体成型）') : K('상판과 45°로 맞댐 (뒷도메)', '与台面45°拼接')
+    note: _rnd ? K('R' + _RR + ' 로 둥글게 꺾어 내림 (한 장)', 'R' + _RR + ' 圆角折弯（一体成型）') : K('상판과 45° 졸리 접합', '与台面45°拼接')
   });
   if (!secs.length) s += _bdT((c3 + R8) / 2, pnT + 84, K('치마 없음 — 상판만', '无裙边 — 仅台面'), { fs: 14, c: '#999' });
   else {
@@ -14596,17 +14592,17 @@ function _openDrawFor(coll, docId, drawId, itemIdx) {
       <div class="fld"><label>폭<span class="req">*</span></label><input id="bd-W" inputmode="numeric" value="${esc(_bdCur.W)}" oninput="basinDrawPreview()" style="${inp}"></div>
       <div class="fld"><label>치마 높이</label><input id="bd-H" inputmode="numeric" value="${esc(_bdCur.H)}" oninput="basinDrawPreview()" style="${inp}"></div>
       <div class="fld"><label>재료 (석종)</label><select id="bd-stone" onchange="bdStoneChanged()" style="${inp}">${stoneOpts}</select></div>
-      <div class="fld"><label>판 두께 <span style="color:var(--t3);font-weight:500">(45° 뒷도메 단면용)</span></label><input id="bd-thick" inputmode="decimal" value="${esc(_bdCur.thick)}" oninput="basinDrawPreview()" style="${inp}"></div>
+      <div class="fld"><label>판 두께 <span style="color:var(--t3);font-weight:500">(45° 졸리 단면용)</span></label><input id="bd-thick" inputmode="decimal" value="${esc(_bdCur.thick)}" oninput="basinDrawPreview()" style="${inp}"></div>
       <div class="fld full" style="background:#fff8e6;border:1.5px solid #f0d48a;border-radius:11px;padding:10px 12px">
         <label style="color:#8a5a00">치마 있는 면 <span style="font-weight:500;color:#a07a2a">— 고른 면에 물결선이 그려집니다</span></label>
         <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:6px">
           ${ck('bd-sl', _bdCur.sl, '좌측')}${ck('bd-sr', _bdCur.sr, '우측')}${ck('bd-sf', _bdCur.sf, '전면')}
         </div>
         <div id="bd-sfrwrap" style="display:none;margin-top:10px;padding-top:9px;border-top:1px dashed #e6cf95">
-          <label style="color:#8a5a00">전면 마감 <span style="font-weight:500;color:#a07a2a">— 라운드는 좌·우를 직각으로 붙입니다</span></label>
+          <label style="color:#8a5a00">전면 마감 <span style="font-weight:500;color:#a07a2a">— 라운드는 전면만 둥글고 좌·우는 45° 졸리 그대로입니다</span></label>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
             <select id="bd-sfRound" onchange="basinDrawPreview()" style="${inp};flex:1;min-width:170px">
-              <option value="0" ${_bdCur.sfRound ? '' : 'selected'}>45° 뒷도메 (기본)</option>
+              <option value="0" ${_bdCur.sfRound ? '' : 'selected'}>45° 졸리 (기본)</option>
               <option value="1" ${_bdCur.sfRound ? 'selected' : ''}>전면 R 라운드</option>
             </select>
             <span id="bd-sfrRwrap" style="display:none;align-items:center;gap:6px;font-size:14px;font-weight:700;color:#8a5a00">R
@@ -14741,7 +14737,7 @@ function basinDrawPreview() {
       const _bad = bdRoundBad(d);
       if (!d.sf || !d.sfRound) _rm.innerHTML = '';
       else if (_bad) _rm.innerHTML = `<span style="color:#b42318;font-weight:700"><i class="ti ti-alert-triangle"></i> 라운드는 <b>치마 ${BD_ROUND_MAX_H} 이하 · 기장 ${BD_ROUND_MAX_L} 이하</b>만 제작됩니다 — ${esc(_bad)}</span>`;
-      else _rm.innerHTML = `<span style="color:#2f6b3a">앞 치마가 <b>R${Math.round(+d.sfR || 50)}</b> 으로 둥글게 꺾여 내려갑니다. 좌·우 치마는 <b>직각으로 붙입니다</b> (45° 아님).</span>`;
+      else _rm.innerHTML = `<span style="color:#2f6b3a">앞 치마가 <b>R${Math.round(+d.sfR || 50)}</b> 으로 둥글게 꺾여 내려갑니다. 좌·우 치마는 <b>45° 졸리 그대로</b>입니다.</span>`;
     }
   }
   const A = basinDrawLayout(d);
