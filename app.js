@@ -1689,6 +1689,19 @@ function renderCrewSchedule() {
 /* 현장 진행 단계 정의 (날짜 타임라인) */
 const SITE_STAGES = ['접수', '가견적', '실측', '견적', '결제', '발주', '시공', '완료'];
 function siteStageIndex(s) { return Math.max(0, SITE_STAGES.indexOf(s.stage || '접수')); }
+/* ★★ 2026-09-19 — 견적서에서 현장을 등록·연결하면 그 현장 단계를 «견적» 으로 올린다
+   사용자: *"견적서에서 현장 연결이나 등록하면 자동으로 진행단계 견적으로 해줘"*
+   ★ 이미 «견적» 보다 앞선 단계(결제·발주·시공·완료)면 **건드리지 않는다** — 단계는 뒤로 가면 안 된다.
+   ★ 단계 기록(history)에도 오늘 날짜를 남긴다 (이미 적혀 있으면 그대로 둔다). */
+async function siteStageToQuote(siteId) {
+  const st = (state.sites || []).find(x => x.id === siteId); if (!st) return false;
+  const want = SITE_STAGES.indexOf('견적');
+  if (siteStageIndex(st) >= want) return false;            // 이미 같거나 더 나갔으면 그대로
+  const hist = Object.assign({}, st.history || {});
+  if (!hist['견적']) hist['견적'] = todayStr();
+  try { await Store.update('sites', siteId, { stage: '견적', history: hist, updatedBy: (me && me.name) || '' }); } catch (e) { return false; }
+  return true;
+}
 
 /* 규격 파싱: "1600*3200*12" → {w,h,t,hebePerJang}.  장당 헤베 = 가로(m)×세로(m) */
 function parseSpec(s) {
@@ -3287,6 +3300,7 @@ async function submitSite(id) {
   if (_siteFromQuote) {
     const _sid = newSiteId || id || '';
     try { await Store.update('quotes', _siteFromQuote, Object.assign({ siteDone: true, siteDoneAt: Date.now() }, _sid ? { siteId: _sid, siteName: obj.name } : {})); } catch (e) { }
+    if (_sid) { try { await siteStageToQuote(_sid); } catch (e) { } }   // ★ 현장 단계를 «견적» 으로
     _siteFromQuote = '';
   }
   _sqMap = null;                       // 현장↔견적 캐시 비우기
@@ -6498,8 +6512,9 @@ async function quoteLinkSiteDo(siteId) {
     const nos = Array.isArray(st.quoteNos) ? st.quoteNos.slice() : []; if (q.docNo && !nos.includes(q.docNo)) nos.push(q.docNo);
     await Store.update('sites', siteId, { quoteNos: nos, linkedQuoteId: id });
     await Store.update('quotes', id, { siteDone: true, siteDoneAt: (+q.siteDoneAt || Date.now()), siteId: siteId, siteName: st.name || st.client || '' });
+    var _up = await siteStageToQuote(siteId);              // ★ 현장 단계를 «견적» 으로
   } catch (e) { toast('실패: ' + ((e && e.message) || e)); return; }
-  closeModal(); toast('현장에 연결됨 · 현장 등록 완료'); try { renderQuote(); } catch (e) { }
+  closeModal(); toast('현장에 연결됨 · 현장 등록 완료' + (_up ? ' · 단계 → 견적' : '')); try { renderQuote(); } catch (e) { }
 }
 /* 견적 품목 중 '실제 자재'만 골라냄 — 홀딩·출고 불러오기 공통.
    부대비용/가공 칸에서 넣은 항목(it.extra), 부대비용 항목명, 가공·운송·시공 키워드,
@@ -11059,7 +11074,7 @@ async function siteLinkQuote(qid, on) {
   const q = (state.quotes || []).find(x => x.id === qid); if (!q) return;
   const s = (state.sites || []).find(x => x.id === _sqPick); if (!s) return;
   try {
-    if (on) await Store.update('quotes', qid, { siteDone: true, siteDoneAt: (+q.siteDoneAt || Date.now()), siteId: s.id, siteName: s.name || s.client || '' });
+    if (on) { await Store.update('quotes', qid, { siteDone: true, siteDoneAt: (+q.siteDoneAt || Date.now()), siteId: s.id, siteName: s.name || s.client || '' }); await siteStageToQuote(s.id); }
     else await Store.update('quotes', qid, { siteId: '', siteName: '' });
     _sqAt = 0; _qsRevAt = 0;                       // 연결표 캐시 즉시 버리기
     toast(on ? ('연결됨 · ' + (q.docNo || '')) : '연결 해제됨');
