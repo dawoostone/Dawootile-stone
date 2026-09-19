@@ -14167,6 +14167,7 @@ function basinDrawNew() {
     L: 1200, W: 550, H: 170,
     sl: false, sr: false, sf: true,          // 치마 — 좌 / 우 / 전
     sfRound: false, sfR: 50,                 // ★ 전면 라운드 (R꺾임) · 반지름
+    skirtJoin: 'join',                       // ★ 치마 출고 — 'join' 붙여서 / 'plain' 비접합(따로)
     mold: 'square-550x350', moldD: 150, bowls: 1,
     moldFlip: '',                            // ★ 물방울형 좌우 반전 ('' | 'flip' | 'out' | 'in')
     offL: '', offR: '', offF: '', offB: '', offMid: '',   // 비우면 센터
@@ -14180,6 +14181,16 @@ function basinDrawNew() {
    · 앞 치마만 R 로 둥글게 꺾여 내려간다 (전면은 45° 졸리가 아니다).
    · **좌·우 치마는 라운드여도 45° 졸리 그대로다** — 모서리가 직각이라 예전 방식과 같다.
    · 공장 제작 한계: **치마 200 이하 · 기장 1200 이하**. 넘으면 저장을 막는다. */
+/* ★★ 2026-09-19 — 치마 비접합 (사용자: *"세면대 도면에 치마 비접합이라는 표기도 필요함"*)
+   접합  = 치마를 붙여서 한 덩어리로 출고
+   비접합 = 치마를 «따로» 보내 현장(또는 우리 쪽)에서 붙임 — 공장이 반드시 알아야 할 사항이라 빨갛게 적는다. */
+function bdSkirtLoose(d) { return !!(d && (d.sl || d.sr || d.sf) && d.skirtJoin === 'plain'); }
+function bdJoinText(d, lang) {
+  if (!(d && (d.sl || d.sr || d.sf))) return '';
+  return bdSkirtLoose(d)
+    ? (lang === 'cn' ? '不粘接 · 分开出货' : '비접합 · 따로 보냄')
+    : (lang === 'cn' ? '已粘接出货' : '접합 출고');
+}
 const BD_ROUND_MAX_H = 200, BD_ROUND_MAX_L = 1200;
 /* ★ 전면 라운드는 «앞쪽 여백»이 80 으로 고정이다 (사용자: *"라운드형은 전면값 80 고정"*).
    앞이 80 으로 박히면 뒤쪽 여백은 폭에서 자동으로 정해지므로 뒤쪽 칸은 비우고 잠근다.
@@ -14196,7 +14207,8 @@ function bdRoundBad(d) {
 /* 치마 면 표기 — 「3면 치마」 / 「좌·전 2면 치마」 / 「전면 치마」 / 「치마 없음」 */
 function basinSkirtText(d, lang) {
   const _r = bdIsRound(d) ? (lang === 'cn' ? (' · 前面 R' + (+d.sfR || 50) + ' 圆角') : (' · 전면 R' + (+d.sfR || 50) + ' 라운드')) : '';
-  return _basinSkirtText0(d, lang) + _r;
+  const _j = bdSkirtLoose(d) ? (lang === 'cn' ? ' · 不粘接' : ' · 비접합') : '';
+  return _basinSkirtText0(d, lang) + _r + _j;
 }
 function _basinSkirtText0(d, lang) {
   const on = [];
@@ -14420,7 +14432,8 @@ function _bdSecMini(ox, oy, w, kind, o) {
     s += _bdT(gx + tp + 22, gy + 19, '45°', { a: 'start', fs: 13, w: 800 });
   }
   s += _bdDimV(gy, gy + hh, gx - 18, String(H), { fs: 12 });
-  s += _bdT(ox + 4, oy + 124, o.note, { a: 'start', fs: 11.5, c: '#555' });
+  s += _bdT(ox + 4, oy + (o.loose ? 116 : 124), o.note, { a: 'start', fs: 11.5, c: '#555' });
+  if (o.loose) s += _bdT(ox + 4, oy + 133, cn ? '※ 不粘接 — 裙边分开出货' : '※ 비접합 — 치마를 따로 보냄', { a: 'start', fs: 11.5, w: 700, c: '#b42318' });
   return s;
 }
 /* ══ 도면 SVG 한 장 ══ lang: 'ko' | 'cn' ══ */
@@ -14546,6 +14559,9 @@ function basinDrawSvg(d, lang) {
     if (!sd[0]) s += _bdT(c2 - 18, y, K('없음', '无'), { a: 'end', fs: 12.5, c: '#999' });
   });
   s += _bdT(c1 + 20, pnT + 136, K('치마 높이', '裙边高') + '  ' + (+d.H || 0), { a: 'start', fs: 14, w: 700 });
+  /* ★ 치마 접합 / 비접합 — 비접합은 공장이 놓치면 안 되므로 빨갛게 */
+  const _jt = bdJoinText(d, lang);
+  if (_jt) s += _bdT(c2 - 18, pnT + 136, _jt, { a: 'end', fs: 13, w: bdSkirtLoose(d) ? 800 : 600, c: bdSkirtLoose(d) ? '#b42318' : '#555' });
   s += _bdT(c1 + 20, pnT + 160, bdIsRound(d)
     ? K('전면 R' + (+d.sfR || 50) + ' 라운드 · 좌우 45° 졸리', '前面 R' + (+d.sfR || 50) + ' 圆角 · 左右45°拼接')
     : K('전 · 좌 · 우 모두 45° 졸리', '前·左·右 均 45°拼接'),
@@ -14586,8 +14602,8 @@ function basinDrawSvg(d, lang) {
     const sw = (R8 - c3) / secs.length;
     secs.forEach((se, i) => {
       if (i) s += _bdL(c3 + sw * i, pnT + 30, c3 + sw * i, pnB - 8, { w: 0.8, d: '4 3' });
-      s += _bdSecMini(c3 + sw * i + 14, pnT + 30, sw - 24, se.kind, {
-        cn: cn, H: _HH, thick: _TK, R: _RR, mark: se.mark, title: se.title, note: se.note
+      s += _bdSecMini(c3 + sw * i + 14, pnT + 26, sw - 24, se.kind, {
+        cn: cn, H: _HH, thick: _TK, R: _RR, mark: se.mark, title: se.title, note: se.note, loose: bdSkirtLoose(d)
       });
     });
   }
@@ -14694,6 +14710,14 @@ function _openDrawFor(coll, docId, drawId, itemIdx) {
         <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:6px">
           ${ck('bd-sl', _bdCur.sl, '좌측')}${ck('bd-sr', _bdCur.sr, '우측')}${ck('bd-sf', _bdCur.sf, '전면')}
         </div>
+        <div id="bd-sjwrap" style="display:none;margin-top:10px;padding-top:9px;border-top:1px dashed #e6cf95">
+          <label style="color:#8a5a00">치마 출고 <span style="font-weight:500;color:#a07a2a">— 붙여서 보낼지, 따로 보낼지</span></label>
+          <select id="bd-sjoin" onchange="basinDrawPreview()" style="${inp};margin-top:6px">
+            <option value="join" ${_bdCur.skirtJoin === 'plain' ? '' : 'selected'}>접합 출고 (붙여서 한 덩어리로)</option>
+            <option value="plain" ${_bdCur.skirtJoin === 'plain' ? 'selected' : ''}>비접합 — 치마를 따로 보냄</option>
+          </select>
+          <div id="bd-sjmsg" style="font-size:11.5px;margin-top:6px;line-height:1.6"></div>
+        </div>
         <div id="bd-sfrwrap" style="display:none;margin-top:10px;padding-top:9px;border-top:1px dashed #e6cf95">
           <label style="color:#8a5a00">전면 마감 <span style="font-weight:500;color:#a07a2a">— 라운드는 전면만 둥글고 좌·우는 45° 졸리 그대로입니다</span></label>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
@@ -14792,6 +14816,7 @@ function basinDrawRead() {
   d.sl = !!(el('bd-sl') && el('bd-sl').checked); d.sr = !!(el('bd-sr') && el('bd-sr').checked); d.sf = !!(el('bd-sf') && el('bd-sf').checked);
   d.sfRound = d.sf && g('bd-sfRound') === '1';                 // ★ 전면 라운드
   d.sfR = Math.max(5, _numv(g('bd-sfR')) || 50);
+  d.skirtJoin = (g('bd-sjoin') === 'plain') ? 'plain' : 'join';      // ★ 치마 접합 / 비접합
   if (d.sfRound) { d.offF = String(BD_ROUND_OFF_F); d.offB = ''; }   // ★ 라운드는 앞쪽 80 고정 · 뒤쪽은 자동
   ['offL', 'offR', 'offF', 'offB', 'offMid'].forEach(k => { d[k] = String(g('bd-' + k) || '').trim(); });
   d.tap = g('bd-tap') !== '0'; d.tapDia = _numv(g('bd-tapDia')) || 35;
@@ -14822,6 +14847,17 @@ function basinDrawPreview() {
       ? `도면에 <b>${esc(bdFlipText(d, 'ko'))}</b> / 중문본 <b>${esc(bdFlipText(d, 'cn'))}</b> 으로 적힙니다`
       + (_two ? '' : ' <span style="color:#8a8f8a">· 쌍볼 대칭은 볼 2개일 때만 고를 수 있습니다</span>')
       : '';
+  }
+  /* ★ 치마 출고(접합/비접합) 칸 — 치마가 하나라도 있을 때만 보인다 */
+  const _sjw = el('bd-sjwrap');
+  if (_sjw) {
+    const _any = !!(d.sl || d.sr || d.sf);
+    _sjw.style.display = _any ? '' : 'none';
+    const _sjm = el('bd-sjmsg');
+    if (_sjm) _sjm.innerHTML = !_any ? ''
+      : (bdSkirtLoose(d)
+        ? `<span style="color:#b42318;font-weight:700"><i class="ti ti-alert-triangle"></i> 도면에 <b>「${esc(bdJoinText(d, 'ko'))}」</b> 이 빨갛게 찍힙니다 (중문본 「${esc(bdJoinText(d, 'cn'))}」)</span>`
+        : `<span style="color:#2f6b3a">도면에 <b>「${esc(bdJoinText(d, 'ko'))}」</b> 로 적힙니다 — 붙여서 한 덩어리로 옵니다</span>`);
   }
   /* ★ 전면 마감 칸 — 전면 치마가 있을 때만 보인다 */
   const _rw = el('bd-sfrwrap');
