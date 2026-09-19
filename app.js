@@ -69,6 +69,8 @@ const QCAT_LEGACY = { '세라믹+세면대': '세라믹' };
 const LCATS = ['세라믹', '세면대', '석재', '세라믹 가공', '시공', '운송', '통관비용'];
 const QCAT_ICON = { '세라믹': 'grid-dots', '세면대': 'bath', '석재': 'diamond', '통관비용': 'ship', '세라믹 가공': 'tools', '시공': 'hammer', '운송': 'truck' };
 const QCAT_COL = { '세라믹': 'var(--gd)', '세면대': '#0e7490', '석재': '#7c3aed', '통관비용': '#b45309', '세라믹 가공': '#c2410c', '시공': '#1b4fb0', '운송': '#6b7280' };
+/* 자재 분류 — 견적 카드 배지에는 이것만 띄운다 (가공·시공·운송은 부대라 뺀다) */
+const QCAT_MATERIAL = ['세라믹', '세면대', '석재', '통관비용'];
 function qcatNorm(c) { const s = String(c == null ? '' : c).trim(); return QCAT_LEGACY[s] || s; }
 const CUSTOMS_LINES = ['관세', '부가가치세', '지원가산세', '통관수수료', 'D/O CHG (선사비용)', '적출료', 'SHUTTLE CHG', '경과보관료', '제주선임', '운송료', '취급수수료', '기타경비'];
 /* ★ 2026-09-07 속도 — 품목 하나의 분류를 알아낼 때마다 단가표 225줄을 처음부터 훑고 있었다.
@@ -6386,10 +6388,16 @@ let _linkQuoteId = '';
 function quoteLinkSite(id) {
   const q = (state.quotes || []).find(x => x.id === id); if (!q) { toast('견적을 찾을 수 없습니다'); return; }
   _linkQuoteId = id;
+  const _cur = q.siteDone ? quoteSiteOf(q) : null;
+  const _curNm = (_cur && (_cur.name || _cur.client)) || String(q.siteName || '').trim() || '(이름 없음)';
   openModal(`
-    <div class="sheet-h"><h3><i class="ti ti-link"></i>기존 현장에 연결</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="sheet-h"><h3><i class="ti ti-link"></i>${_cur ? '현장 바꾸기' : '기존 현장에 연결'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
-      <div style="font-size:12px;color:var(--t3);margin-bottom:9px">견적 <b>${esc(q.docNo || '')}</b> · ${esc(q.client || '')} 를 이미 등록된 현장에 연결합니다. 연결하면 <b>현장 등록 완료</b>로 표시됩니다.</div>
+      ${_cur ? `<div class="banner" style="margin-bottom:9px;font-size:12.5px;background:#fff8e8;border-left:4px solid #d69e2e;border-radius:0 10px 10px 0;padding:9px 12px;color:#7a5b12"><span style="flex:1;min-width:0">
+        지금 연결된 현장 : <b>${esc(_curNm)}</b><br>
+        <span style="font-size:11.5px">아래에서 다른 현장을 고르면 <b>그쪽으로 옮겨집니다</b> (옛 현장에서는 자동으로 떨어집니다).</span></span>
+        <button class="btn btn-sm" style="flex:none;color:var(--red-t);border-color:var(--red-t)" onclick="closeModal();quoteUnlinkSite('${q.id}')"><i class="ti ti-unlink"></i>연결 해제</button></div>`
+      : `<div style="font-size:12px;color:var(--t3);margin-bottom:9px">견적 <b>${esc(q.docNo || '')}</b> · ${esc(q.client || '')} 를 이미 등록된 현장에 연결합니다. 연결하면 <b>현장 등록 완료</b>로 표시됩니다.</div>`}
       <div class="search-box" style="margin-bottom:8px"><i class="ti ti-search"></i><input id="lnk-search" placeholder="현장명·업체·주소 검색" oninput="quoteLinkSiteFilter()" autocomplete="off" lang="ko"></div>
       <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--t2);margin-bottom:9px;cursor:pointer">
         <input type="checkbox" id="lnk-done" ${_lnkShowDone ? 'checked' : ''} onchange="quoteLinkSiteToggleDone(this)" style="width:16px;height:16px"> 완료된 현장도 보기
@@ -6421,15 +6429,46 @@ function quoteLinkSiteFilter() {
   const h = el('lnk-hidden');
   if (h) h.textContent = (!_lnkShowDone && _lnkHiddenN) ? ('(완료 ' + _lnkHiddenN + '곳 숨김)') : '';
 }
+/* ★★ 2026-09-19 — 현장을 잘못 등록·연결했을 때 견적서에서 바로 고친다
+   사용자: *"현장 등록 잘못한 경우 변경 필요 (견적서)"*
+   예전에는 견적에 siteDone 이 붙는 순간 카드의 버튼이 전부 사라져서
+   «잘못 붙인 현장»을 떼거나 바꿀 길이 없었다. 이제 [현장 바꾸기] · [연결 해제] 가 나온다.
+   ※ 현장 자체는 지우지 않는다 — 견적과의 «연결»만 푼다. */
+async function quoteUnlinkSite(id) {
+  const q = (state.quotes || []).find(x => x.id === id); if (!q) { toast('견적을 찾을 수 없습니다'); return; }
+  const s0 = quoteSiteOf(q);
+  const nm = (s0 && (s0.name || s0.client)) || String(q.siteName || '').trim();
+  if (!confirm('견적 ' + (q.docNo || '') + ' 의 현장 연결을 풀까요?\n'
+    + (nm ? '지금 연결된 현장 : ' + nm + '\n' : '')
+    + '\n※ 현장 자체는 지워지지 않습니다. 견적만 떨어집니다.')) return;
+  try {
+    if (s0) await _qSiteDetach(s0, q);
+    await Store.update('quotes', id, { siteDone: false, siteDoneAt: 0, siteId: '', siteName: '' });
+  } catch (e) { toast('실패: ' + ((e && e.message) || e)); return; }
+  toast('현장 연결을 풀었습니다 — 다시 [현장 등록] 하거나 [현장 연결] 할 수 있습니다');
+  try { renderQuote(); } catch (e) { }
+}
+/* 현장 쪽에 적어 둔 견적번호·대표견적을 지운다 (현장 문서는 그대로 남는다) */
+async function _qSiteDetach(st, q) {
+  if (!st) return;
+  const patch = {};
+  const nos = (Array.isArray(st.quoteNos) ? st.quoteNos : []).filter(n => n && n !== q.docNo);
+  if (nos.length !== (Array.isArray(st.quoteNos) ? st.quoteNos.length : 0)) patch.quoteNos = nos;
+  if (st.linkedQuoteId === q.id) patch.linkedQuoteId = '';
+  if (Object.keys(patch).length) await Store.update('sites', st.id, patch);
+}
 async function quoteLinkSiteDo(siteId) {
   const id = _linkQuoteId; const q = (state.quotes || []).find(x => x.id === id); const st = (state.sites || []).find(x => x.id === siteId);
   if (!q || !st) { toast('연결 대상을 찾을 수 없습니다'); return; }
   if (!confirm('견적 ' + (q.docNo || '') + ' 을(를)\\n현장 "' + (st.name || st.client || '') + '" 에 연결할까요?')) return;
   try {
+    /* ★ 이미 다른 현장에 붙어 있었다면 그 현장에서 먼저 뗀다 — 안 그러면 두 현장에 같이 남는다 */
+    const _old = quoteSiteOf(q);
+    if (_old && _old.id !== siteId) await _qSiteDetach(_old, q);
     const nos = Array.isArray(st.quoteNos) ? st.quoteNos.slice() : []; if (q.docNo && !nos.includes(q.docNo)) nos.push(q.docNo);
     await Store.update('sites', siteId, { quoteNos: nos, linkedQuoteId: id });
-    await Store.update('quotes', id, { siteDone: true, siteDoneAt: Date.now(), siteId: siteId, siteName: st.name || st.client || '' });
-  } catch (e) { }
+    await Store.update('quotes', id, { siteDone: true, siteDoneAt: (+q.siteDoneAt || Date.now()), siteId: siteId, siteName: st.name || st.client || '' });
+  } catch (e) { toast('실패: ' + ((e && e.message) || e)); return; }
   closeModal(); toast('현장에 연결됨 · 현장 등록 완료'); try { renderQuote(); } catch (e) { }
 }
 /* 견적 품목 중 '실제 자재'만 골라냄 — 홀딩·출고 불러오기 공통.
@@ -10105,6 +10144,8 @@ function quoteCardHtml(q) {
   const _hasGagong = (q.items || []).some(it => marginCat(it.name) === '가공' && !(it.name || '').includes('세면대'));
   const _regLabel = _hasBasin ? '세면대 발주' : (_hasGagong ? '현장 등록' : '출고 등록');
   const _regIcon = _hasBasin ? 'ti-bath' : (_hasGagong ? 'ti-building-community' : 'ti-truck-delivery');
+  /* ★ 현장주소를 카드에서 바로 보이게 — 주소가 없으면 현장명, 그것도 없으면 안 띄운다 */
+  const _siteLine = [q.siteAddr, q.siteName].map(v => String(v == null ? '' : v).trim()).find(Boolean) || '';
   const names = (q.items || []).map(it => it.name).filter(Boolean).slice(0, 3).join(', ') + ((q.items || []).length > 3 ? ` 외 ${q.items.length - 3}` : '');
   const _pa = quotePaid(q); const _tt = Math.round(+q.total || 0); const _rem = quoteRem(q);
   const _cRem = clientRemOf(q.client);        // 이 거래처가 우리한테 갚아야 할 총액 (원장 기준)
@@ -10119,13 +10160,19 @@ function quoteCardHtml(q) {
   const basinBadge = q.basinDone ? `<span class="pill p-done"><i class="ti ti-bath"></i> 세면대 발주 완료</span>` : '';
   const doneBadge = q.manualDone ? `<span class="pill p-done"><i class="ti ti-checks"></i> 완료</span>` : '';
   /* 분류 배지 — 세라믹인지 세면대인지 한눈에 (섞인 견적은 둘 다 붙는다) */
-  const catBadge = quoteCatSet(q).map(c => `<span class="pill" style="background:#fff;color:${QCAT_COL[c]};border:1px solid ${QCAT_COL[c]};font-weight:700"><i class="ti ti-${QCAT_ICON[c] || 'tag'}"></i> ${esc(c)}</span>`).join('');
+  /* ★ 2026-09-19 — 카드 배지는 «자재 분류»만 (사용자: *"견적서에 쓸데 없는 버튼들 (운송, 시공 이런 것) 지워줘"*)
+     운송·시공·가공은 거의 모든 견적에 붙어 있어 배지가 줄줄이 늘어서기만 했다.
+     단, 부대비용«만» 있는 견적(시공만 있는 건 등)은 그대로 보여준다 — 안 그러면 배지가 하나도 없다. */
+  const _catAll = quoteCatSet(q);
+  const _catMain = _catAll.filter(c => QCAT_MATERIAL.indexOf(c) >= 0);
+  const catBadge = (_catMain.length ? _catMain : _catAll).map(c => `<span class="pill" style="background:#fff;color:${QCAT_COL[c]};border:1px solid ${QCAT_COL[c]};font-weight:700"><i class="ti ti-${QCAT_ICON[c] || 'tag'}"></i> ${esc(c)}</span>`).join('');
   const _dep = quoteDeposit(q);
   const depBadge = _dep ? `<span class="pill" style="background:#eaf2ff;color:#1a56b8;border:1px solid #cfe0ff" title="잔금 ${fmtWon(_dep.rest)}원"><i class="ti ti-percentage"></i> 계약금 ${_pctTxt(_dep.pct)}% · ${fmtWon(_dep.amt)}</span>` : '';
   return `<div class="card" style="margin-bottom:10px;padding:12px 14px${_bundle && _selQ ? ';border:2px solid var(--gd);background:#f2fbf6' : ''}">
       ${_bundle ? `<label style="display:flex;align-items:center;gap:8px;margin-bottom:9px;cursor:pointer;font-size:12.5px;font-weight:700;color:${_selQ ? 'var(--gd)' : 'var(--t2)'}"><input type="checkbox" ${_selQ ? 'checked' : ''} onchange="toggleQSel('${q.id}')" style="width:17px;height:17px"> 청구 묶음에 포함</label>` : ''}
       <div onclick="openQuoteView('${q.id}')" title="눌러서 견적 내용 보기" style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;cursor:pointer">
         <div style="min-width:0"><div style="font-weight:700;font-size:14.5px">${esc(q.client || '-')} <i class="ti ti-chevron-right" style="font-size:14px;color:var(--t3);vertical-align:-2px"></i></div>
+          ${_siteLine ? `<div style="font-size:12.5px;font-weight:600;color:#1b4fb0;margin-top:3px;display:flex;align-items:center;gap:4px;min-width:0"><i class="ti ti-map-pin" style="font-size:13px;flex:none"></i><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(_siteLine)}</span></div>` : ''}
           <div style="font-size:11.5px;color:var(--t3);margin-top:2px">${esc(q.docNo || '')} · ${esc(when)} · ${(q.items || []).length}품목</div>
           <div style="font-size:12px;color:var(--t2);margin-top:3px">${esc(names)}</div></div>
         <div style="text-align:right;flex:none"><div style="font-size:17px;font-weight:800;color:var(--gd)">${fmtWon(q.total)}<span style="font-size:12px;font-weight:600">원</span></div><div style="font-size:10.5px;color:var(--t3)">VAT 포함</div>${_cRem > 0
@@ -10136,6 +10183,7 @@ function quoteCardHtml(q) {
       </div>
       <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px">${catBadge}${paidPill}${taxPill}${depBadge}${shipBadge}${siteBadge}${basinBadge}${basinDrawsOf(q).length ? `<button class="pill" style="border:none;cursor:pointer;background:#eef4ff;color:#1b4fb0" onclick="event.stopPropagation();${basinDrawsOf(q).length > 1 ? `openQuoteView('${q.id}')` : `openQuoteDraw('${q.id}','${esc(basinDrawsOf(q)[0].id)}')`}" title="세면대 도면 보기"><i class="ti ti-ruler-2"></i> 도면 ${basinDrawsOf(q).length}</button>` : ''}${doneBadge}${canLedger() && _cRem > 0 ? `<button class="pill p-issue" style="border:none;cursor:pointer" onclick="openLedgerFor(${JSON.stringify(q.client || '').replace(/"/g, '&quot;')})" title="이 거래처 원장 보기"><i class="ti ti-book"></i> 거래처 미수 ${fmtWon(_cRem)}</button>` : ''}</div>
       <div class="frm-foot" style="margin-top:9px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+        ${q.siteDone && !isCustomerRole() ? `<button class="btn btn-sm" onclick="quoteLinkSite('${q.id}')" title="잘못 등록했으면 다른 현장으로 바꿉니다"><i class="ti ti-exchange"></i>현장 바꾸기</button><button class="btn btn-sm" style="color:var(--t3)" onclick="quoteUnlinkSite('${q.id}')" title="현장 연결만 풉니다 (현장은 안 지워집니다)"><i class="ti ti-unlink"></i>연결 해제</button>` : ''}
         ${(q.shipped || q.siteDone || q.basinDone) ? '' : (q.manualDone ? (isAdmin() ? `<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteUnmarkDone('${q.id}')" title="완료 취소"><i class="ti ti-arrow-back-up"></i>완료 취소</button>` : '') : (q.ordered ? `<button class="btn btn-sm btn-pri" onclick="quoteRegister('${q.id}')"><i class="ti ${_regIcon}"></i>${_regLabel}</button><button class="btn btn-sm" onclick="quoteLinkSite('${q.id}')" title="이미 등록된 현장에 연결"><i class="ti ti-link"></i>현장 연결</button>${isAdmin() ? `<button class="btn btn-sm" style="color:#0f766e;border-color:#0f766e" onclick="quoteMarkDone('${q.id}')" title="바로 완료 처리 (관리자)"><i class="ti ti-checks"></i>완료 처리</button>` : ''}<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteCancelOrder('${q.id}')" title="확정 주문 취소"><i class="ti ti-arrow-back-up"></i>확정취소</button>` : `<button class="btn btn-sm btn-pri" onclick="quoteConfirmOrder('${q.id}')"><i class="ti ti-clipboard-check"></i>확정주문</button>`))}
         <button class="btn btn-sm" onclick="openQuoteInline('${q.id}')"><i class="ti ti-edit"></i>수정</button>
         <button class="btn btn-sm" onclick="printQuote('${q.id}')"><i class="ti ti-printer"></i>인쇄</button>
