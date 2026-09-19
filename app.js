@@ -6325,6 +6325,36 @@ function quoteToShip(id) {
   if (_hh.length) { _holdConfirm = _hh; toast('출고 등록 폼에 불러왔습니다 · 저장하면 홀딩 ' + _hh.length + '건이 풀립니다'); }
   else toast('견적의 자재만 출고 등록 폼에 불러왔습니다 · 확인 후 등록하세요');
 }
+/* ★★ 2026-09-19 — 미확정 견적 이월
+   사용자: *"미확정 견적서의 이월 기능도 필요함"* · *"1번으로 진행하되, 원본 안 나둬도 됨"*
+   유효기간이 지났는데 아직 확정이 안 난 견적을 **오늘 날짜·새 견적번호**로 넘긴다.
+   ★ 원본을 따로 남기지 않는다 — 그 견적 «자체»의 날짜와 번호를 새로 찍는다.
+     (몇 번 이월했고 원래 번호가 무엇이었는지는 견적 안에 적어 둔다) */
+function quoteRollover(id) {
+  const q = (state.quotes || []).find(x => x.id === id); if (!q) { toast('견적을 찾을 수 없습니다'); return; }
+  if (q.ordered) { toast('이미 확정된 주문입니다 — 미확정 견적만 이월됩니다'); return; }
+  if (q.shipped || q.siteDone || q.basinDone || q.manualDone) { toast('이미 진행된 건은 이월할 수 없습니다'); return; }
+  const oldNo = String(q.docNo || '').trim(), oldDate = qDate(q);
+  const newNo = quoteNextDocNo(), today = todayStr();
+  if (oldDate === today) { toast('오늘 날짜 견적입니다 — 이월할 필요가 없습니다'); return; }
+  if (!confirm('이 견적을 오늘 날짜로 이월할까요?\n\n'
+    + '  ' + oldNo + '  (' + oldDate + ')\n'
+    + '      ↓\n'
+    + '  ' + newNo + '  (' + today + ')\n\n'
+    + '※ 견적 내용·금액은 그대로입니다. 옛 번호는 따로 남지 않습니다.')) return;
+  const hist = (Array.isArray(q.rollFrom) ? q.rollFrom.slice() : []);
+  if (oldNo) hist.push(oldNo + ' (' + oldDate + ')');
+  try {
+    Store.update('quotes', id, {
+      docNo: newNo, date: today,
+      rollFrom: hist, rollCount: hist.length,
+      rollAt: Date.now(), rollBy: (me && me.name) || '',
+      updatedAt: Date.now()
+    });
+  } catch (e) { toast('실패: ' + ((e && e.message) || e)); return; }
+  toast('이월됨 · ' + newNo + ' (' + today + ')');
+  try { renderQuote(); } catch (e) { }
+}
 function quoteConfirmOrder(id) {
   const q = (state.quotes || []).find(x => x.id === id); if (!q) return;
   try { Store.update('quotes', id, { ordered: true, orderedAt: Date.now() }); } catch (e) { }
@@ -10144,6 +10174,9 @@ function quoteCardHtml(q) {
   const _hasGagong = (q.items || []).some(it => marginCat(it.name) === '가공' && !(it.name || '').includes('세면대'));
   const _regLabel = _hasBasin ? '세면대 발주' : (_hasGagong ? '현장 등록' : '출고 등록');
   const _regIcon = _hasBasin ? 'ti-bath' : (_hasGagong ? 'ti-building-community' : 'ti-truck-delivery');
+  /* ★ 미확정인 채로 오래 묵은 견적 — [이월] 버튼을 노랗게 해 눈에 띄게 한다 (15일 기준) */
+  const _old = !q.ordered && !q.shipped && !q.siteDone && !q.basinDone && !q.manualDone
+    && (() => { const d = qDate(q); if (!d) return false; const t = Date.parse(d + 'T00:00:00'); return isFinite(t) && (Date.now() - t) > 15 * 864e5; })();
   /* ★ 현장주소를 카드에서 바로 보이게 — 주소가 없으면 현장명, 그것도 없으면 안 띄운다 */
   const _siteLine = [q.siteAddr, q.siteName].map(v => String(v == null ? '' : v).trim()).find(Boolean) || '';
   const names = (q.items || []).map(it => it.name).filter(Boolean).slice(0, 3).join(', ') + ((q.items || []).length > 3 ? ` 외 ${q.items.length - 3}` : '');
@@ -10181,10 +10214,10 @@ function quoteCardHtml(q) {
            <div style="font-size:10.5px;color:var(--t3);margin-top:3px;white-space:nowrap;border-top:1px dashed var(--bd);padding-top:3px">${_rem > 0 ? `이 건 미수 ${fmtWon(_rem)}` : (_pa > 0 ? '<span style="color:var(--gd);font-weight:700">이 건 결제완료</span>' : '이 건 미결제')}</div>`
         : (_pa > 0 ? `<div style="font-size:12px;font-weight:700;color:var(--gd);margin-top:6px"><i class="ti ti-check"></i> 결제완료</div>` : (_rem > 0 ? `<div style="font-size:13.5px;font-weight:800;color:var(--red-t);margin-top:6px">미수 ${fmtWon(_rem)}</div>` : ''))}</div>
       </div>
-      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px">${catBadge}${paidPill}${taxPill}${depBadge}${shipBadge}${siteBadge}${basinBadge}${basinDrawsOf(q).length ? `<button class="pill" style="border:none;cursor:pointer;background:#eef4ff;color:#1b4fb0" onclick="event.stopPropagation();${basinDrawsOf(q).length > 1 ? `openQuoteView('${q.id}')` : `openQuoteDraw('${q.id}','${esc(basinDrawsOf(q)[0].id)}')`}" title="세면대 도면 보기"><i class="ti ti-ruler-2"></i> 도면 ${basinDrawsOf(q).length}</button>` : ''}${doneBadge}${canLedger() && _cRem > 0 ? `<button class="pill p-issue" style="border:none;cursor:pointer" onclick="openLedgerFor(${JSON.stringify(q.client || '').replace(/"/g, '&quot;')})" title="이 거래처 원장 보기"><i class="ti ti-book"></i> 거래처 미수 ${fmtWon(_cRem)}</button>` : ''}</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px">${catBadge}${(+q.rollCount || 0) ? `<span class="pill" style="background:#fff8e8;color:#b45309;border:1px solid #e6cf95" title="원래 ${esc((q.rollFrom || []).join(' → '))}"><i class="ti ti-calendar-plus"></i> 이월 ${+q.rollCount}회</span>` : ''}${paidPill}${taxPill}${depBadge}${shipBadge}${siteBadge}${basinBadge}${basinDrawsOf(q).length ? `<button class="pill" style="border:none;cursor:pointer;background:#eef4ff;color:#1b4fb0" onclick="event.stopPropagation();${basinDrawsOf(q).length > 1 ? `openQuoteView('${q.id}')` : `openQuoteDraw('${q.id}','${esc(basinDrawsOf(q)[0].id)}')`}" title="세면대 도면 보기"><i class="ti ti-ruler-2"></i> 도면 ${basinDrawsOf(q).length}</button>` : ''}${doneBadge}${canLedger() && _cRem > 0 ? `<button class="pill p-issue" style="border:none;cursor:pointer" onclick="openLedgerFor(${JSON.stringify(q.client || '').replace(/"/g, '&quot;')})" title="이 거래처 원장 보기"><i class="ti ti-book"></i> 거래처 미수 ${fmtWon(_cRem)}</button>` : ''}</div>
       <div class="frm-foot" style="margin-top:9px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
         ${q.siteDone && !isCustomerRole() ? `<button class="btn btn-sm" onclick="quoteLinkSite('${q.id}')" title="잘못 등록했으면 다른 현장으로 바꿉니다"><i class="ti ti-exchange"></i>현장 바꾸기</button><button class="btn btn-sm" style="color:var(--t3)" onclick="quoteUnlinkSite('${q.id}')" title="현장 연결만 풉니다 (현장은 안 지워집니다)"><i class="ti ti-unlink"></i>연결 해제</button>` : ''}
-        ${(q.shipped || q.siteDone || q.basinDone) ? '' : (q.manualDone ? (isAdmin() ? `<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteUnmarkDone('${q.id}')" title="완료 취소"><i class="ti ti-arrow-back-up"></i>완료 취소</button>` : '') : (q.ordered ? `<button class="btn btn-sm btn-pri" onclick="quoteRegister('${q.id}')"><i class="ti ${_regIcon}"></i>${_regLabel}</button><button class="btn btn-sm" onclick="quoteLinkSite('${q.id}')" title="이미 등록된 현장에 연결"><i class="ti ti-link"></i>현장 연결</button>${isAdmin() ? `<button class="btn btn-sm" style="color:#0f766e;border-color:#0f766e" onclick="quoteMarkDone('${q.id}')" title="바로 완료 처리 (관리자)"><i class="ti ti-checks"></i>완료 처리</button>` : ''}<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteCancelOrder('${q.id}')" title="확정 주문 취소"><i class="ti ti-arrow-back-up"></i>확정취소</button>` : `<button class="btn btn-sm btn-pri" onclick="quoteConfirmOrder('${q.id}')"><i class="ti ti-clipboard-check"></i>확정주문</button>`))}
+        ${(q.shipped || q.siteDone || q.basinDone) ? '' : (q.manualDone ? (isAdmin() ? `<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteUnmarkDone('${q.id}')" title="완료 취소"><i class="ti ti-arrow-back-up"></i>완료 취소</button>` : '') : (q.ordered ? `<button class="btn btn-sm btn-pri" onclick="quoteRegister('${q.id}')"><i class="ti ${_regIcon}"></i>${_regLabel}</button><button class="btn btn-sm" onclick="quoteLinkSite('${q.id}')" title="이미 등록된 현장에 연결"><i class="ti ti-link"></i>현장 연결</button>${isAdmin() ? `<button class="btn btn-sm" style="color:#0f766e;border-color:#0f766e" onclick="quoteMarkDone('${q.id}')" title="바로 완료 처리 (관리자)"><i class="ti ti-checks"></i>완료 처리</button>` : ''}<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteCancelOrder('${q.id}')" title="확정 주문 취소"><i class="ti ti-arrow-back-up"></i>확정취소</button>` : `<button class="btn btn-sm btn-pri" onclick="quoteConfirmOrder('${q.id}')"><i class="ti ti-clipboard-check"></i>확정주문</button><button class="btn btn-sm" style="${_old ? 'color:#b45309;border-color:#d9a441' : 'color:var(--t3)'}" onclick="quoteRollover('${q.id}')" title="오늘 날짜·새 견적번호로 넘깁니다 (내용은 그대로)"><i class="ti ti-calendar-plus"></i>이월</button>`))}
         <button class="btn btn-sm" onclick="openQuoteInline('${q.id}')"><i class="ti ti-edit"></i>수정</button>
         <button class="btn btn-sm" onclick="printQuote('${q.id}')"><i class="ti ti-printer"></i>인쇄</button>
         <button class="btn btn-sm" onclick="quoteToHold('${q.id}')" title="이 견적 자재를 홀딩(예약)"><i class="ti ti-lock"></i>홀딩</button>
@@ -10238,7 +10271,7 @@ function openQuoteView(id) {
     </div>
     <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:11px">${badges}</div>
     <div style="background:var(--soft);border-radius:11px;padding:7px 12px;margin-bottom:12px">
-      ${meta('분류', quoteCatSet(q).join(' · '))}${meta('단가 유형', q.ctype)}${meta('유효기간', q.valid)}${meta('담당자', q.by)}${meta('수신·참조', q.attn)}${meta('현장 주소', q.siteAddr)}
+      ${meta('분류', quoteCatSet(q).join(' · '))}${meta('단가 유형', q.ctype)}${meta('유효기간', q.valid)}${meta('담당자', q.by)}${meta('수신·참조', q.attn)}${meta('현장 주소', q.siteAddr)}${(q.rollFrom || []).length ? meta('이월 전 번호', (q.rollFrom || []).join(' → ')) : ''}
     </div>
     <div class="sec-label"><i class="ti ti-list-details"></i>견적 품목 <span style="font-weight:500;color:var(--t3)">${items.length}건</span></div>
     <div class="tbl-wrap" style="margin-bottom:12px"><table class="tbl">
