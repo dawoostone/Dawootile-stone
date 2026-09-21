@@ -14624,14 +14624,20 @@ function basinDrawSvg(d, lang) {
     s += _bdT(c1 + 44, y, sd[1], { a: 'start', fs: 15, w: sd[0] ? 800 : 500, c: sd[0] ? '#111' : '#999' });
     if (!sd[0]) s += _bdT(c2 - 18, y, K('없음', '无'), { a: 'end', fs: 12.5, c: '#999' });
   });
-  s += _bdT(c1 + 20, pnT + 136, K('치마 높이', '裙边高') + '  ' + (+d.H || 0), { a: 'start', fs: 14, w: 700 });
-  /* ★ 치마 접합 / 비접합 — 비접합은 공장이 놓치면 안 되므로 빨갛게 */
-  const _jt = bdJoinText(d, lang);
-  if (_jt) s += _bdT(c2 - 18, pnT + 136, _jt, { a: 'end', fs: 13, w: bdSkirtLoose(d) ? 800 : 600, c: bdSkirtLoose(d) ? '#b42318' : '#555' });
-  s += _bdT(c1 + 20, pnT + 160, bdIsRound(d)
-    ? K('전면 R' + (+d.sfR || 50) + ' 라운드 · 좌우 45° 졸리', '前面 R' + (+d.sfR || 50) + ' 圆角 · 左右45°拼接')
-    : K('전 · 좌 · 우 모두 45° 졸리', '前·左·右 均 45°拼接'),
-    { a: 'start', fs: 13, w: 700, c: bdIsRound(d) ? '#b42318' : '#444' });
+  /* ★ 치마가 한 면도 없으면 「치마 높이 0」·「45° 졸리」를 적지 않는다 — 붙일 치마가 없다 */
+  const _anySk = !!(d.sl || d.sr || d.sf);
+  if (_anySk) {
+    s += _bdT(c1 + 20, pnT + 136, K('치마 높이', '裙边高') + '  ' + (+d.H || 0), { a: 'start', fs: 14, w: 700 });
+    /* ★ 치마 접합 / 비접합 — 비접합은 공장이 놓치면 안 되므로 빨갛게 */
+    const _jt = bdJoinText(d, lang);
+    if (_jt) s += _bdT(c2 - 18, pnT + 136, _jt, { a: 'end', fs: 13, w: bdSkirtLoose(d) ? 800 : 600, c: bdSkirtLoose(d) ? '#b42318' : '#555' });
+    s += _bdT(c1 + 20, pnT + 160, bdIsRound(d)
+      ? K('전면 R' + (+d.sfR || 50) + ' 라운드 · 좌우 45° 졸리', '前面 R' + (+d.sfR || 50) + ' 圆角 · 左右45°拼接')
+      : K('전 · 좌 · 우 모두 45° 졸리', '前·左·右 均 45°拼接'),
+      { a: 'start', fs: 13, w: 700, c: bdIsRound(d) ? '#b42318' : '#444' });
+  } else {
+    s += _bdT(c1 + 20, pnT + 136, K('치마 없음 — 판 한 장', '无裙边 — 单板'), { a: 'start', fs: 14, w: 700, c: '#555' });
+  }
 
   // 타공
   const tapLines = _top
