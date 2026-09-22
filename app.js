@@ -6348,7 +6348,7 @@ function quoteToShip(id) {
   try { Store.update('quotes', id, { shipped: true, shipStartedAt: Date.now() }); } catch (e) { }
   const mats = quoteMaterialItems(q);
   if (!mats.length) { toast('출고할 자재가 없습니다 (가공·운송·시공 항목만 있는 견적)'); return; }
-  openShipForm({ targetName: q.client, items: mats.map(it => ({ name: it.name, qty: it.qty, lot: '', pattern: '' })), quoteId: id, siteAddr: (q.siteAddr || '').trim(), siteName: shipSiteNameOfQuote(q) });
+  openShipForm({ targetName: q.client, items: mats.map(it => ({ name: it.name, qty: it.qty, lot: '', pattern: '' })), quoteId: id, siteAddr: (q.siteAddr || '').trim() });
   const _hh = quoteLiveHoldIds(q);
   if (_hh.length) { _holdConfirm = _hh; toast('출고 등록 폼에 불러왔습니다 · 저장하면 홀딩 ' + _hh.length + '건이 풀립니다'); }
   else toast('견적의 자재만 출고 등록 폼에 불러왔습니다 · 확인 후 등록하세요');
@@ -6431,7 +6431,7 @@ function quoteRegister(id) {
     openSiteForm(null, { name: _sn, client: q.client, address: q.siteAddr, quoteId: id, items: items });
     toast('가공 포함 · 현장 등록 후 자재는 자동으로 홀딩됩니다');
   } else {
-    openShipForm({ targetName: q.client, items: items, quoteId: id, siteAddr: (q.siteAddr || '').trim(), siteName: shipSiteNameOfQuote(q) });
+    openShipForm({ targetName: q.client, items: items, quoteId: id, siteAddr: (q.siteAddr || '').trim() });
     /* ★ 이 견적이 홀딩에서 가져온 자재라면, 출고가 저장될 때 그 홀딩을 확정 처리해 목록에서 없앤다.
          (openShipForm 뒤에 넣는다 — closeModal 이 _holdConfirm 을 비우기 때문) */
     const _hh = quoteLiveHoldIds(q);
@@ -6586,7 +6586,7 @@ function quoteToOrder(id) {
     go('sites'); setTimeout(() => { try { openSiteForm(null, { name: _sn2, address: q.siteAddr, quoteId: id }); } catch (e) { } }, 90);
     toast('확정 · 현장 등록으로 이동');
   } else {
-    openShipForm({ targetName: q.client, items: items, quoteId: id, siteAddr: (q.siteAddr || '').trim(), siteName: shipSiteNameOfQuote(q) });
+    openShipForm({ targetName: q.client, items: items, quoteId: id, siteAddr: (q.siteAddr || '').trim() });
     const _hh = quoteLiveHoldIds(q);
     if (_hh.length) { _holdConfirm = _hh; toast('확정 · 출고 등록으로 불러왔습니다 · 저장하면 홀딩 ' + _hh.length + '건이 풀립니다'); }
     else toast('확정 · 출고 등록으로 불러왔습니다 · 확인 후 등록');
@@ -13976,25 +13976,20 @@ async function submitOutEdit(id) {
   }
   closeModal(); toast('출고 내역이 수정되었습니다');
 }
-/* ★★ 2026-09-20 — 출고증 현장명 / 반입 금지
-   사용자: *"견적서-출고 / 견적서-현장등록-홀딩-출고 할 때 현장명이 출고증에 안 나오는 것 있음"*
-          *"현장명 지워도 출고증에는 지운 게 반영이 안 되고 그대로 나오는 경우가 있음"*
+/* ★★ 2026-09-20 — 출고증 현장 주소 / 반입 금지
+   사용자: *"견적서-출고 / 견적서-현장등록-홀딩-출고 할 때 출고증에 안 나오는 것 있음"*
+          *"지워도 출고증에는 지운 게 반영이 안 되고 그대로 나오는 경우가 있음"*
+          *"현장명은 필요없음 출고등록엥"* (2026-09-22 — 현장명 칸은 뺐다. 현장 주소만 쓴다)
           *"현장에 출고증 반입 금지 라는 걸 표시 · 체크하면 빨간 글씨로 크게"*
 
    ★ «지운 값이 되살아나는» 문제
      예전에는 「출고에 적힌 값이 비었으면 견적서 값을 대신 쓴다」였다.
-     그래서 출고 등록 화면에서 현장명을 «일부러 지워도» 견적서 값이 다시 올라왔다.
+     그래서 출고 등록 화면에서 현장 주소를 «일부러 지워도» 견적서 값이 다시 올라왔다.
      이제는 «칸이 아예 없는 옛날 기록»일 때만 견적서에서 끌어온다.
      한 번이라도 출고 화면을 거친 기록은 비어 있으면 비운 것으로 본다. */
 function _slipVal(rec, key, fallback) {
   if (rec && Object.prototype.hasOwnProperty.call(rec, key)) return String(rec[key] == null ? '' : rec[key]).trim();
   return String(fallback == null ? '' : fallback).trim();
-}
-/* 출고증에 찍을 현장명 — 연결된 «현장»의 이름이 가장 정확하고, 없으면 견적서에 적힌 현장명 */
-function shipSiteNameOfQuote(q) {
-  if (!q) return '';
-  try { const st = quoteSiteOf(q); if (st && (st.name || st.client)) return String(st.name || st.client).trim(); } catch (e) { }
-  return String(q.siteName || '').trim();
 }
 /* 반입 금지 — 출고증(서류)을 현장에 두고 오면 안 되는 건. 종이에서 제일 먼저 보이게 크고 빨갛게. */
 const NOSLIP_CSS = `.noslip{border:3px solid #c0341d;background:#fff0ee;color:#c0341d;text-align:center;font-weight:800;padding:10px 12px;margin:0 0 12px;letter-spacing:1px;line-height:1.35}
@@ -14049,7 +14044,6 @@ function printShipSlip(key) {
      칸 자체가 없는 옛날 기록만 연결된 견적서에서 끌어온다. */
   const _lq = g.quoteId ? (state.quotes || []).find(x => x.id === g.quoteId) : null;
   const siteAddr = _slipVal(g, 'siteAddr', (_lq && _lq.siteAddr) || '');
-  const siteName = _slipVal(g, 'siteName', shipSiteNameOfQuote(_lq));
   const noSlip = !!g.noSlip;
   // 출고 확인 도장 (가운데에 출고일자)
   const stamp = `<svg viewBox="0 0 200 200" width="150" height="150" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
@@ -14121,7 +14115,7 @@ function printShipSlip(key) {
       <td class="conm" colspan="2">${companyInfo().name}</td>
     </tr>
     <tr>
-      <td class="recip" rowspan="6"><div class="rn">${e(g.targetName)}</div><div class="rt">${route}</div>${siteName ? `<div class="rsite"><span class="rsk">현　장</span>${e(siteName)}</div>` : ''}${siteAddr ? `<div class="rsite"><span class="rsk">현장 주소</span>${e(siteAddr)}</div>` : ''}</td>
+      <td class="recip" rowspan="6"><div class="rn">${e(g.targetName)}</div><div class="rt">${route}</div>${(siteAddr && siteAddr !== String(g.dest || '').trim()) ? `<div class="rsite"><span class="rsk">현장 주소</span>${e(siteAddr)}</div>` : ''}</td>
       <td class="ck">주 소</td><td class="cv">${companyInfo().addr}<br><span class="tel">${companyInfo().tel}</span></td>
     </tr>
     <tr><td class="ck">업 태</td><td class="cv">${companyInfo().biztype}</td></tr>
@@ -15947,7 +15941,6 @@ function openShipForm(pre) {
           받는 공장이 <b style="color:var(--tx)">업체명과 같음</b> <span style="font-weight:400;color:var(--t3);font-size:11.5px">(체크하면 위 업체명이 출고지로 들어갑니다)</span>
         </label>
       </div>
-      <div class="fld full"><label>현장명 <span style="color:var(--t3);font-weight:500">(출고증에 찍힙니다 · 견적서·홀딩에서 자동으로 들어옵니다 · 지우면 안 찍힙니다)</span></label><input id="o-sitename" lang="ko" placeholder="예: 신성그룹 - 헤이즈 아이보리" value="${esc((pre && pre.siteName) || '')}" autocomplete="off"></div>
       <div class="fld full"><label>현장 주소 <span style="color:var(--t3);font-weight:500">(어느 현장 자재인지 공장에 알려주는 칸 · 견적서에 적어두면 자동으로 들어옵니다)</span></label><input id="o-siteaddr" lang="ko" placeholder="예: OO시 OO구 OO동 OO현장" value="${esc((pre && pre.siteAddr) || '')}" autocomplete="off"></div>
       <div class="fld full" style="background:#fff2f0;border-radius:9px;padding:10px 12px"><label style="display:flex;align-items:center;gap:9px;cursor:pointer;font-weight:600;color:#b42318"><input type="checkbox" id="o-noslip" style="width:18px;height:18px"> <i class="ti ti-file-off"></i>출고증 현장 반입 금지 <span style="font-weight:400;color:var(--t3);font-size:12px">(체크하면 출고증 맨 위에 빨간 글씨로 크게 찍힙니다)</span></label></div>
       <div class="fld full"><label>메모 <span style="color:var(--t3);font-weight:500">(출고 전 특이사항 — 출고증 아래에 인쇄)</span></label><input id="o-note" placeholder="선택"></div>
@@ -15955,7 +15948,17 @@ function openShipForm(pre) {
     </div>
     <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitShip()"><i class="ti ti-check"></i>출고 등록</button></div>`);
   if (pre && pre.targetName && el('o-targetName')) el('o-targetName').value = pre.targetName;
-  /* 출고지는 자재를 받는 공장이라 견적서만 보고는 알 수 없다 → 자동으로 채우지 않고 직접 고르게 둔다. */
+  /* ★ 2026-09-22 — 견적서(또는 현장)에 현장 주소가 있으면 «출고지»에도 그 주소를 넣어 둔다
+     사용자: *"견적서에 현장 주소 입력하면 그걸 출고지랑 현장주소에 다 넣어주고
+             공장 하차인 경우 지금 하는것처럼 공장 선택하거나 직접 입력하는 걸로"*
+     → 현장 하차가 기본. 공장 하차면 위 목록에서 공장을 고르면 된다(고르면 그 공장이 출고지가 된다). */
+  const _pa = String((pre && pre.siteAddr) || '').trim();
+  if (_pa) {
+    const _ds = el('o-dest'), _dt = el('o-dest-text'), _dm = el('o-dest-manual');
+    if (_ds) _ds.value = '__manual';
+    if (_dt) _dt.value = _pa;
+    if (_dm) _dm.classList.remove('hidden');
+  }
   const _tn = el('o-targetName');
   if (_tn) _tn.addEventListener('input', () => { const ck = el('o-dest-same'); if (ck && ck.checked) { const t = el('o-dest-text'); if (t) t.value = (_tn.value || '').trim(); } });
   mrowLotRefresh();
@@ -16038,7 +16041,6 @@ async function submitShip() {
     const shipId = 'S' + Date.now();
     const note = el('o-note').value.trim();
     const siteAddr = ((el('o-siteaddr') && el('o-siteaddr').value) || '').trim();   // 출고증에 찍을 현장 주소
-    const siteName = ((el('o-sitename') && el('o-sitename').value) || '').trim();   // ★ 출고증에 찍을 현장명 (비우면 안 찍힌다)
     const noSlip = !!(el('o-noslip') && el('o-noslip').checked);                    // ★ 출고증 현장 반입 금지
     const _fromQuote = _shipFromQuote || '';                                        // 나중에 비워지므로 미리 담아둔다
     const damaged = !!(el('o-damaged') && el('o-damaged').checked);   // 파손 자재 출고
@@ -16053,7 +16055,7 @@ async function submitShip() {
       const _fdep = (el('o-depot') && el('o-depot').value || '').trim();
       const oDepot = normDepot((r.depot && r.depot.trim()) ? r.depot.trim() : (_fdep === '__add' ? '' : _fdep));   // 행별 창고 우선, 없으면 폼 상단 창고, 그것도 없으면 기본창고(본사)
       if (it) await Store.update('inventory', it.id, { jang: newJang });
-      await Store.add('transactions', { type: 'out', shipId, itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot, pattern: r.pattern, depot: oDepot, dest, factory: dest, target: '', targetName, date, note, siteAddr, siteName, noSlip, quoteId: _fromQuote, damaged, createdAt: Date.now(), by: me.name });
+      await Store.add('transactions', { type: 'out', shipId, itemId: it ? it.id : '', itemName: material, spec: it ? it.spec : '', hebe, jang, lot, pattern: r.pattern, depot: oDepot, dest, factory: dest, target: '', targetName, date, note, siteAddr, noSlip, quoteId: _fromQuote, damaged, createdAt: Date.now(), by: me.name });
       totalJang += jang;
       if (it && oldJang > 0 && newJang <= 0) zeroed.push(material);
     }
@@ -16071,7 +16073,7 @@ async function submitShip() {
     // 출고 대기열(출고관리)에 등록 — 재고는 위에서 이미 차감됨(stockApplied). 소리 알림은 '출고 지시' 낼 때만.
     try {
       const qItems = rows.map(r => ({ name: r.name, qty: r.qty, spec: [r.lot, r.pattern].map(s => (s || '').trim()).filter(Boolean).join(' / '), unit: '장', lot: r.lot || '', pattern: r.pattern || '' }));
-      await Store.add('chulgoReqs', { docNo: chulgoNextDocNo('출고'), reqType: '출고', client: targetName, items: qItems, status: '대기열', stockApplied: true, sourceShipId: shipId, dispatchDest: dest, destOrig: dest, siteAddr: siteAddr, siteName: siteName, noSlip: noSlip, schedDate: date, memo: note || '', sender: (me && me.name) || '', createdAt: Date.now() });
+      await Store.add('chulgoReqs', { docNo: chulgoNextDocNo('출고'), reqType: '출고', client: targetName, items: qItems, status: '대기열', stockApplied: true, sourceShipId: shipId, dispatchDest: dest, destOrig: dest, siteAddr: siteAddr, noSlip: noSlip, schedDate: date, memo: note || '', sender: (me && me.name) || '', createdAt: Date.now() });
     } catch (e) { }
     // ★ shippedAt(저장 시각) 말고 화면에서 고른 '출고일(date)'도 같이 남긴다 — 견적 카드에 이 날짜를 보여준다
     if (_shipFromQuote) { try { await Store.update('quotes', _shipFromQuote, { shipped: true, shippedAt: Date.now(), shipDate: date }); } catch (e) { } _shipFromQuote = ''; }
@@ -16537,15 +16539,14 @@ function holdToSite(id) {
   openSiteForm(null, { items: holdItems(h).map(it => ({ name: it.materialName, qty: it.jang, lot: it.lot })), client: h.vendor, note: '홀딩 연결' });
 }
 /* 홀딩 → 출고 (출고가 찍히면 그 홀딩이 '확정'으로). 다자재면 첫 자재부터 — 나머지는 따로 출고
-   ★ 2026-09-20 — 예전에는 현장명·현장주소를 아예 안 넘겨서
-     「견적서 → 현장등록 → 홀딩 → 출고」로 가면 출고증에 현장이 빈칸으로 나왔다. */
+   ★ 2026-09-20 — 예전에는 현장주소를 아예 안 넘겨서
+     「견적서 → 현장등록 → 홀딩 → 출고」로 가면 출고증에 현장 주소가 빈칸으로 나왔다. */
 function holdToShip(id) {
   const h = state.holdings.find(x => x.id === id); if (!h) return;
   _holdConfirm = [id];
   const _hs = (h.forSiteId || '').trim() ? (state.sites || []).find(x => x.id === h.forSiteId) : null;
-  const _hnm = String((_hs && (_hs.name || _hs.client)) || h.forSiteName || '').trim();
   const _hadr = String((_hs && _hs.address) || '').trim();
-  openShipForm({ items: holdItems(h).map(it => ({ name: it.materialName, qty: it.jang, lot: it.lot, pattern: it.pattern })), targetName: h.vendor || h.forSiteName || '', siteName: _hnm, siteAddr: _hadr });
+  openShipForm({ items: holdItems(h).map(it => ({ name: it.materialName, qty: it.jang, lot: it.lot, pattern: it.pattern })), targetName: h.vendor || h.forSiteName || '', siteAddr: _hadr });
 }
 /* 같은 업체의 출고 가능한(=상태 '홀딩') 건들 — 예정·확정·해제는 제외 */
 function vendorHoldsFor(vendor) {
@@ -16655,7 +16656,6 @@ function chulgoPrint(id) {
   const _cgTx = r.sourceShipId ? (state.transactions || []).find(t => (t.shipId || t.id) === r.sourceShipId) : null;
   const _cgQ = (_cgTx && _cgTx.quoteId) ? (state.quotes || []).find(x => x.id === _cgTx.quoteId) : null;
   const _cgSite = _slipVal(r, 'siteAddr', _slipVal(_cgTx, 'siteAddr', (_cgQ && _cgQ.siteAddr) || ''));
-  const _cgNm = _slipVal(r, 'siteName', _slipVal(_cgTx, 'siteName', shipSiteNameOfQuote(_cgQ)));
   const _cgNo = !!(Object.prototype.hasOwnProperty.call(r, 'noSlip') ? r.noSlip : (_cgTx && _cgTx.noSlip));
   let rows = items.map((it, i) => `<tr><td class="c">${i + 1}</td><td class="l">${e(it.name)}</td><td class="l">${e(it.spec)}</td><td class="r">${e(it.qty)}</td><td class="c">${e(it.unit)}</td></tr>`).join('');
   for (let i = items.length; i < MIN; i++) rows += `<tr><td class="c">${i + 1}</td><td></td><td></td><td></td><td></td></tr>`;
@@ -16678,7 +16678,7 @@ function chulgoPrint(id) {
     <tr><td class="k">거래처</td><td>${e(r.client)}</td><td class="k">${isIn ? '입고' : '출고'}예정일</td><td>${e(r.schedDate) || '-'}</td></tr>
     <tr><td class="k">긴급도</td><td class="${urg !== '보통' ? 'urg' : ''}">${e(urg)}</td><td class="k">요청자</td><td>${e(r.sender)}</td></tr>
     <tr><td class="k">기사 / 배차</td><td>${r.companyDispatch ? '업체 배차' : (e(r.driver) || '-')}${r.loadTime ? ' · 상차 ' + e(r.loadTime) : ''}</td><td class="k">구분표시</td><td>${e(flTxt)}</td></tr>
-    ${(r.dispatchDest || _cgSite || _cgNm) ? `<tr><td class="k">출고지</td><td colspan="3" style="font-weight:700">${e(r.dispatchDest || '')}${_cgNm ? `<div style="font-weight:700;margin-top:3px">현　　장 : ${e(_cgNm)}</div>` : ''}${_cgSite ? `<div style="font-weight:600;margin-top:3px">현장 주소 : ${e(_cgSite)}</div>` : ''}</td></tr>` : ''}
+    ${(r.dispatchDest || _cgSite) ? `<tr><td class="k">출고지</td><td colspan="3" style="font-weight:700">${e(r.dispatchDest || '')}${(_cgSite && _cgSite !== String(r.dispatchDest || '').trim()) ? `<div style="font-weight:600;margin-top:3px">현장 주소 : ${e(_cgSite)}</div>` : ''}</td></tr>` : ''}
   </table>
   <table class="items"><colgroup><col style="width:8%"><col style="width:40%"><col style="width:28%"><col style="width:14%"><col style="width:10%"></colgroup>
     <thead><tr><th>No</th><th>품목명</th><th>규격 / 롯트·패턴</th><th>수량</th><th>단위</th></tr></thead><tbody>${rows}</tbody></table>
