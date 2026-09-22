@@ -14592,11 +14592,12 @@ function basinDrawSvg(d, lang) {
       s += _bdDimH(cen2, px + pw, py + ph + 54, String(Math.round(A.L - (A.xs[1] + A.bl / 2))), { from: py + ph + 8, fs: 13.5 });
     }
   }
-  /* 수전 치수는 «볼에서 수전 센터까지» 하나만 적는다
-     사용자: *"볼에서 중심까지, 뒤에서 중심까지 이거 빼 — 업계 통용용어가 아니어서 소비자들이 말할 때 헷갈림
-             볼에서 수전 센터까지 이 값만 있으면 됨"* (2026-09-22) */
+  /* 수전 치수는 «뒤 모서리 → 수전 → 볼» 을 한 줄로 잇는다 (합이 뒤 여백)
+     ★ 2026-09-22 — 타공 사양 칸의 «말»(볼에서 중심까지·뒤에서 중심까지)만 뺐다.
+       평면도 치수선은 그대로 둔다 (사용자: *"치수를 아예 지우라는 게 아니라 말을 지우라고"*) */
   if (d.tap && !_top) {
     const tX = cenX + 64, tY = py + tapFB * sc;
+    if (tapFB > 0.5) s += _bdDimV(py, tY, tX, String(Math.round(tapFB)), { from: cenX + 10 });
     if (TP.fromBowl > 0.5) s += _bdDimV(tY, by, tX, String(Math.round(TP.fromBowl)), { from: cenX + 10, fs: 13.5 });
   }
 
