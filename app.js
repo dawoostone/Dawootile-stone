@@ -14592,11 +14592,11 @@ function basinDrawSvg(d, lang) {
       s += _bdDimH(cen2, px + pw, py + ph + 54, String(Math.round(A.L - (A.xs[1] + A.bl / 2))), { from: py + ph + 8, fs: 13.5 });
     }
   }
-  /* 수전 치수는 «뒤 모서리 → 수전 → 볼 뒤쪽» 을 한 줄로 잇는다 (합이 뒤 여백)
-     ★ 기준은 «볼에서 N» (기본 60) — 판 폭이 바뀌어도 볼과의 간격이 그대로다 */
+  /* 수전 치수는 «볼에서 수전 센터까지» 하나만 적는다
+     사용자: *"볼에서 중심까지, 뒤에서 중심까지 이거 빼 — 업계 통용용어가 아니어서 소비자들이 말할 때 헷갈림
+             볼에서 수전 센터까지 이 값만 있으면 됨"* (2026-09-22) */
   if (d.tap && !_top) {
     const tX = cenX + 64, tY = py + tapFB * sc;
-    if (tapFB > 0.5) s += _bdDimV(py, tY, tX, String(Math.round(tapFB)), { from: cenX + 10 });
     if (TP.fromBowl > 0.5) s += _bdDimV(tY, by, tX, String(Math.round(TP.fromBowl)), { from: cenX + 10, fs: 13.5 });
   }
 
@@ -14638,8 +14638,7 @@ function basinDrawSvg(d, lang) {
     ? [[K('타　공', '开　孔'), K('없음 — 상판만', '无 — 仅台面')]]
     : d.tap
     ? [[K('수전 타공', '龙头孔'), 'Ø' + (+d.tapDia || 35)],
-    [K('볼에서 중심까지', '距盆边'), String(Math.round(TP.fromBowl))],
-    [K('뒤에서 중심까지', '距后边缘'), String(Math.round(tapFB))],
+    [K('볼에서 수전 센터까지', '盆边到龙头中心'), String(Math.round(TP.fromBowl))],   // ★ 업계에서 쓰는 말 하나만 (2026-09-22)
     [K('배수구 바깥/안쪽', '排水孔 外/内'), (dOut > 0 ? 'Ø' + dOut : '—') + ' / ' + (dIn > 0 ? 'Ø' + dIn : '—')]]
     : [[K('수전 타공', '龙头孔'), K('없음 (매립수전)', '无（暗装龙头）')],
     [K('배수구 바깥', '排水孔 外'), dOut > 0 ? 'Ø' + dOut : '—'], [K('배수구 안쪽', '排水孔 内'), dIn > 0 ? 'Ø' + dIn : '—']];
@@ -14837,7 +14836,7 @@ function _openDrawFor(coll, docId, drawId, itemIdx) {
             <option value="0" ${!_bdCur.tap ? 'selected' : ''}>매립수전 — 타공 없음</option>
           </select>
           <input id="bd-tapDia" inputmode="numeric" value="${esc(_bdCur.tapDia)}" oninput="basinDrawPreview()" placeholder="타공 Ø" style="flex:1;min-width:92px;${inp}">
-          <input id="bd-tapFromBowl" inputmode="numeric" value="${esc(_bdCur.tapFromBowl)}" oninput="basinDrawPreview()" placeholder="볼에서 거리" style="flex:1;min-width:118px;${inp}">
+          <input id="bd-tapFromBowl" inputmode="numeric" value="${esc(_bdCur.tapFromBowl)}" oninput="basinDrawPreview()" placeholder="볼에서 수전 센터까지" style="flex:1;min-width:150px;${inp}">
         </div>
         <div id="bd-tap-hint" style="font-size:11px;color:#1b4fb0;margin-top:5px"></div>
       </div>
@@ -14975,15 +14974,14 @@ function basinDrawPreview() {
   if (A.m < 0 || A.gap < 0) bad.push('좌우·사이 띄움값이 판을 벗어납니다');
   if (bad.length) { box.innerHTML = `<div style="padding:22px;text-align:center;color:var(--red-t);font-size:13.5px;line-height:1.8"><i class="ti ti-alert-triangle"></i> ${bad.map(esc).join('<br>')}</div>`; return; }
   // 미리보기는 창 너비에 맞춰 줄여서 «한눈에» 보이게 한다 (내려받는 PNG는 원래 크기 그대로)
-  /* 수전 타공 안내 — «볼에서 N» 을 넣으면 «뒤에서 몇」인지 같이 알려준다 */
+  /* 수전 타공 안내 — «볼에서 수전 센터까지» 만 쓴다. 판 밖으로 넘칠 때만 경고 */
   const hint = el('bd-tap-hint');
   if (hint) {
     if (!d.tap) hint.innerHTML = '<span style="color:#b42318">매립수전 — 타공을 뚫지 않습니다</span>';
     else {
       const TP = bdTapPos(d, A);
-      hint.innerHTML = `타공 지름 기본 <b>Ø35</b> · <b>볼 뒤쪽에서 수전 중심까지</b> (비우면 <b>60</b>)`
-        + `<div style="margin-top:3px">→ 판 뒤 모서리에서 <b>${Math.round(TP.fromBack)}</b>mm · 뒤 여백 ${Math.round(TP.bowl)}mm`
-        + (TP.fit ? '' : ` <span style="color:#b42318;font-weight:700">— 뒤 여백을 벗어납니다. 값을 줄이거나 볼을 앞으로 옮기세요</span>`) + `</div>`;
+      hint.innerHTML = `타공 지름 기본 <b>Ø35</b> · <b>볼에서 수전 센터까지</b> (비우면 <b>60</b>)`
+        + (TP.fit ? '' : `<div style="margin-top:3px;color:#b42318;font-weight:700">— 볼 뒤 여백(${Math.round(TP.bowl)}mm)보다 커서 판 밖으로 나갑니다. 값을 줄이거나 볼을 앞으로 옮기세요</div>`);
     }
   }
   const svg = basinDrawSvg(d, _bdCur._lang === 'cn' ? 'cn' : 'ko')
