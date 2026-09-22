@@ -2758,15 +2758,15 @@ function issueCard(i) {
   const basin = isBasin ? (state.basins || []).find(x => x.id === i.basinId) : null;
   const stageTxt = isBasin ? (basin ? (basin.stage || '') : '삭제된 발주') : (site ? (site.stage || '') : '삭제된 현장');
   const kindBadge = isBasin ? `<span class="pill p-hold" style="flex:none;margin-right:6px;font-size:10px">세면대</span>` : '';
-  return `<div class="site" style="border-left:4px solid ${done ? '#12b76a' : '#f04438'}">
+  return `<div class="site" data-iss="${i.id}" data-iss-k="card" style="border-left:4px solid ${done ? '#12b76a' : '#f04438'}">
     <div class="site-top">
       <div><div class="nm">${kindBadge}${esc(i.siteName || (isBasin ? '세면대 발주' : '현장'))}</div><div class="ad"><i class="ti ti-calendar-event" style="font-size:13px"></i>${i.createdAt ? new Date(i.createdAt).toLocaleDateString('ko-KR') : ''} · ${esc(i.by || '')} 등록${stageTxt ? ' · 현재 ' + esc(stageTxt) : ''}</div></div>
-      <span class="pill ${done ? 'p-done' : 'p-issue'}">${done ? '처리완료' : '미해결'}</span>
+      <span class="pill ${done ? 'p-done' : 'p-issue'}" data-isspill>${done ? '처리완료' : '미해결'}</span>
     </div>
     <div style="margin-top:9px;font-size:13.5px;color:var(--t1);white-space:pre-wrap;line-height:1.6">${esc(i.reason || '')}</div>
     ${done
       ? `<div style="margin-top:9px;font-size:12px;color:var(--t3)"><i class="ti ti-check"></i> ${esc(i.resolvedDate || '')} ${esc(i.resolvedBy || '')} 처리 완료</div>`
-      : `<button class="btn btn-pri btn-block" style="margin-top:10px" onclick="resolveIssue('${i.id}')"><i class="ti ti-circle-check"></i>처리 완료</button>`}
+      : `<button class="btn btn-pri btn-block" data-issbtn style="margin-top:10px" onclick="resolveIssue('${i.id}')"><i class="ti ti-circle-check"></i>처리 완료</button>`}
     <div class="frm-foot" style="margin-top:8px">
       ${isBasin
       ? (basin ? `<button class="btn btn-sm" style="flex:1" onclick="openBasinForm('${i.basinId}')"><i class="ti ti-bath"></i>세면대 발주 보기</button>` : '')
@@ -2805,10 +2805,32 @@ async function submitIssue() {
     toast('이슈 등록됨'); closeModal();
   } finally { setTimeout(() => { _busy = false; }, 800); }
 }
+/* ★ 2026-09-22 — 처리 완료를 눌러도 화면이 그대로라 창을 닫았다 다시 열어야 바뀌었다
+   (사용자: *"처리완료 됐다는 어떤 액션이 없음 … 아예 없애면 안되고 추후 현장 눌렀을 때도 봐야함"*)
+   → 누르는 즉시 그 칸을 초록 «처리완료» 로 바꾸고 누가·언제 처리했는지 적는다.
+     이슈는 지우지 않는다 — 현장 상세에서 계속 보인다. */
 async function resolveIssue(id) {
   if (!confirm('이 이슈를 처리 완료로 표시할까요?')) return;
-  await Store.update('issues', id, { status: '처리완료', resolvedBy: me.name, resolvedDate: todayStr() });
-  toast('처리 완료');
+  const by = (me && me.name) || '', dt = todayStr();
+  try { await Store.update('issues', id, { status: '처리완료', resolvedBy: by, resolvedDate: dt }); }
+  catch (e) { toast('실패: ' + ((e && e.message) || e)); return; }
+  _issueMarkDone(id, by, dt);
+  toast('처리 완료 — 기록은 현장에 그대로 남습니다');
+}
+function _issueMarkDone(id, by, dt) {
+  const it = (state.issues || []).find(x => x.id === id);
+  if (it) Object.assign(it, { status: '처리완료', resolvedBy: by, resolvedDate: dt });
+  document.querySelectorAll('[data-iss="' + id + '"]').forEach(box => {
+    if (box.getAttribute('data-iss-k') === 'card') box.style.borderLeft = '4px solid #12b76a';
+    else { box.style.border = '1px solid #d0e8dc'; box.style.background = '#f3faf6'; }
+    const p = box.querySelector('[data-isspill]'); if (p) { p.className = 'pill p-done'; p.textContent = '처리완료'; }
+    const b = box.querySelector('[data-issbtn]');
+    if (b) b.outerHTML = `<div style="margin-top:6px;font-size:12px;color:#0F6E56;font-weight:700"><i class="ti ti-check"></i> ${esc(dt)} ${esc(by)} 처리 완료</div>`;
+  });
+  document.querySelectorAll('[data-isscnt]').forEach(n => {
+    const k = siteOpenIssues(n.getAttribute('data-isscnt')).length;
+    n.textContent = k ? '(' + k + '건 미해결)' : '(모두 처리)';
+  });
 }
 async function delIssue(id) {
   if (!confirm('이 이슈 기록을 삭제할까요?')) return;
@@ -3119,13 +3141,13 @@ function openSiteDetail(id) {
       ${s.note ? `<div class="df full"><div class="k">특이사항</div><div class="v" style="font-weight:500">${esc(s.note)}</div></div>` : ''}
     </div>
     ${(() => { const iss = siteIssues(s.id); return `
-    <div class="sec-label" style="display:flex;justify-content:space-between;align-items:center"><span><i class="ti ti-alert-triangle" style="color:#f04438"></i> 현장 이슈 ${iss.length ? `(${siteOpenIssues(s.id).length}건 미해결)` : ''}</span><button class="btn btn-ghost btn-sm" onclick="openIssueForm('${s.id}')"><i class="ti ti-plus"></i>이슈</button></div>
+    <div class="sec-label" style="display:flex;justify-content:space-between;align-items:center"><span><i class="ti ti-alert-triangle" style="color:#f04438"></i> 현장 이슈 ${iss.length ? `<span data-isscnt="${s.id}">(${siteOpenIssues(s.id).length}건 미해결)</span>` : ''}</span><button class="btn btn-ghost btn-sm" onclick="openIssueForm('${s.id}')"><i class="ti ti-plus"></i>이슈</button></div>
     ${iss.length ? iss.slice().sort((a, b) => { const ua = a.status !== '처리완료' ? 0 : 1, ub = b.status !== '처리완료' ? 0 : 1; return ua !== ub ? ua - ub : (b.createdAt || 0) - (a.createdAt || 0); }).map(i => {
       const done = i.status === '처리완료';
-      return `<div style="border:1px solid ${done ? '#d0e8dc' : '#fecdca'};background:${done ? '#f3faf6' : '#fef3f2'};border-radius:10px;padding:9px 11px;margin-bottom:7px">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span class="pill ${done ? 'p-done' : 'p-issue'}" style="flex:none">${done ? '처리완료' : '미해결'}</span><span style="font-size:11px;color:var(--t3)">${i.createdAt ? new Date(i.createdAt).toLocaleDateString('ko-KR') : ''} · ${esc(i.by || '')}</span></div>
+      return `<div data-iss="${i.id}" style="border:1px solid ${done ? '#d0e8dc' : '#fecdca'};background:${done ? '#f3faf6' : '#fef3f2'};border-radius:10px;padding:9px 11px;margin-bottom:7px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span class="pill ${done ? 'p-done' : 'p-issue'}" data-isspill style="flex:none">${done ? '처리완료' : '미해결'}</span><span style="font-size:11px;color:var(--t3)">${i.createdAt ? new Date(i.createdAt).toLocaleDateString('ko-KR') : ''} · ${esc(i.by || '')}</span></div>
         <div style="margin-top:6px;font-size:13px;white-space:pre-wrap;line-height:1.55">${esc(i.reason || '')}</div>
-        ${done ? `<div style="margin-top:5px;font-size:11.5px;color:var(--t3)"><i class="ti ti-check"></i> ${esc(i.resolvedDate || '')} ${esc(i.resolvedBy || '')} 처리</div>` : `<button class="btn btn-pri btn-sm btn-block" style="margin-top:7px" onclick="resolveIssue('${i.id}')"><i class="ti ti-circle-check"></i>처리 완료</button>`}
+        ${done ? `<div style="margin-top:5px;font-size:11.5px;color:var(--t3)"><i class="ti ti-check"></i> ${esc(i.resolvedDate || '')} ${esc(i.resolvedBy || '')} 처리</div>` : `<button class="btn btn-pri btn-sm btn-block" data-issbtn style="margin-top:7px" onclick="resolveIssue('${i.id}')"><i class="ti ti-circle-check"></i>처리 완료</button>`}
       </div>`; }).join('') : `<div style="font-size:12.5px;color:var(--t3);padding:4px 2px 10px">등록된 이슈가 없습니다.</div>`}`; })()}
     <div class="sec-label"><i class="ti ti-arrow-bar-to-right"></i>진행 단계 변경</div>
     <div class="seg" style="flex-wrap:wrap">
