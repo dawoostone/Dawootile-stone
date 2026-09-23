@@ -11604,9 +11604,14 @@ function openPurDetail(id) {
    문서번호(mgtKey)로 찾고, 매입은 국세청 승인번호(NTSConfirmNum)로 찾는다.
    kind: 'htview'(팝빌 상세 보기) / 'htprint'(인쇄용)
    ※ 서버(Cloud Function)에 이 mode 가 올라가 있어야 열린다.               */
+/* ★ 2026-09-22 — 승인번호에서 «숫자만» 뽑아내던 것을 고쳤다.
+   국세청 승인번호는 24자리인데 **영문이 섞인 것이 많다** (우리 매입 433건 중 179건).
+   숫자만 뽑으면 16~23자리로 짧아져 팝빌이 「국세청승인번호가 올바르지 않습니다」로 거절한다.
+   이제 띄어쓰기·하이픈만 떼고 숫자·영문은 그대로 보낸다. */
 async function purViewDoc(nts, kind) {
-  const n = String(nts || '').replace(/[^0-9]/g, '');
+  const n = String(nts || '').replace(/[^0-9A-Za-z]/g, '');
   if (!n) { toast('국세청 승인번호가 없어서 원본을 찾을 수 없습니다'); return; }
+  if (n.length !== 24) { toast('승인번호가 24자리가 아닙니다 (' + n.length + '자리) — 홈택스에서 다시 불러와 주세요'); return; }
   const w = window.open('', '_blank');
   try {
     const j = await _htCall({ mode: kind || 'htview', nts: n });
