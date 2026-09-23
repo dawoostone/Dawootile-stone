@@ -16123,7 +16123,30 @@ async function delShip(id) {
     await revertHoldsForShip(key);
     for (const cr of (state.chulgoReqs || []).filter(r => r.sourceShipId === key)) { try { await Store.remove('chulgoReqs', cr.id); } catch (e) { } }
   }
-  toast('출고 삭제됨 (재고 복구)');
+  const _un = await quoteUnshipIfNone([t.quoteId], [id]);          // ★ 견적서의 «출고 완료» 풀기
+  toast('출고 삭제됨 (재고 복구)' + (_un.length ? ' · 견적 ' + _un.join(', ') + ' 출고 완료 취소' : ''));
+}
+/* ★★ 2026-09-23 — 출고를 지우면 «견적서의 출고 완료»도 풀린다
+   사용자: *"출고내역에서 삭제하면 견적서에서도 출고 완료가 취소되어야 함"*
+   ★ 그 견적에 «남아 있는 출고»가 하나도 없을 때만 푼다.
+     나눠서 여러 번 출고한 건은 한 건만 지워도 출고 완료가 그대로 남는다.
+   ★ 방금 지운 것은 화면 자료에 아직 남아 있을 수 있어서 gone 으로 빼고 센다. */
+async function quoteUnshipIfNone(quoteIds, removedTxIds) {
+  const gone = new Set((removedTxIds || []).filter(Boolean));
+  const ids = Array.from(new Set((quoteIds || []).map(v => String(v == null ? '' : v).trim()).filter(Boolean)));
+  const undone = [];
+  for (const qid of ids) {
+    const q = (state.quotes || []).find(x => x.id === qid); if (!q) continue;
+    if (!(q.shipped || +q.shippedAt || +q.shipStartedAt || (q.shipDate || '').trim())) continue;
+    const left = (state.transactions || []).some(t => t.type === 'out' && t.quoteId === qid && !gone.has(t.id));
+    if (left) continue;                                  // 아직 남은 출고가 있으면 그대로 둔다
+    try {
+      await Store.update('quotes', qid, { shipped: false, shippedAt: 0, shipDate: '', shipStartedAt: 0 });
+      undone.push(q.docNo || qid);
+    } catch (e) { }
+  }
+  if (undone.length) { _shipDateMap = null; try { renderQuote(); } catch (e) { } }
+  return undone;
 }
 /* 이 출고(shipId)로 확정됐던 홀딩을 되돌림 — 출고완료 해제 → 홀딩 */
 async function revertHoldsForShip(key) {
@@ -16143,7 +16166,8 @@ async function delShipGroup(key) {
   }
   await revertHoldsForShip(key); // 출고완료됐던 홀딩 되돌리기
   for (const cr of (state.chulgoReqs || []).filter(r => r.sourceShipId === key)) { try { await Store.remove('chulgoReqs', cr.id); } catch (e) { } }   // 출고관리 대기열/지시도 함께 제거
-  toast(`출고 ${list.length}건 삭제됨 (재고 복구)`);
+  const _un = await quoteUnshipIfNone(list.map(t => t.quoteId), list.map(t => t.id));   // ★ 견적서의 «출고 완료» 풀기
+  toast(`출고 ${list.length}건 삭제됨 (재고 복구)` + (_un.length ? ' · 견적 ' + _un.join(', ') + ' 출고 완료 취소' : ''));
 }
 /* 입고 삭제 (관리자) — 오입고 정정: 재고에서 그만큼 차감(되돌림) */
 async function delIn(id) {
