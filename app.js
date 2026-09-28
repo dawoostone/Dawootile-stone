@@ -1424,6 +1424,7 @@ function custPriceMapFor(base, adj) {
   (state.priceList || []).forEach(p => {
     const k = custPriceKey(p.itemName);
     if (!k || /^__.*__$/.test(k)) return;
+    if (isCustomBasin(p.itemName)) return;   // ★ 비규격 세면대는 고객 화면에도 단가를 안 보낸다
     const b = +p[key] || 0;
     if (!(b > 0)) return;
     map[k] = Math.max(0, Math.round(b + add));
@@ -4810,6 +4811,7 @@ function clientType(name) { const c = (state.clients || []).find(x => _normName(
 function quoteMemoTemplate() { const m = (state.appmeta || []).find(x => x.key === 'quoteMemo'); return m ? (m.text || '') : ''; }
 /* 단가 조회: ① 거래처 개별단가(override) ② 유형별 단가표 ③ 품목 price */
 function quoteGetPrice(client, name, typeOverride) {
+  if (isCustomBasin(name)) return 0;   // ★ 비규격 세면대는 단가를 기억하지 않는다 — 늘 직접 입력
   const cn = _normName(client || ''), nm = _normName(name || ''); const cps = state.clientPrices || [];
   if (client && client.trim()) {
     const hit = cps.find(p => (p.client || '').trim() && _normName(p.client) === cn && _normName(p.itemName) === nm);
@@ -4974,6 +4976,7 @@ function qIsRegisteredMat(name) {
   return false;
 }
 function qLockNote(name) {
+  if (isCustomBasin(name)) return ' <span style="color:#b42318;font-weight:600"><i class="ti ti-pencil" style="font-size:11px;vertical-align:-1px"></i> 비규격 주문제작 — 단가를 기억하지 않습니다. 건마다 직접 입력하세요</span>';
   return qIsRegisteredMat(name)
     ? ' <span style="color:var(--t3)"><i class="ti ti-lock" style="font-size:11px;vertical-align:-1px"></i> 선택한 자재 · 바꾸려면 오른쪽 ✕로 줄을 지우고 다시 고르세요</span>'
     : '';
@@ -5028,6 +5031,10 @@ const HB_PRICE = { join: 950000, plain: 850000 };
 const HB_NAME = { join: '접합', plain: '비접합' };
 /* 이 자재가 «반제품» 인가 — 이름에 반제품이 들어가면 전부 해당 */
 function isHalfMat(name) { return String(name || '').indexOf('반제품') >= 0; }
+/* 비규격 세면대 주문제작 — 건마다 규격·금형·석종이 달라 «단가»라는 게 성립하지 않는다.
+   사용자: "비규격 세면대 단가는 말그대로 비규격 주문제작이니까 앞으로 단가 기억 x" (2026-09-28)
+   → 단가표·거래처 전용 단가에 값이 남아 있어도 «무시»하고, 견적 작성 시 늘 직접 넣게 한다. */
+function isCustomBasin(name) { const n = String(name || ''); return n.indexOf('세면대') >= 0 && n.indexOf('비규격') >= 0; }
 /* 규격 칸 글자에서 제작 규격·접합 여부를 되읽는다 (저장한 견적을 다시 열 때 씀)
    예: 「1200*550*180 접합」 → {L:'1200', W:'550', H:'180', kind:'join'} */
 function hbParseSpec(s) {
@@ -10011,7 +10018,8 @@ function quotePriceItems() {
   const map = {};
   (state.inventory || []).forEach(i => { if (i.name) map[_normName(i.name)] = { name: i.name, spec: i.spec || '' }; });
   (state.priceList || []).forEach(p => { const k = _normName(p.itemName); if (p.itemName && !map[k]) map[k] = { name: p.itemName, spec: p.spec || '' }; });
-  return Object.values(map).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  // ★ 비규격 세면대는 단가표에 적을 값이 없다 — 목록에서 뺀다
+  return Object.values(map).filter(x => !isCustomBasin(x.name)).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 }
 /* ── 단가표를 «헤베(㎡)»로도 보여주기 + 12T / 신성그룹 규칙 (2026-09-28) ──
    사용자: "헷갈리니까 우리가 볼 때는 헤베로 볼 수 있게 해줘"
@@ -10120,6 +10128,7 @@ function priceListImport(input) {
       let n = 0; const adm = isAdmin();
       for (let r = hi + 1; r < rows.length; r++) {
         const cells = rows[r] || []; const name = String(cells[map.name] == null ? '' : cells[map.name]).trim(); if (!name) continue;
+        if (isCustomBasin(name)) continue;   // ★ 비규격 세면대는 엑셀로 올려도 단가를 안 받는다
         const patch = {}; [['dist', map.dist], ['agency', map.agency], ['interior', map.interior], ['consumer', map.consumer], ['sinsung', map.sinsung], ['hyundai', map.hyundai], ['special', map.special]].forEach(([k, ci]) => { if (ci != null) { const v = _numv(cells[ci]); if (v > 0) patch[k] = v; } });
         if (map.cost != null && adm) { const cv = _numv(cells[map.cost]); if (cv > 0) patch.cost = cv; }   // 원가는 관리자만
         if (map.spec != null) { const sp = String(cells[map.spec] == null ? '' : cells[map.spec]).trim(); if (sp) patch.spec = sp; }
