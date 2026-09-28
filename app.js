@@ -15143,28 +15143,63 @@ function basinDrawPreview() {
   box.innerHTML = svg;
 }
 /* SVG → PNG 내려받기 (위챗·카톡으로 바로 보낼 수 있게) */
+/* ★★ 2026-09-28 — 도면을 «열지 않고» 바로 PNG 로 내려받는다
+   사용자: *"여기서 각 도면 누르지않고도 png 저장할 수있게해줘"*
+   예전에는 도면 편집 화면을 연 뒤에야 PNG 버튼이 있었다.
+   이제 도면 목록의 줄마다 PNG 버튼이 있고, 여러 장을 한꺼번에도 받을 수 있다. */
+function _bdPngName(d, lang) {
+  return [(d.client || '세면대'), (d.L || '') + 'x' + (d.W || ''), lang === 'cn' ? '中文' : '한글', todayStr()].join('_') + '.png';
+}
+/* 도면 한 장 → PNG 파일로 내려받기 (Promise — 여러 장 받을 때 차례로 쓰려고) */
+function bdPngDownload(d, lang) {
+  return new Promise(function (done) {
+    if (!d) { done(false); return; }
+    const svg = basinDrawSvg(d, lang === 'cn' ? 'cn' : 'ko');
+    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
+    const img = new Image();
+    img.onload = function () {
+      const S = 2;   // 2배로 떠서 글씨가 또렷하게
+      const cv = document.createElement('canvas'); cv.width = 1170 * S; cv.height = 820 * S;
+      const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height);
+      cx.drawImage(img, 0, 0, cv.width, cv.height);
+      URL.revokeObjectURL(url);
+      cv.toBlob(function (bb) {
+        const a = document.createElement('a'); a.href = URL.createObjectURL(bb);
+        a.download = _bdPngName(d, lang); document.body.appendChild(a); a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 200);
+        done(true);
+      }, 'image/png');
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); done(false); };
+    img.src = url;
+  });
+}
+/* 편집 화면에서 (지금 그리고 있는 도면) */
 function basinDrawPng(lang) {
-  const d = basinDrawRead();
-  const svg = basinDrawSvg(d, lang === 'cn' ? 'cn' : 'ko');
-  const img = new Image();
-  const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  img.onload = function () {
-    const S = 2;   // 2배로 떠서 글씨가 또렷하게
-    const cv = document.createElement('canvas'); cv.width = 1170 * S; cv.height = 820 * S;
-    const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height);
-    cx.drawImage(img, 0, 0, cv.width, cv.height);
-    URL.revokeObjectURL(url);
-    cv.toBlob(function (bb) {
-      const a = document.createElement('a'); a.href = URL.createObjectURL(bb);
-      const nm = [(d.client || '세면대'), d.L + 'x' + d.W, lang === 'cn' ? '中文' : '한글', todayStr()].join('_');
-      a.download = nm + '.png'; document.body.appendChild(a); a.click();
-      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 200);
-      toast('도면 PNG 저장됨 · ' + (lang === 'cn' ? '중문본' : '한글본'));
-    }, 'image/png');
-  };
-  img.onerror = function () { URL.revokeObjectURL(url); toast('도면을 그림으로 바꾸지 못했습니다'); };
-  img.src = url;
+  bdPngDownload(basinDrawRead(), lang).then(function (ok) {
+    toast(ok ? ('도면 PNG 저장됨 · ' + (lang === 'cn' ? '중문본' : '한글본')) : '도면을 그림으로 바꾸지 못했습니다');
+  });
+}
+/* ★ 목록에서 바로 — 도면 한 장 */
+async function basinDrawPngOne(coll, docId, drawId, lang) {
+  const doc = (state[coll] || []).find(x => x.id === docId); if (!doc) { toast('원본을 찾을 수 없습니다'); return; }
+  const d = basinDrawsOf(doc).find(x => x.id === drawId); if (!d) { toast('도면을 찾을 수 없습니다'); return; }
+  const ok = await bdPngDownload(d, lang);
+  toast(ok ? ('PNG 저장됨 · ' + (lang === 'cn' ? '중문본' : '한글본')) : '도면을 그림으로 바꾸지 못했습니다');
+}
+/* ★ 목록에서 바로 — 여러 장 한꺼번에 (브라우저가 막지 않게 한 장씩 사이를 띄운다) */
+async function basinDrawPngAll(coll, docId, lang) {
+  const doc = (state[coll] || []).find(x => x.id === docId); if (!doc) { toast('원본을 찾을 수 없습니다'); return; }
+  const ds = basinDrawsOf(doc); if (!ds.length) { toast('저장된 도면이 없습니다'); return; }
+  if (ds.length > 1 && !confirm('도면 ' + ds.length + '장을 ' + (lang === 'cn' ? '중문본' : '한글본') + ' PNG 로 한꺼번에 내려받을까요?\n\n'
+    + '※ 브라우저가 «파일 여러 개 내려받기»를 물어보면 허용해 주세요.')) return;
+  toast('도면 ' + ds.length + '장 저장 중…');
+  let n = 0;
+  for (const d of ds) {
+    if (await bdPngDownload(d, lang)) n++;
+    await new Promise(r => setTimeout(r, 450));      // 한꺼번에 쏟으면 브라우저가 막는다
+  }
+  toast('PNG ' + n + '장 저장됨 · ' + (lang === 'cn' ? '중문본' : '한글본') + (n < ds.length ? (' (' + (ds.length - n) + '장 실패)') : ''));
 }
 async function basinDrawSave() {
   if (!_bdColl || !_bdDocId) { toast('저장할 곳이 없습니다 — 먼저 저장한 뒤 다시 열어 주세요'); return; }
@@ -15212,6 +15247,10 @@ function basinDrawListHtml(doc, coll) {
       ${bis.length ? '' : `<button class="btn btn-sm btn-pri" style="float:right" onclick="${openFn}('${doc.id}')"><i class="ti ti-plus"></i>도면 그리기</button>`}</div>
     ${itemBox}
     ${bis.length && noItem ? `<div style="font-size:11.5px;color:var(--t3);padding:2px 2px 6px">품목이 지정되지 않은 옛 도면 ${noItem}장 — 아래에서 열어 다시 저장하면 품목이 붙습니다.</div>` : ''}
+    ${ds.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:7px">
+      <button class="btn btn-sm" style="flex:1;min-width:130px" onclick="basinDrawPngAll('${coll}','${doc.id}','ko')"><i class="ti ti-photo-down"></i>한글본 ${ds.length}장 PNG</button>
+      <button class="btn btn-sm" style="flex:1;min-width:130px" onclick="basinDrawPngAll('${coll}','${doc.id}','cn')"><i class="ti ti-photo-down"></i>중문본 ${ds.length}장 PNG</button>
+    </div>` : ''}
     ${ds.length ? ds.map(d => {
     const M = basinMoldOf(d.mold);
     return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--bd2);border-radius:10px;margin-bottom:6px">
@@ -15219,6 +15258,8 @@ function basinDrawListHtml(doc, coll) {
         <div style="font-weight:700;font-size:13.5px">${d.itemIdx != null && ordOf[d.itemIdx] ? `<span style="color:#1b4fb0">${_bdNo(ordOf[d.itemIdx])}</span> ` : ''}${esc(d.L)}×${esc(d.W)}×${esc(d.H)} <span style="font-weight:500;color:var(--t3)">· ${bdTopOnly(d) ? '상판만 (볼 없음)' : `${esc(M.ko)} ${M.l}×${M.w}${+d.bowls === 2 ? ' ×2' : ''}`}</span>${!bdTopOnly(d) && M.g === 'drop' ? `<span style="font-weight:600;font-size:11.5px;color:#2f6b3a;background:#eaf3ea;border-radius:6px;padding:1px 6px;margin-left:5px">${esc(bdFlipText(d, 'ko'))}</span>` : ''}</div>
         <div style="font-size:11.5px;color:var(--t3)">${esc(basinSkirtText(d, 'ko'))} · ${bdTopOnly(d) ? '타공 없음' : (d.tap ? '수전타공 Ø' + esc(d.tapDia) : '매립수전(타공X)')}${d.stone ? ' · ' + esc(d.stone) : ''}${d.itemName ? ' · ' + esc(d.itemName) : ''}</div>
       </div>
+      <button class="btn btn-sm" title="한글본 PNG 저장 (도면을 열지 않아도 됩니다)" onclick="basinDrawPngOne('${coll}','${doc.id}','${d.id}','ko')"><i class="ti ti-photo-down"></i></button>
+      <button class="btn btn-sm" style="font-size:11px;padding:3px 7px" title="중문본 PNG 저장" onclick="basinDrawPngOne('${coll}','${doc.id}','${d.id}','cn')">中</button>
       <button class="btn btn-sm" onclick="${openFn}('${doc.id}','${d.id}')"><i class="ti ti-edit"></i></button>
       <button class="btn btn-sm" style="color:var(--red-t)" onclick="basinDrawDel('${coll}','${doc.id}','${d.id}')"><i class="ti ti-trash"></i></button>
     </div>`; }).join('')
