@@ -11015,7 +11015,8 @@ function downloadCostLedger() {
     (q.issueLines || []).forEach(l => { aoa.push([qDate(q), q.client || '', q.docNo || '', '이슈', l.blame || '', '⚠ ' + (l.name || '') + (l.blameNote ? ' — ' + l.blameNote : ''), l.spec || '', l.hebe || '', l.qty || '', l.unitCost || '', +l.cost || 0, '', '', '']); });
     const _dc = quoteDcSupply(q);
     if (_dc > 0) aoa.push([qDate(q), q.client || '', q.docNo || '', '할인', '', '할인 (D/C)' + (q.discountNote ? ' — ' + q.discountNote : ''), '', '', '', '', '', -_dc, '', '']);
-    const mg = sup - ct; aoa.push(['', '', q.docNo || '', '소계', '', '▣ ' + (q.client || '') + ' / ' + (q.docNo || ''), '', '', '', '', ct, sup, mg, sup > 0 ? +(mg / sup).toFixed(4) : 0]); aoa.push([]);
+    const _rep = quoteSalesRepOf(q);
+    const mg = sup - ct; aoa.push(['', '', q.docNo || '', '소계', '', '▣ ' + (q.client || '') + ' / ' + (q.docNo || '') + ' · 담당 ' + (q.by || '-') + (_rep ? ' · 영업 ' + _rep : ''), '', '', '', '', ct, sup, mg, sup > 0 ? +(mg / sup).toFixed(4) : 0]); aoa.push([]);
   });
   aoa.push(['', '', '', '총계', '', '', '', '', '', '', tCost, tSup, tSup - tCost, tSup > 0 ? +((tSup - tCost) / tSup).toFixed(4) : 0]);
   const ws = XLSX.utils.aoa_to_sheet(aoa); ws['!cols'] = [{ wch: 11 }, { wch: 18 }, { wch: 12 }, { wch: 7 }, { wch: 8 }, { wch: 24 }, { wch: 16 }, { wch: 7 }, { wch: 6 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 8 }];
@@ -11250,6 +11251,91 @@ function acctCard(ym) {
       <input id="ac-search" placeholder="적요·금액 검색 (예: 운송, 500만이상)" value="${esc(filters.acctSearch || '')}"
         oninput="acctSetSearch(this.value)" autocomplete="off" lang="ko"></div>
     <div id="ac-listwrap">${acctListInner()}</div>`;
+}
+/* ── 원가 원장 — 업체명으로 찾기 (2026-09-28) ─────────────────
+   사용자: "원가 내역 중 업체명 검색할 수 있게"
+   ★ 검색어를 넣으면 «보고 있는 달»이 아니라 «전체 기간»에서 찾는다.
+     (지난 달 현장 원가를 찾으려고 달을 넘겨 가며 뒤질 일이 없게) */
+/* ── 원가 원장 — 담당자 · 영업담당자 · 색 (2026-09-28) ────────
+   사용자: "가시성 좋게 컬러나 디자인 요소 필요해 보임 / 한 견적서는 하나의 건으로 보여져야 함
+            견적서마다 견적서 담당자 옆에 기재해주고 / 그 옆 칸에 영업 담당자란 있어야 함" */
+function costStaffNames() {
+  return [...new Set((state.members || []).filter(m => ['admin', 'staff'].includes(m.role || 'staff')).map(m => String(m.name || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+}
+/* 영업담당자 — 견적에 지정한 사람이 먼저, 없으면 그 거래처에 등록된 영업담당자 */
+function quoteSalesRepOf(q) {
+  const v = String((q && q.salesRepName) || '').trim(); if (v) return v;
+  const c = (state.clients || []).find(x => _normName(x.value) === _normName((q && q.client) || ''));
+  return String((c && c.salesRep) || '').trim();
+}
+async function setQuoteSalesRep(id, name) {
+  const v = String(name || '').trim();
+  try { await Store.update('quotes', id, { salesRepName: v }); toast(v ? ('영업담당 ' + v) : '영업담당 지움'); }
+  catch (e) { toast('저장 실패: ' + ((e && e.message) || e)); }
+}
+/* 마진율에 따라 색을 바꾼다 — 한눈에 좋은 건/나쁜 건이 보이게 */
+function costRateStyle(r) {
+  if (r == null) return { bg: '#f2f4f6', fg: '#8a8f98' };
+  if (r < 0) return { bg: '#fdecea', fg: '#c0341d' };
+  if (r < 15) return { bg: '#fff4e5', fg: '#b45309' };
+  if (r < 30) return { bg: '#e8f1fd', fg: '#185fa5' };
+  return { bg: '#e8f7f0', fg: '#0f766e' };
+}
+function costLedgerList(ym) {
+  const s = (filters.costSearch || '').trim().toLowerCase();
+  const done = q => q.ordered || q.shipped || q.siteDone || q.basinDone;
+  let list = (state.quotes || []).filter(done);
+  if (s) list = list.filter(q => (String(q.client || '') + ' ' + String(q.docNo || '')).toLowerCase().includes(s));
+  else { const m = String(ym || '').trim() || todayStr().slice(0, 7); list = list.filter(q => qDate(q).startsWith(m)); }
+  return list.slice().sort((a, b) => (qDate(b) || '').localeCompare(qDate(a) || ''));
+}
+function _costLedgerRowsHtml(ym) {
+  const s = (filters.costSearch || '').trim();
+  const lq = costLedgerList(ym);
+  if (!lq.length) return `<tr><td colspan="10" style="padding:16px;text-align:center;color:var(--t3)">${s ? '「' + esc(s) + '」 로 찾은 건이 없습니다' : '이번 달 확정 주문 건이 없습니다'}</td></tr>`;
+  const staff = costStaffNames();
+  return lq.slice(0, 400).map((q, i) => {
+    const sup = quoteSaleNet(q);
+    const has = (q.costTotal != null) || (q.costLines && q.costLines.length);
+    const ct = has ? ((+q.costTotal) || (q.costLines || []).reduce((x, l) => x + (+l.cost || 0), 0)) : null;
+    const mg = ct != null ? sup - ct : null;
+    const r = (ct != null && sup > 0) ? Math.round(mg / sup * 100) : null;
+    const rs = costRateStyle(r);
+    const rep = quoteSalesRepOf(q);
+    const dc = quoteDcRaw(q), iss = (q.issueLines || []).reduce((a, b) => a + (+b.cost || 0), 0);
+    /* 한 견적서 = 한 줄. 원가를 아직 안 넣은 건은 줄 전체를 옅은 빨강으로 눈에 띄게 한다 */
+    const bg = has ? (i % 2 ? 'var(--soft)' : 'transparent') : '#fff7f6';
+    const td = 'padding:7px 8px;border-bottom:1px solid var(--bd)';
+    const opts = ['<option value=""></option>'].concat(staff.map(n => `<option ${_normName(rep) === _normName(n) ? 'selected' : ''}>${esc(n)}</option>`));
+    if (rep && !staff.some(n => _normName(n) === _normName(rep))) opts.splice(1, 0, `<option selected>${esc(rep)}</option>`);
+    return `<tr style="background:${bg}">
+      <td style="${td};white-space:nowrap;color:var(--t2)">${esc(s ? qDate(q) : qDate(q).slice(5))}</td>
+      <td style="${td};font-weight:700">${esc(q.client || '')}${dc > 0 || iss > 0 ? `<div style="margin-top:2px">${dc > 0 ? `<span style="font-size:9.5px;font-weight:700;color:#c0341d;background:#fdecea;border-radius:6px;padding:1px 5px;margin-right:3px">할인</span>` : ''}${iss > 0 ? `<span style="font-size:9.5px;font-weight:700;color:#b42318;background:#fff0ee;border-radius:6px;padding:1px 5px">이슈</span>` : ''}</div>` : ''}</td>
+      <td style="${td};font-size:11px;color:var(--t3);white-space:nowrap">${esc(q.docNo || '')}</td>
+      <td style="${td};font-size:11.5px;color:var(--t2);white-space:nowrap">${esc(q.by || '-')}</td>
+      <td style="${td}"><select onchange="setQuoteSalesRep('${q.id}',this.value)" style="width:100%;min-width:82px;font-size:11.5px;padding:3px 4px;border:1px solid var(--bd2);border-radius:7px;background:#fff;color:${rep ? 'var(--t1)' : 'var(--t3)'}">${opts.join('')}</select></td>
+      <td style="${td};text-align:right;font-weight:600">${fmtWon(sup)}</td>
+      <td style="${td};text-align:right;color:#b45309">${ct != null ? fmtWon(ct) : '<span style="font-size:10.5px;font-weight:700;color:#c0341d;background:#fdecea;border-radius:7px;padding:2px 7px">미입력</span>'}</td>
+      <td style="${td};text-align:right;font-weight:800;color:${mg == null ? 'var(--t3)' : (mg >= 0 ? '#0f766e' : '#dc2626')}">${mg != null ? fmtWon(mg) : '-'}</td>
+      <td style="${td};text-align:center"><span style="display:inline-block;min-width:44px;font-size:11.5px;font-weight:800;color:${rs.fg};background:${rs.bg};border-radius:8px;padding:2px 7px">${r != null ? r + '%' : '-'}</span></td>
+      <td style="${td};text-align:center"><button class="btn btn-sm" style="padding:3px 8px;${has ? '' : 'color:var(--blue);border-color:var(--blue)'}" onclick="openCostForm('${q.id}')">${has ? '<i class="ti ti-edit"></i>수정' : '<i class="ti ti-plus"></i>입력'}</button></td></tr>`;
+  }).join('');
+}
+/* 글자를 칠 때마다 목록만 갈아끼운다 (화면 전체를 다시 그리면 한글 입력이 끊긴다) */
+function costLedgerSearch(v) {
+  filters.costSearch = v;
+  const ym = filters.settleMonth || todayStr().slice(0, 7);
+  const b = document.querySelector('#settle-cost-list tbody'); if (b) b.innerHTML = _costLedgerRowsHtml(ym);
+  const h = el('cl-hint'); if (h) h.innerHTML = _costLedgerHint(ym);
+  const x = el('cl-search-x'); if (x) x.style.display = (v || '').trim() ? '' : 'none';
+  const L = el('settle-cost-list'); if (L) L.scrollTop = 0;
+}
+function costLedgerSearchClear() { const i = el('cl-search'); if (i) i.value = ''; costLedgerSearch(''); }
+function _costLedgerHint(ym) {
+  const s = (filters.costSearch || '').trim();
+  const n = costLedgerList(ym).length;
+  if (!s) return '<b>한 줄 = 견적서 한 건</b>입니다. <span style="color:#c0341d;font-weight:700">붉은 줄</span>은 원가 미입력 · 마진율은 색으로 구분됩니다 <span style="color:#0f766e;font-weight:700">30%↑</span> · <span style="color:#185fa5;font-weight:700">15~30%</span> · <span style="color:#b45309;font-weight:700">15%↓</span> · <span style="color:#c0341d;font-weight:700">마이너스</span>';
+  return `<b style="color:var(--blue)">「${esc(s)}」 전체 기간에서 ${n}건</b> — 달과 상관없이 찾습니다. 지우면 다시 이번 달만 보입니다.${n > 400 ? ' (400건까지 표시)' : ''}`;
 }
 function settleMonthNav(d) {
   const ym = filters.settleMonth || todayStr().slice(0, 7);
@@ -12644,16 +12730,14 @@ function renderSettle() {
   const expCatBar = `<div class="card" style="margin-bottom:12px;padding:11px 14px"><div style="font-size:11.5px;color:var(--t3);font-weight:700;margin-bottom:8px"><i class="ti ti-wallet"></i> 회사지출 분류별</div>
     ${_catKeys.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px">${_catKeys.map(c => `<div style="text-align:center;padding:6px 3px;background:var(--soft);border-radius:8px"><div style="font-size:10px;color:var(--t2);margin-bottom:2px">${esc(c)}</div><div style="font-size:12.5px;font-weight:800;color:#7c3aed">${fmtWon(expByCat[c])}</div></div>`).join('')}</div>` : `<div style="font-size:12px;color:var(--t3);text-align:center;padding:6px">이번 달 지출 내역이 없습니다</div>`}</div>`;
   // 원가·마진 전표별 (확정 주문된 건만 — 세면대/가공/자재 발주 무관)
-  const lq = monthQuotes.filter(q => q.ordered || q.shipped || q.siteDone || q.basinDone).slice().sort((a, b) => (qDate(b) || '').localeCompare(qDate(a) || ''));
-  const cRows = lq.length ? lq.map(q => { const sup = quoteSaleNet(q); const has = (q.costTotal != null) || (q.costLines && q.costLines.length); const ct = has ? ((+q.costTotal) || (q.costLines || []).reduce((x, l) => x + (+l.cost || 0), 0)) : null; const mg = ct != null ? sup - ct : null; const r = (ct != null && sup > 0) ? Math.round(mg / sup * 100) : null;
-    return `<tr style="border-bottom:1px solid var(--soft)"><td style="padding:6px 8px">${esc(qDate(q).slice(5))}</td><td style="padding:6px 8px">${esc(q.client || '')}</td><td style="padding:6px 8px;font-size:11px;color:var(--t3)">${esc(q.docNo || '')}</td><td style="padding:6px 8px;text-align:right">${fmtWon(sup)}</td><td style="padding:6px 8px;text-align:right;color:#b45309">${ct != null ? fmtWon(ct) : '<span style=\'color:#c0341d\'>미입력</span>'}</td><td style="padding:6px 8px;text-align:right;font-weight:700;color:${mg == null ? 'var(--t3)' : (mg >= 0 ? '#0f766e' : '#dc2626')}">${mg != null ? fmtWon(mg) : '-'}</td><td style="padding:6px 8px;text-align:right;color:var(--t2)">${r != null ? r + '%' : '-'}</td><td style="padding:6px 8px;text-align:center"><button class="btn btn-sm" style="padding:3px 8px;${has ? '' : 'color:var(--blue)'}" onclick="openCostForm('${q.id}')">${has ? '<i class="ti ti-edit"></i>수정' : '<i class="ti ti-plus"></i>입력'}</button></td></tr>`; }).join('')
-    : `<tr><td colspan="8" style="padding:16px;text-align:center;color:var(--t3)">이번 달 확정 주문 건이 없습니다</td></tr>`;
+  const cRows = _costLedgerRowsHtml(ym);
   const costLedger = `<div class="card" style="margin-bottom:12px;padding:13px 14px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px"><div style="font-size:11.5px;color:var(--t3);font-weight:700"><i class="ti ti-report-money"></i> 원가 원장 (전표별 원가 입력 · 매출 · 마진)</div>
       <button class="btn btn-sm" onclick="downloadCostLedger()"><i class="ti ti-download"></i>원가원장 엑셀</button></div>
-    <div style="font-size:11px;color:var(--t3);margin-bottom:8px">각 견적(현장)의 <b>입력/수정</b> 버튼으로 원가를 여기서 정리하세요.</div>
+    <div class="search-box" style="margin-bottom:7px"><i class="ti ti-search"></i><input id="cl-search" placeholder="업체명 · 전표번호로 찾기 (전체 기간)" value="${esc(filters.costSearch || '')}" oninput="costLedgerSearch(this.value)" autocomplete="off" lang="ko"><i id="cl-search-x" class="ti ti-x" onclick="costLedgerSearchClear()" style="cursor:pointer;color:var(--t3);display:${(filters.costSearch || '').trim() ? '' : 'none'}"></i></div>
+    <div id="cl-hint" style="font-size:11px;color:var(--t3);margin-bottom:8px">${_costLedgerHint(ym)}</div>
     <div data-keepscroll id="settle-cost-list" style="max-height:42vh;overflow:auto"><table style="width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px">
-      <thead><tr style="color:var(--t2);font-size:11px">${['날짜:left', '거래처:left', '전표:left', '매출:right', '원가:right', '마진:right', '마진율:right', '원가:center'].map(x => { const _p = x.split(':'); return `<th style="padding:6px 8px;text-align:${_p[1]};position:sticky;top:0;z-index:2;background:var(--card,#fff);border-bottom:1.5px solid var(--bd)">${_p[0]}</th>`; }).join('')}</tr></thead>
+      <thead><tr style="color:var(--t2);font-size:11px">${['날짜:left', '거래처:left', '전표:left', '담당자:left', '영업담당:left', '매출:right', '원가:right', '마진:right', '마진율:center', ':center'].map(x => { const _p = x.split(':'); return `<th style="padding:7px 8px;text-align:${_p[1]};position:sticky;top:0;z-index:2;background:var(--card,#fff);border-bottom:1.5px solid var(--bd2);font-weight:700">${_p[0]}</th>`; }).join('')}</tr></thead>
       <tbody>${cRows}</tbody></table></div></div>`;
   // 회사지출 입력 + 목록
   const expRows = expMonth.slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0));
