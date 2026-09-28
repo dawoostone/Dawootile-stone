@@ -5650,6 +5650,34 @@ const BASIN_NOTICE = [
   '제작 방식 상 모든 세면대가 완벽히 동일한 컬러로 나올 수 없으며 (굽는 시간에 따라 색상에 다소 차이가 있음)',
   '내부 볼의 깊이는 150MM 기준 +- 30MM의 오차가 발생할 수 있습니다.'
 ];
+/* 세면대 특이사항 — 위 기본 문구를 견적 설정에서 고쳐 쓸 수 있다.
+   고친 적이 없으면(또는 되돌리면) 위 BASIN_NOTICE 기본 문구가 그대로 나간다. */
+function basinNoticeDoc() { return (state.appmeta || []).find(x => x.key === 'basinNotice') || null; }
+function basinNoticeList() {
+  const m = basinNoticeDoc();
+  const a = (m && Array.isArray(m.lines)) ? m.lines.map(x => String(x == null ? '' : x).trim()).filter(Boolean) : null;
+  return (a && a.length) ? a : BASIN_NOTICE;
+}
+async function saveBasinNotice() {
+  const t = (el('qs-bnotice') && el('qs-bnotice').value) || '';
+  const lines = t.split('\n').map(x => x.trim()).filter(Boolean);
+  if (!lines.length) { toast('한 줄도 없습니다 — 「기본 문구로 되돌리기」를 눌러주세요'); return; }
+  const m = basinNoticeDoc();
+  try {
+    if (m) await Store.update('appmeta', m.id, { lines: lines, at: Date.now() });
+    else await Store.add('appmeta', { key: 'basinNotice', lines: lines, at: Date.now() });
+  } catch (e) { toast('저장 실패: ' + ((e && e.message) || e)); return; }
+  toast('세면대 특이사항 저장됨 — ' + lines.length + '줄');
+}
+async function resetBasinNotice() {
+  if (!confirm('세면대 특이사항을 기본 문구로 되돌릴까요?\n(지금 적어 둔 내용은 사라집니다)')) return;
+  const m = basinNoticeDoc();
+  try { if (m) await Store.remove('appmeta', m.id); }
+  catch (e) { toast('실패: ' + ((e && e.message) || e)); return; }
+  const t = el('qs-bnotice'); if (t) t.value = BASIN_NOTICE.join('\n');
+  toast('기본 문구로 되돌렸습니다');
+  setTimeout(() => { if (filters.quoteSettings) renderQuoteSettings(); }, 300);
+}
 function hasBasinItems(items) { return (items || []).some(it => (it.name || '').includes('세면대')); }
 function extraPrices() { const m = (state.appmeta || []).find(x => x.key === 'extraPrices'); return (m && m.prices) || {}; }
 async function saveExtraPrices(prices) { const m = (state.appmeta || []).find(x => x.key === 'extraPrices'); if (m) await Store.update('appmeta', m.id, { prices }); else await Store.add('appmeta', { key: 'extraPrices', prices }); }
@@ -5793,7 +5821,7 @@ function renderQuoteForm() {
         </div>
         <div id="q-basin-note" style="display:none;margin-bottom:10px;border:2px solid #c0341d;border-radius:10px;background:#fff5f5;padding:10px 12px">
           <div style="font-weight:800;color:#c0341d;font-size:13px;margin-bottom:5px">⚠ 세면대 주문제작 특이사항 — 견적서에 자동으로 강조 표기됩니다</div>
-          <ul style="margin:0;padding-left:20px;font-size:12px;line-height:1.65;color:#8a1c10">${BASIN_NOTICE.map(l => `<li>${esc(l)}</li>`).join('')}</ul>
+          <ul style="margin:0;padding-left:20px;font-size:12px;line-height:1.65;color:#8a1c10">${basinNoticeList().map(l => `<li>${esc(l)}</li>`).join('')}</ul>
         </div>
         <div class="fld full" style="margin-bottom:10px"><label>비고 <span style="color:var(--t3);font-weight:500">(기본 양식은 견적 설정에서 관리)</span></label><textarea id="q-memo" lang="ko" placeholder="결제조건·납기 등" style="min-height:64px">${esc(editing ? (v.memo || '') : (v.memo || quoteMemoTemplate()))}</textarea></div>
         <div style="background:var(--soft);border-radius:11px;padding:12px 14px;max-width:360px;margin-left:auto">
@@ -10086,10 +10114,11 @@ function qsFilterPrices(v) { filters.qsMatSearch = v; const b = document.querySe
 function renderQuoteSettings() {
   keepScrolls();
   const memo = quoteMemoTemplate();
+  const bnote = basinNoticeList().join('\n');
   const ci = companyInfo();
   const coFields = [['name', '상호'], ['ceo', '대표'], ['bizno', '사업자등록번호'], ['addr', '주소'], ['tel', '연락처'], ['biztype', '업태·종목'], ['email', '이메일'], ['web', '홈페이지']];
   el('pg-quote').innerHTML = `
-    <div class="ph"><div><h2><i class="ti ti-settings"></i>견적 기본설정</h2><p>비고 양식 · 거래처 유형 · 자재별 유형단가</p></div>
+    <div class="ph"><div><h2><i class="ti ti-settings"></i>견적 기본설정</h2><p>비고 양식 · 세면대 특이사항 · 거래처 유형 · 자재별 유형단가</p></div>
       <button class="btn btn-sm" onclick="quoteSettingsClose()"><i class="ti ti-arrow-left"></i> 견적 목록</button></div>
     <div id="qset-root">
       <div class="card" style="margin-bottom:12px;padding:13px 15px">
@@ -10113,6 +10142,16 @@ function renderQuoteSettings() {
         <div style="font-size:11.5px;color:var(--t3);margin-bottom:7px">새 견적을 작성할 때 비고란에 자동으로 채워집니다.</div>
         <textarea id="qs-memo" lang="ko" placeholder="예) · 부가세 별도\n· 결제: 계약금 50%, 잔금 납품 시\n· 납기: 발주 후 7일\n· 유효기간: 견적일로부터 15일" style="width:100%;min-height:110px;font-size:14px;padding:10px;border:1.5px solid var(--bd2);border-radius:10px">${esc(memo)}</textarea>
         <button class="btn btn-pri btn-sm btn-block" style="margin-top:8px" onclick="saveQuoteMemo()"><i class="ti ti-check"></i>비고 양식 저장</button>
+      </div>
+
+      <div class="card" style="margin-bottom:12px;padding:13px 15px">
+        <div class="card-h"><h3><i class="ti ti-alert-triangle"></i>세면대 주문제작 특이사항</h3><span class="more" style="font-size:11px;color:var(--t3)">세면대 견적서에 자동 표시</span></div>
+        <div style="font-size:11.5px;color:var(--t3);margin-bottom:7px">세면대가 들어간 견적서(인쇄 · 이미지 · 엑셀) 아래에 빨간 칸으로 나가는 문구입니다. <b>한 줄에 한 항목</b>씩 적어주세요. 빈 줄은 저장할 때 자동으로 빠집니다.</div>
+        <textarea id="qs-bnotice" lang="ko" style="width:100%;min-height:158px;font-size:13.5px;line-height:1.65;padding:10px;border:1.5px solid var(--bd2);border-radius:10px">${esc(bnote)}</textarea>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="btn btn-pri btn-sm" style="flex:1" onclick="saveBasinNotice()"><i class="ti ti-check"></i>특이사항 저장</button>
+          <button class="btn btn-sm" onclick="resetBasinNotice()"><i class="ti ti-rotate"></i>기본 문구로 되돌리기</button>
+        </div>
       </div>
 
       <div class="card" style="margin-bottom:12px;padding:13px 15px">
@@ -12946,7 +12985,7 @@ function quoteDocHtml(q) {
       <tr class="tot"><td>이번 청구액 (잔금)</td><td style="text-align:right">${fmtWon(b.due)} 원</td></tr>` : ''; })()}
     </table>
   </div>
-  ${hasBasinItems(items) ? `<div class="notice"><div class="nh">⚠ 세면대 주문제작 특이사항 (필독)</div><ul>${BASIN_NOTICE.map(l => `<li>${e(l)}</li>`).join('')}</ul></div>` : ''}
+  ${hasBasinItems(items) ? `<div class="notice"><div class="nh">⚠ 세면대 주문제작 특이사항 (필독)</div><ul>${basinNoticeList().map(l => `<li>${e(l)}</li>`).join('')}</ul></div>` : ''}
   <div class="foot"><span>※ 본 견적은 유효기간 내에서만 유효하며, 부가세 별도(공급가액 기준)로 산정되었습니다.</span><span>${e(co.name)}</span></div>
   </div></div>
   <script>window.addEventListener('load',function(){var s=document.getElementById('sheet');var a=1047;if(s&&s.scrollHeight>a){s.style.transform='scale('+(a/s.scrollHeight)+')';}});</script>
@@ -13721,7 +13760,7 @@ function combinedBillDocHtml(qs, picked, extraDc) {
       <tr class="tot"><td>청구 합계</td><td style="text-align:right">${(disc + _xdc) > 0 ? `<span class="was">할인 전 <s>${fmtWon(supply + vat)} 원</s></span>` : ''}${fmtWon(total - _xdc)} 원</td></tr>
     </table>
   </div>
-  ${hasBasin ? `<div class="notice"><div class="nh">⚠ 세면대 주문제작 특이사항 (필독)</div><ul>${BASIN_NOTICE.map(l => `<li>${e(l)}</li>`).join('')}</ul></div>` : ''}
+  ${hasBasin ? `<div class="notice"><div class="nh">⚠ 세면대 주문제작 특이사항 (필독)</div><ul>${basinNoticeList().map(l => `<li>${e(l)}</li>`).join('')}</ul></div>` : ''}
   <div class="foot"><span>※ 본 청구서는 상기 견적 ${qs.length}건(${e(docNos)})을 합산한 것이며, 부가세 별도(공급가액 기준)로 산정되었습니다.${picked ? ' 견적 중 일부 품목만 청구한 건입니다.' : ''}</span><span>${e(co.name)}</span></div>
   </div></div>
 </body></html>`;
@@ -13852,7 +13891,7 @@ function _quoteSheetXml(q) {
   { const b = quoteBalanceDue(q); if (b) { span(rr, 0, 4, 10, '기받은 계약금' + (b.from ? ' (' + b.from + ')' : ''), 's'); put(rr, 5, 11, -b.pre, 'n'); rr++; span(rr, 0, 4, 12, '이번 청구액 (잔금)', 's'); put(rr, 5, 13, b.due, 'n'); rowH[rr] = 26; rr++; } }
   rr++;
   if (q.memo) { span(rr, 0, 5, 14, '비고 : ' + q.memo, 's'); rowH[rr] = 44; rr++; }
-  if (hasBasinItems(items)) { span(rr, 0, 5, 15, '⚠ 세면대 주문제작 특이사항 (필독)', 's'); rowH[rr] = 22; rr++; (typeof BASIN_NOTICE !== 'undefined' ? BASIN_NOTICE : []).forEach(l => { span(rr, 0, 5, 16, '· ' + l, 's'); rr++; }); }
+  if (hasBasinItems(items)) { span(rr, 0, 5, 15, '⚠ 세면대 주문제작 특이사항 (필독)', 's'); rowH[rr] = 22; rr++; (typeof basinNoticeList === 'function' ? basinNoticeList() : []).forEach(l => { span(rr, 0, 5, 16, '· ' + l, 's'); rr++; }); }
   const maxRow = rr;
   const cell = (ref, sty, v, t) => t === 'n' ? ('<c r="' + ref + '" s="' + sty + '"><v>' + v + '</v></c>') : (t === 's' ? ('<c r="' + ref + '" s="' + sty + '" t="inlineStr"><is><t xml:space="preserve">' + esc(v == null ? '' : String(v)) + '</t></is></c>') : ('<c r="' + ref + '" s="' + sty + '"/>'));
   let sheetData = '';
