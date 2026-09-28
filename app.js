@@ -5477,6 +5477,16 @@ function _pctTxt(p) { const n = Math.round((+p || 0) * 10) / 10; return String(n
      · 이미 받은 계약금은 «통장에 들어온 금액 그대로» 빼준다 (%로 다시 계산하지 않는다).
      · 원본은 「잔금 견적서로 대체됨」이 되어 **매출·미수에서 빠진다** — 두 번 세지 않기 위해서다.
      · 받은 돈은 잔금 견적서에 그대로 따라붙는다. */
+/* ── 견적서 할인(D/C) 을 마진 계산에 반영 (2026-09-28) ─────────
+   사용자: "원가 정리에 할인도 포함이 되어야 함 / 총 매출액이랑 마진 다 볼 수 있어야 됨
+            할인 옆에 사유 적을 수 있으면 좋음"
+   견적서 할인은 «부가세 포함 합계»에서 빼는 금액이다 (합계 = 공급가 + 부가세 − 할인).
+   매출(공급가)에서는 ÷1.1 한 만큼만 빠진다 — 세금계산서 발행 때 쓰는 기준과 같다.
+   금액은 견적서에 적은 값을 그대로 읽는다 (원가 화면에서 고치지 않는다). */
+function quoteDcRaw(q) { return Math.max(0, Math.round(+((q && q.discount) || 0)) || 0); }
+function quoteDcSupply(q) { const d = quoteDcRaw(q); return d > 0 ? Math.round(d / 1.1) : 0; }
+/* 할인까지 반영한 «진짜 매출(공급가)» */
+function quoteSaleNet(q) { return Math.max(0, (Math.round(+((q && q.supply) || 0)) || 0) - quoteDcSupply(q)); }
 function quotePrepaid(q) { return Math.max(0, Math.round(+((q && q.prepaid) || 0))); }
 function quoteIsBalance(q) { return quotePrepaid(q) > 0; }
 function quoteSuperseded(q) { return !!(q && q.supersededBy); }
@@ -10861,7 +10871,7 @@ function costRecalc() {
 function renderCostForm() {
   keepScrolls();
   const q = (state.quotes || []).find(x => x.id === filters.costEdit); if (!q) { filters.costEdit = ''; render(); return; }
-  _costSupply = +q.supply || 0;
+  _costSupply = quoteSaleNet(q);   // ★ 할인까지 반영한 매출로 마진을 잡는다
   _costRev = { mat: 0, proc: 0, cons: 0, trans: 0, issue: 0 };   // 이슈는 매출이 없다
   (q.items || []).forEach(it => { const c = marginCat(it.name); const k = c === '가공' ? 'proc' : c === '시공' ? 'cons' : c === '운송' ? 'trans' : 'mat'; _costRev[k] += Math.round(+it.amt || 0); });
   const _procItems = (q.items || []).filter(it => costGubunOf(it.name) === '가공');
@@ -10871,6 +10881,7 @@ function renderCostForm() {
      단, 예전에 가공비를 적어 둔 건이면 칸을 띄운다 — 안 그러면 저장할 때 그 금액이 0으로 지워진다. */
   const _hasProc = _procItems.length > 0 || (+q.processCost || 0) > 0;
   const lines = (q.costLines && q.costLines.length) ? q.costLines : (q.items || []).filter(it => costGubunOf(it.name) !== '가공').map(it => ({ gubun: costGubunOf(it.name), factory: '', name: it.name, spec: it.spec || '', hebe: costHebeOf(it.name, it.spec || ''), qty: it.qty || '', unitCost: '', cost: '', cnStone: it.stone || '' }));
+  const _dcRaw = quoteDcRaw(q), _dcSup = quoteDcSupply(q), _saleNet = quoteSaleNet(q);
   const _issueRows = (q.issueLines || []).map(issueLineHtml).join('');
   const _sm = costSaleMap(q);
   const rows = lines.map(l => costLineHtml(l, _sm.line(l.name))).join('');
@@ -10898,6 +10909,13 @@ function renderCostForm() {
         <div id="ci-rows">${_issueRows}</div>
         <button type="button" class="btn btn-ghost btn-sm btn-block" style="color:#b42318" onclick="addIssueRow()"><i class="ti ti-plus"></i>이슈 비용 줄 추가</button>
       </div>
+      ${_dcRaw <= 0 ? '' : `<div style="background:#fff5f4;border:1.5px solid #f0c8c2;border-radius:11px;padding:11px 13px;margin-top:12px">
+        <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+          <div style="font-size:13px;font-weight:700;color:#c0341d;flex:none"><i class="ti ti-tag"></i> 할인 (D/C) ${fmtWon(_dcRaw)}원</div>
+          <input id="ct-dcnote" lang="ko" placeholder="할인 사유 (예: 단골 거래처 절사 · 하자 보상)" value="${esc(q.discountNote || '')}" style="flex:1;min-width:150px;font-size:13px;padding:7px 9px;border:1.5px solid #e8a99f;border-radius:8px">
+        </div>
+        <div style="font-size:11px;color:var(--t3);margin-top:6px;line-height:1.5">견적서에 적은 할인이라 여기서는 못 고칩니다 (고치려면 견적서를 수정하세요). 매출에서는 부가세를 뺀 <b>${fmtWon(_dcSup)}원</b>이 빠집니다.</div>
+      </div>`}
       <div style="background:var(--soft);border-radius:11px;padding:12px 14px;margin-top:12px;max-width:460px;margin-left:auto">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
           <thead><tr style="color:var(--t3);font-size:11px"><th style="text-align:left;padding:2px 4px">분류</th><th style="text-align:right;padding:2px 4px">매출</th><th style="text-align:right;padding:2px 4px">원가</th><th style="text-align:right;padding:2px 4px">마진</th></tr></thead>
@@ -10908,7 +10926,10 @@ function renderCostForm() {
             <tr><td style="padding:3px 4px">운송</td><td style="text-align:right">${fmtWon(_costRev.trans)}</td><td style="text-align:right;color:#b45309"><span id="cc_trans">0</span></td><td style="text-align:right;font-weight:700"><span id="cm_trans">0</span></td></tr>
             <tr id="ct-issue-row" style="display:none"><td style="padding:3px 4px;color:#b42318;font-weight:700">이슈</td><td style="text-align:right;color:var(--t3)">-</td><td style="text-align:right;color:#b42318;font-weight:700"><span id="cc_issue">0</span></td><td style="text-align:right;font-weight:700"><span id="cm_issue">0</span></td></tr>
           </tbody>
-          <tfoot><tr style="border-top:1.5px solid var(--bd2);font-size:14px"><td style="padding:5px 4px;font-weight:800">총</td><td style="text-align:right;font-weight:700">${fmtWon(q.supply)}</td><td style="text-align:right;font-weight:700;color:#b45309"><span id="ct-total">0</span></td><td style="text-align:right;font-weight:800"><span id="ct-margin" style="color:var(--gd)">0</span></td></tr></tfoot>
+          <tfoot>
+            ${_dcRaw > 0 ? `<tr style="border-top:1px dashed var(--bd2)"><td style="padding:4px;color:#c0341d;font-weight:700">할인 (D/C)</td><td style="text-align:right;color:#c0341d;font-weight:700">- ${fmtWon(_dcSup)}</td><td colspan="2" style="text-align:right;font-size:11px;color:var(--t3)">견적서 할인 ${fmtWon(_dcRaw)}원 (부가세 포함) → 매출 차감</td></tr>` : ''}
+            <tr style="border-top:1.5px solid var(--bd2);font-size:14px"><td style="padding:5px 4px;font-weight:800">총</td><td style="text-align:right;font-weight:700">${fmtWon(_saleNet)}</td><td style="text-align:right;font-weight:700;color:#b45309"><span id="ct-total">0</span></td><td style="text-align:right;font-weight:800"><span id="ct-margin" style="color:var(--gd)">0</span></td></tr>
+          </tfoot>
         </table>
         <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--t3);margin-top:6px"><span>${_hasProc ? '가공 원가 = 공장 견적 총액' : ''}</span><span>총마진율 <b id="ct-rate">-</b></span></div>
       </div>
@@ -10939,8 +10960,11 @@ async function submitCost(id) {
   const issueLines = [];
   document.querySelectorAll('#ci-rows .ci-row').forEach(r => { const L = issueLineRead(r); if (L) issueLines.push(L); });
   const issueCost = issueLines.reduce((a, b) => a + (+b.cost || 0), 0);
-  const costTotal = lines.reduce((a, b) => a + (+b.cost || 0), 0) + processCost + issueCost; const sup = +q.supply || 0; const margin = sup - costTotal;
-  await Store.update('quotes', id, { costLines: lines, processCost: processCost, issueLines: issueLines, issueCost: issueCost, costTotal: costTotal, margin: margin, marginRate: sup > 0 ? +(margin / sup).toFixed(4) : 0 });
+  const costTotal = lines.reduce((a, b) => a + (+b.cost || 0), 0) + processCost + issueCost;
+  const sup = quoteSaleNet(q);                                   // ★ 할인까지 뺀 매출
+  const margin = sup - costTotal;
+  const dcNote = (el('ct-dcnote') && el('ct-dcnote').value || '').trim();
+  await Store.update('quotes', id, { costLines: lines, processCost: processCost, issueLines: issueLines, issueCost: issueCost, costTotal: costTotal, saleNet: sup, discountNote: dcNote, margin: margin, marginRate: sup > 0 ? +(margin / sup).toFixed(4) : 0 });
   filters.costEdit = ''; toast('원가 저장 · 마진 ' + fmtWon(margin)); render(); costListRestore();
 }
 /* ── 원가 원장 : 원가 줄 옆에 «그 항목이 얼마에 팔렸는지» 붙이기 (2026-09-28)
@@ -10982,13 +11006,15 @@ function downloadCostLedger() {
   const aoa = [['견적서(현장)별 원가·마진 원장'], ['출력일 ' + todayStr()], [], head];
   let tSup = 0, tCost = 0;
   qs.forEach(q => {
-    const sup = +q.supply || 0; const pc = +q.processCost || 0; const ic = (q.issueLines || []).reduce((a, b) => a + (+b.cost || 0), 0);
+    const sup = quoteSaleNet(q); const pc = +q.processCost || 0; const ic = (q.issueLines || []).reduce((a, b) => a + (+b.cost || 0), 0);
     const ct = (q.costLines || []).reduce((a, b) => a + (+b.cost || 0), 0) + pc + ic; tSup += sup; tCost += ct;
     const sm = costSaleMap(q);
     const cell4 = (sale, cost) => (sale == null) ? ['', '', ''] : [sale, sale - cost, sale > 0 ? +((sale - cost) / sale).toFixed(4) : 0];
     (q.costLines || []).forEach(l => { const _c = +l.cost || 0; const _s = sm.line(l.name); aoa.push([qDate(q), q.client || '', q.docNo || '', l.gubun || '', l.factory || '', l.name || '', l.spec || '', l.hebe || '', l.qty || '', l.unitCost || '', _c].concat(cell4(_s, _c))); });
     if (pc > 0) { const _ps = sm.proc(); aoa.push([qDate(q), q.client || '', q.docNo || '', '가공', '공장견적', '가공비(공장 견적 총액)', '', '', '', '', pc].concat(cell4(_ps, pc))); }
     (q.issueLines || []).forEach(l => { aoa.push([qDate(q), q.client || '', q.docNo || '', '이슈', l.blame || '', '⚠ ' + (l.name || '') + (l.blameNote ? ' — ' + l.blameNote : ''), l.spec || '', l.hebe || '', l.qty || '', l.unitCost || '', +l.cost || 0, '', '', '']); });
+    const _dc = quoteDcSupply(q);
+    if (_dc > 0) aoa.push([qDate(q), q.client || '', q.docNo || '', '할인', '', '할인 (D/C)' + (q.discountNote ? ' — ' + q.discountNote : ''), '', '', '', '', '', -_dc, '', '']);
     const mg = sup - ct; aoa.push(['', '', q.docNo || '', '소계', '', '▣ ' + (q.client || '') + ' / ' + (q.docNo || ''), '', '', '', '', ct, sup, mg, sup > 0 ? +(mg / sup).toFixed(4) : 0]); aoa.push([]);
   });
   aoa.push(['', '', '', '총계', '', '', '', '', '', '', tCost, tSup, tSup - tCost, tSup > 0 ? +((tSup - tCost) / tSup).toFixed(4) : 0]);
@@ -12579,7 +12605,7 @@ function renderSettle() {
   const monthQuotes = (state.quotes || []).filter(q => qDate(q).startsWith(ym));
   const salesAll = monthQuotes.reduce((a, q) => a + (+q.supply || 0), 0);
   const costed = monthQuotes.filter(q => (+q.costTotal || 0) > 0 || (q.costLines && q.costLines.length));
-  const salesCosted = costed.reduce((a, q) => a + (+q.supply || 0), 0);
+  const salesCosted = costed.reduce((a, q) => a + quoteSaleNet(q), 0);   // ★ 할인 반영
   const costSum = costed.reduce((a, q) => a + ((+q.costTotal) || (q.costLines || []).reduce((x, l) => x + (+l.cost || 0), 0)), 0);
   const grossProfit = salesCosted - costSum;
   const expMonth = (state.expenses || []).filter(e => (e.date || '').startsWith(ym));
@@ -12619,7 +12645,7 @@ function renderSettle() {
     ${_catKeys.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px">${_catKeys.map(c => `<div style="text-align:center;padding:6px 3px;background:var(--soft);border-radius:8px"><div style="font-size:10px;color:var(--t2);margin-bottom:2px">${esc(c)}</div><div style="font-size:12.5px;font-weight:800;color:#7c3aed">${fmtWon(expByCat[c])}</div></div>`).join('')}</div>` : `<div style="font-size:12px;color:var(--t3);text-align:center;padding:6px">이번 달 지출 내역이 없습니다</div>`}</div>`;
   // 원가·마진 전표별 (확정 주문된 건만 — 세면대/가공/자재 발주 무관)
   const lq = monthQuotes.filter(q => q.ordered || q.shipped || q.siteDone || q.basinDone).slice().sort((a, b) => (qDate(b) || '').localeCompare(qDate(a) || ''));
-  const cRows = lq.length ? lq.map(q => { const sup = +q.supply || 0; const has = (q.costTotal != null) || (q.costLines && q.costLines.length); const ct = has ? ((+q.costTotal) || (q.costLines || []).reduce((x, l) => x + (+l.cost || 0), 0)) : null; const mg = ct != null ? sup - ct : null; const r = (ct != null && sup > 0) ? Math.round(mg / sup * 100) : null;
+  const cRows = lq.length ? lq.map(q => { const sup = quoteSaleNet(q); const has = (q.costTotal != null) || (q.costLines && q.costLines.length); const ct = has ? ((+q.costTotal) || (q.costLines || []).reduce((x, l) => x + (+l.cost || 0), 0)) : null; const mg = ct != null ? sup - ct : null; const r = (ct != null && sup > 0) ? Math.round(mg / sup * 100) : null;
     return `<tr style="border-bottom:1px solid var(--soft)"><td style="padding:6px 8px">${esc(qDate(q).slice(5))}</td><td style="padding:6px 8px">${esc(q.client || '')}</td><td style="padding:6px 8px;font-size:11px;color:var(--t3)">${esc(q.docNo || '')}</td><td style="padding:6px 8px;text-align:right">${fmtWon(sup)}</td><td style="padding:6px 8px;text-align:right;color:#b45309">${ct != null ? fmtWon(ct) : '<span style=\'color:#c0341d\'>미입력</span>'}</td><td style="padding:6px 8px;text-align:right;font-weight:700;color:${mg == null ? 'var(--t3)' : (mg >= 0 ? '#0f766e' : '#dc2626')}">${mg != null ? fmtWon(mg) : '-'}</td><td style="padding:6px 8px;text-align:right;color:var(--t2)">${r != null ? r + '%' : '-'}</td><td style="padding:6px 8px;text-align:center"><button class="btn btn-sm" style="padding:3px 8px;${has ? '' : 'color:var(--blue)'}" onclick="openCostForm('${q.id}')">${has ? '<i class="ti ti-edit"></i>수정' : '<i class="ti ti-plus"></i>입력'}</button></td></tr>`; }).join('')
     : `<tr><td colspan="8" style="padding:16px;text-align:center;color:var(--t3)">이번 달 확정 주문 건이 없습니다</td></tr>`;
   const costLedger = `<div class="card" style="margin-bottom:12px;padding:13px 14px">
