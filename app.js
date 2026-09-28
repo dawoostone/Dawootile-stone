@@ -5459,6 +5459,21 @@ function quoteDeposit(q) {
   return { pct: pct, amt: amt, rest: total - amt, total: total };
 }
 function _pctTxt(p) { const n = Math.round((+p || 0) * 10) / 10; return String(n); }
+/* ★★ 2026-09-28 — 잔금 견적서
+   사용자: *"계약금 결제 완료된 견적서에서 수량 수정하고 잔금 받는 견적서 필요"*
+   실측 뒤 수량이 바뀌면, 원본은 그대로 두고 **수량만 고친 «잔금 견적서»를 한 장 더** 만든다.
+     · 이미 받은 계약금은 «통장에 들어온 금액 그대로» 빼준다 (%로 다시 계산하지 않는다).
+     · 원본은 「잔금 견적서로 대체됨」이 되어 **매출·미수에서 빠진다** — 두 번 세지 않기 위해서다.
+     · 받은 돈은 잔금 견적서에 그대로 따라붙는다. */
+function quotePrepaid(q) { return Math.max(0, Math.round(+((q && q.prepaid) || 0))); }
+function quoteIsBalance(q) { return quotePrepaid(q) > 0; }
+function quoteSuperseded(q) { return !!(q && q.supersededBy); }
+/* 잔금 견적서의 «이번 청구액» — 합계에서 기받은 계약금을 뺀 금액 */
+function quoteBalanceDue(q) {
+  const pre = quotePrepaid(q); if (!(pre > 0)) return null;
+  const total = Math.round(+((q && q.total) || 0));
+  return { pre: pre, total: total, due: Math.max(0, total - pre), from: String((q && q.prepaidFrom) || '') };
+}
 function quoteSetDeposit(p) { const e2 = el('q-dp'); if (!e2) return; e2.value = p ? String(p) : ''; quoteRecalc(); }
 function quoteTruncate(place) {
   const rem = (_qRawTotal || 0) % place;
@@ -5575,7 +5590,23 @@ function openQuoteInline(id, copy) {
   filters.quoteEdit = id || 'new'; filters.quoteCopy = !!copy; filters.quoteCat = '';
   renderQuote(); if (el('pg-quote')) el('pg-quote').scrollIntoView({ block: 'start' });
 }
-function quoteCancel() { qDraftDrop(); filters.quoteEdit = ''; filters.quoteCopy = false; filters.quoteCat = ''; renderQuote(); }
+function quoteCancel() { qDraftDrop(); filters.quoteEdit = ''; filters.quoteCopy = false; filters.quoteCat = ''; filters.quoteBalanceOf = ''; renderQuote(); }
+/* ★ 계약금 받은 견적 → 수량 고쳐서 «잔금 견적서» 만들기 (2026-09-28) */
+function quoteBalanceNew(id) {
+  const q = (state.quotes || []).find(x => x.id === id); if (!q) { toast('견적을 찾을 수 없습니다'); return; }
+  if (quoteSuperseded(q)) { toast('이미 잔금 견적서로 대체된 견적입니다'); return; }
+  if (quoteIsBalance(q)) { toast('이 견적이 이미 잔금 견적서입니다'); return; }
+  const got = Math.round(quotePaid(q));
+  if (!(got > 0)) { toast('아직 들어온 돈이 없습니다 — 계약금이 입금된 뒤에 만들 수 있습니다'); return; }
+  if (!confirm('이 견적으로 «잔금 견적서»를 만들까요?\n\n'
+    + '  원본 견적       ' + (q.docNo || '') + '\n'
+    + '  기받은 계약금   ' + fmtWon(got) + '원\n\n'
+    + '· 품목이 그대로 복사됩니다 — 수량만 고치면 됩니다.\n'
+    + '· 저장하면 새 합계에서 위 금액을 뺀 «잔금»을 청구합니다.\n'
+    + '· 원본은 「잔금 견적서로 대체됨」이 되어 매출·미수에서 빠집니다 (두 번 세지 않게).')) return;
+  filters.quoteBalanceOf = id;
+  openQuoteInline(id, true);          // 복사 모드로 폼을 연다 (품목 그대로, 번호·날짜는 새로)
+}
 /* 부대비용·가공 프리셋 (견적 폼에 항상 표시, 수량 입력한 것만 견적서 반영) */
 const CONSUMER_GAGONG = [{ name: '가공비 12T (장당)', unit: '장' }, { name: '가공비 6T (장당)', unit: '장' }];   // 소비자 유형 가공비
 const QUOTE_EXTRAS = [
@@ -5687,7 +5718,17 @@ function renderQuoteForm() {
   const matOpts = quotePriceItems().map(i => `<option value="${esc(i.name)}">`).join('');   // 재고 + 단가표 통합
   const editing = q && !copy;
   el('pg-quote').innerHTML = `
-    <div class="ph"><div><h2><i class="ti ti-file-invoice"></i>${editing ? '견적 수정' : (copy ? '견적 복사' : '견적 작성')}</h2><p>거래처·품목을 입력하면 합계가 자동 계산됩니다</p></div>
+    ${(() => {
+      const bq = filters.quoteBalanceOf ? (state.quotes || []).find(x => x.id === filters.quoteBalanceOf) : null;
+      if (!bq) return '';
+      const got = Math.round(quotePaid(bq));
+      return `<div style="background:#eef7f1;border:1.5px solid #bfe3d0;border-radius:12px;padding:11px 13px;margin-bottom:11px;font-size:12.5px;color:#2f6b3a;line-height:1.7">
+        <b style="font-size:13.5px"><i class="ti ti-receipt-2"></i> 잔금 견적서를 만드는 중입니다</b><br>
+        원본 <b>${esc(bq.docNo || '')}</b> 의 품목을 그대로 가져왔습니다 — <b>수량만 고치세요.</b><br>
+        저장하면 새 합계에서 <b>기받은 계약금 ${fmtWon(got)}원</b>을 뺀 <b>잔금</b>을 청구합니다.
+        <span style="color:var(--t3)">원본은 「대체됨」이 되어 매출·미수에서 빠집니다.</span></div>`;
+    })()}
+    <div class="ph"><div><h2><i class="ti ti-file-invoice"></i>${filters.quoteBalanceOf ? '잔금 견적서' : (editing ? '견적 수정' : (copy ? '견적 복사' : '견적 작성'))}</h2><p>거래처·품목을 입력하면 합계가 자동 계산됩니다</p></div>
       <div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="openCutSimModal()"><i class="ti ti-layout-grid"></i>재단 시뮬레이션</button><button class="btn btn-sm" onclick="quoteCancel()"><i class="ti ti-arrow-left"></i> 목록</button></div></div>
     <div id="qd-note" style="display:none;font-size:12px;color:#1a56b8;background:#eef4ff;border:1.5px solid #c3d6f5;border-radius:11px;padding:9px 12px;margin-bottom:10px"></div>
     <div id="qform-root" class="card" style="padding:15px 17px">
@@ -6036,12 +6077,30 @@ async function submitQuote(id) {
     const data = { docNo, client, ctype, category, date, valid, attn, siteAddr, items, supply, vat, discount, total, depositPct, depositAmt, memo, useSalesRep, by: (el('q-staff') && el('q-staff').value.trim()) || (me && me.name) || '', createdAt: (q && q.createdAt) || Date.now(), updatedAt: Date.now() };
     // 홀딩에서 가져온 견적이면 그 홀딩 id 를 남긴다 → 출고로 돌릴 때 홀딩이 자동으로 풀린다
     data.fromHoldIds = (_qFromHolds || []).filter(hid => (state.holdings || []).some(h => h.id === hid));
-    if (id) await Store.update('quotes', id, data); else await Store.add('quotes', data);
+    /* ★ 잔금 견적서로 만드는 중이면 — 기받은 계약금을 싣고, 원본을 «대체됨»으로 */
+    const _balId = String(filters.quoteBalanceOf || '');
+    const _balQ = (_balId && !id) ? (state.quotes || []).find(x => x.id === _balId) : null;
+    if (_balQ) {
+      data.prepaid = Math.max(0, Math.round(quotePaid(_balQ)));
+      data.prepaidFrom = _balQ.docNo || '';
+      data.prepaidFromId = _balQ.id;
+      data.depositPct = 0; data.depositAmt = 0;         // 잔금 견적서에는 새 계약금을 잡지 않는다
+      data.ordered = true; data.orderedAt = (+_balQ.orderedAt || Date.now());
+    }
+    let _newId = '';
+    if (id) await Store.update('quotes', id, data); else _newId = await Store.add('quotes', data);
+    if (_balQ && _newId) {
+      try { await Store.update('quotes', _balId, { supersededBy: _newId, supersededAt: Date.now() }); } catch (e) { }
+      try { moneyBust(); } catch (e) { }
+    }
+    filters.quoteBalanceOf = '';
     /* ★ 견적이 들어간 걸 확인한 «바로 이 순간» 초안을 지우고 화면을 넘긴다.
        예전엔 단가표 손질을 다 끝낸 뒤에야 넘어가서, 그 사이에 사장님은
        «저장이 안 됐나?» 하고 다시 누르곤 했다. */
     qDraftDrop(id || 'new');
-    filters.quoteEdit = ''; filters.quoteCopy = false; toast('견적 저장됨'); renderQuote();
+    filters.quoteEdit = ''; filters.quoteCopy = false;
+    toast(_balQ ? ('잔금 견적서 저장됨 · 기받은 계약금 ' + fmtWon(data.prepaid) + '원 차감') : '견적 저장됨');
+    renderQuote();
     /* ★ 거래처 «업체 구분» 을 견적에서 고른 값으로 맞춘다 — 바뀌면 말해 준다(예전엔 조용했다) */
     try {
       const cdoc = (state.clients || []).find(x => _normName(x.value) === _normName(client));
@@ -8206,7 +8265,8 @@ function _moneyBuild() {
     get(nm).opening = v;
   });
   (state.quotes || []).forEach(q => {
-    if (!q.ordered) return; const c = (q.client || '').trim(); if (!c) return;
+    /* ★ 잔금 견적서로 «대체된» 원본은 매출·미수에서 뺀다 — 같은 일감을 두 번 세지 않는다 */
+    if (!q.ordered || q.supersededBy) return; const c = (q.client || '').trim(); if (!c) return;
     const o = get(c); o.sale += Math.round(+q.total || 0); o.qn++;
     (byC[c] || (byC[c] = [])).push(q);
   });
@@ -8231,11 +8291,21 @@ function _moneyBuild() {
     /* 채울 순서: ★ 이월 잔액이 제일 먼저, 그 다음 오래된 견적부터 */
     const line = (byC[c] || []).slice()
       .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.docNo || '').localeCompare(b.docNo || ''))
-      .map(q => ({ id: q.id, tot: Math.round(+q.total || 0), d: String(q.date || '') }));
+      .map(q => ({ id: q.id, tot: Math.round(+q.total || 0), d: String(q.date || ''), pre: quotePrepaid(q) }));
     if (OB[c]) line.unshift({ id: '', tot: OB[c].amt, d: OB[c].d });
     const _prepay = !!PP[c];                   // 선입금 인정 거래처는 날짜 규칙을 끈다
     line.forEach(x => {
       let need = x.tot, got = 0; const qd = x.d;
+      /* ★ 잔금 견적서의 «기받은 계약금» — 원본 견적 때 들어온 돈이라 날짜가 앞선다.
+         그래서 날짜 규칙을 빼고 먼저 붙인다 (안 그러면 영영 미수로 남는다). */
+      if (x.pre > 0) {
+        let pre = Math.min(x.pre, need);
+        for (const i of ins) {
+          if (pre <= 0) break;
+          if (i.left <= 0) continue;
+          const use = Math.min(pre, i.left); i.left -= use; pre -= use; need -= use; got += use;
+        }
+      }
       for (const i of ins) {
         if (need <= 0) break;
         if (i.left <= 0) continue;
@@ -8258,9 +8328,11 @@ function clientMoneyOf(c) { return clientMoneyMap()[(c || '').trim()] || _MONEY0
 function clientRemOf(c) { return clientMoneyOf(c).rem; }
 function clientRemMap() { const m = clientMoneyMap(), r = {}; Object.keys(m).forEach(c => r[c] = m[c].rem); return r; }
 /* 견적 한 장 — 받은 돈 / 안 받은 돈 / 다 받았는지 (전부 계산값) */
-function quotePaid(q) { if (!q || !q.ordered) return 0; return quotePaidMap()[q.id] || 0; }
-function quoteRem(q) { return Math.max(0, Math.round(+((q && q.total) || 0)) - quotePaid(q)); }
-function quoteIsPaid(q) { const t = Math.round(+((q && q.total) || 0)); return t > 0 && quotePaid(q) >= t; }
+/* ★ 잔금 견적서로 «대체된» 원본은 돈 계산에서 통째로 빠진다.
+   그래서 입금·미수도 0 으로 본다 — 안 그러면 카드에 원본 금액이 통째로 «미수»로 빨갛게 뜬다. */
+function quotePaid(q) { if (!q || !q.ordered || q.supersededBy) return 0; return quotePaidMap()[q.id] || 0; }
+function quoteRem(q) { if (q && q.supersededBy) return 0; return Math.max(0, Math.round(+((q && q.total) || 0)) - quotePaid(q)); }
+function quoteIsPaid(q) { if (q && q.supersededBy) return false; const t = Math.round(+((q && q.total) || 0)); return t > 0 && quotePaid(q) >= t; }
 /* 견적 카드/팝업에서 그 거래처 원장으로 바로 가기 */
 function openLedgerFor(c) {
   if (!canLedger()) { toast('거래처 원장 권한이 없습니다 — 관리자에게 문의하세요'); return; }
@@ -10236,7 +10308,7 @@ function quoteCardHtml(q) {
   const names = (q.items || []).map(it => it.name).filter(Boolean).slice(0, 3).join(', ') + ((q.items || []).length > 3 ? ` 외 ${q.items.length - 3}` : '');
   const _pa = quotePaid(q); const _tt = Math.round(+q.total || 0); const _rem = quoteRem(q);
   const _cRem = clientRemOf(q.client);        // 이 거래처가 우리한테 갚아야 할 총액 (원장 기준)
-  const paidPill = (_tt > 0 && _pa >= _tt) ? `<button class="pill p-done" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 결제완료</button>` : (_pa > 0 ? `<button class="pill p-prog" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 입금 ${fmtWon(_pa)} · 미수 ${fmtWon(_rem)}</button>` : `<button class="pill p-wait" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 미결제</button>`);
+  const paidPill = quoteSuperseded(q) ? '' : (_tt > 0 && _pa >= _tt) ? `<button class="pill p-done" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 결제완료</button>` : (_pa > 0 ? `<button class="pill p-prog" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 입금 ${fmtWon(_pa)} · 미수 ${fmtWon(_rem)}</button>` : `<button class="pill p-wait" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 미결제</button>`);
   const taxPill = taxPillHtml(q, true);
   const _shipD = q.shipped ? quoteShipDate(q) : '';
   const shipBadge = q.shipped ? `<span class="pill p-done"><i class="ti ti-truck-delivery"></i> 출고 완료${_shipD ? ' ' + esc(_shortDate(_shipD)) : ''}</span>` : '';
@@ -10255,6 +10327,11 @@ function quoteCardHtml(q) {
   const catBadge = (_catMain.length ? _catMain : _catAll).map(c => `<span class="pill" style="background:#fff;color:${QCAT_COL[c]};border:1px solid ${QCAT_COL[c]};font-weight:700"><i class="ti ti-${QCAT_ICON[c] || 'tag'}"></i> ${esc(c)}</span>`).join('');
   const _dep = quoteDeposit(q);
   const depBadge = _dep ? `<span class="pill" style="background:#eaf2ff;color:#1a56b8;border:1px solid #cfe0ff" title="잔금 ${fmtWon(_dep.rest)}원"><i class="ti ti-percentage"></i> 계약금 ${_pctTxt(_dep.pct)}% · ${fmtWon(_dep.amt)}</span>` : '';
+  /* ★ 잔금 견적서 / 대체된 원본 */
+  const _bal = quoteBalanceDue(q);
+  const balBadge = _bal
+    ? `<span class="pill" style="background:#eef7f1;color:#0F6E56;border:1px solid #bfe3d0" title="기받은 계약금 ${fmtWon(_bal.pre)}원 차감"><i class="ti ti-receipt-2"></i> 잔금 견적 · ${fmtWon(_bal.due)}</span>`
+    : (quoteSuperseded(q) ? `<span class="pill" style="background:#f2f2f2;color:#666;border:1px solid #ddd" title="이 견적은 잔금 견적서로 대체되어 매출·미수에서 빠집니다"><i class="ti ti-arrow-right-bar"></i> 잔금 견적서로 대체됨</span>` : '');
   return `<div class="card" style="margin-bottom:10px;padding:12px 14px${_bundle && _selQ ? ';border:2px solid var(--gd);background:#f2fbf6' : ''}">
       ${_bundle ? `<label style="display:flex;align-items:center;gap:8px;margin-bottom:9px;cursor:pointer;font-size:12.5px;font-weight:700;color:${_selQ ? 'var(--gd)' : 'var(--t2)'}"><input type="checkbox" ${_selQ ? 'checked' : ''} onchange="toggleQSel('${q.id}')" style="width:17px;height:17px"> 청구 묶음에 포함</label>` : ''}
       <div onclick="openQuoteView('${q.id}')" title="눌러서 견적 내용 보기" style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;cursor:pointer">
@@ -10268,7 +10345,7 @@ function quoteCardHtml(q) {
            <div style="font-size:10.5px;color:var(--t3);margin-top:3px;white-space:nowrap;border-top:1px dashed var(--bd);padding-top:3px">${_rem > 0 ? `이 건 미수 ${fmtWon(_rem)}` : (_pa > 0 ? '<span style="color:var(--gd);font-weight:700">이 건 결제완료</span>' : '이 건 미결제')}</div>`
         : (_pa > 0 ? `<div style="font-size:12px;font-weight:700;color:var(--gd);margin-top:6px"><i class="ti ti-check"></i> 결제완료</div>` : (_rem > 0 ? `<div style="font-size:13.5px;font-weight:800;color:var(--red-t);margin-top:6px">미수 ${fmtWon(_rem)}</div>` : ''))}</div>
       </div>
-      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px">${catBadge}${(+q.rollCount || 0) ? `<span class="pill" style="background:#fff8e8;color:#b45309;border:1px solid #e6cf95" title="원래 ${esc((q.rollFrom || []).join(' → '))}"><i class="ti ti-calendar-plus"></i> 이월 ${+q.rollCount}회</span>` : ''}${paidPill}${taxPill}${depBadge}${shipBadge}${siteBadge}${basinBadge}${basinDrawsOf(q).length ? `<button class="pill" style="border:none;cursor:pointer;background:#eef4ff;color:#1b4fb0" onclick="event.stopPropagation();${basinDrawsOf(q).length > 1 ? `openQuoteView('${q.id}')` : `openQuoteDraw('${q.id}','${esc(basinDrawsOf(q)[0].id)}')`}" title="세면대 도면 보기"><i class="ti ti-ruler-2"></i> 도면 ${basinDrawsOf(q).length}</button>` : ''}${doneBadge}${canLedger() && _cRem > 0 ? `<button class="pill p-issue" style="border:none;cursor:pointer" onclick="openLedgerFor(${JSON.stringify(q.client || '').replace(/"/g, '&quot;')})" title="이 거래처 원장 보기"><i class="ti ti-book"></i> 거래처 미수 ${fmtWon(_cRem)}</button>` : ''}</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px">${balBadge}${catBadge}${(+q.rollCount || 0) ? `<span class="pill" style="background:#fff8e8;color:#b45309;border:1px solid #e6cf95" title="원래 ${esc((q.rollFrom || []).join(' → '))}"><i class="ti ti-calendar-plus"></i> 이월 ${+q.rollCount}회</span>` : ''}${paidPill}${taxPill}${depBadge}${shipBadge}${siteBadge}${basinBadge}${basinDrawsOf(q).length ? `<button class="pill" style="border:none;cursor:pointer;background:#eef4ff;color:#1b4fb0" onclick="event.stopPropagation();${basinDrawsOf(q).length > 1 ? `openQuoteView('${q.id}')` : `openQuoteDraw('${q.id}','${esc(basinDrawsOf(q)[0].id)}')`}" title="세면대 도면 보기"><i class="ti ti-ruler-2"></i> 도면 ${basinDrawsOf(q).length}</button>` : ''}${doneBadge}${canLedger() && _cRem > 0 ? `<button class="pill p-issue" style="border:none;cursor:pointer" onclick="openLedgerFor(${JSON.stringify(q.client || '').replace(/"/g, '&quot;')})" title="이 거래처 원장 보기"><i class="ti ti-book"></i> 거래처 미수 ${fmtWon(_cRem)}</button>` : ''}</div>
       <div class="frm-foot" style="margin-top:9px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
         ${q.siteDone && !isCustomerRole() ? `<button class="btn btn-sm" onclick="quoteLinkSite('${q.id}')" title="잘못 등록했으면 다른 현장으로 바꿉니다"><i class="ti ti-exchange"></i>현장 바꾸기</button><button class="btn btn-sm" style="color:var(--t3)" onclick="quoteUnlinkSite('${q.id}')" title="현장 연결만 풉니다 (현장은 안 지워집니다)"><i class="ti ti-unlink"></i>연결 해제</button>` : ''}
         ${(q.shipped || q.siteDone || q.basinDone) ? '' : (q.manualDone ? (isAdmin() ? `<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteUnmarkDone('${q.id}')" title="완료 취소"><i class="ti ti-arrow-back-up"></i>완료 취소</button>` : '') : (q.ordered ? `<button class="btn btn-sm btn-pri" onclick="quoteRegister('${q.id}')"><i class="ti ${_regIcon}"></i>${_regLabel}</button><button class="btn btn-sm" onclick="quoteLinkSite('${q.id}')" title="이미 등록된 현장에 연결"><i class="ti ti-link"></i>현장 연결</button>${isAdmin() ? `<button class="btn btn-sm" style="color:#0f766e;border-color:#0f766e" onclick="quoteMarkDone('${q.id}')" title="바로 완료 처리 (관리자)"><i class="ti ti-checks"></i>완료 처리</button>` : ''}<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteCancelOrder('${q.id}')" title="확정 주문 취소"><i class="ti ti-arrow-back-up"></i>확정취소</button>` : `<button class="btn btn-sm btn-pri" onclick="quoteConfirmOrder('${q.id}')"><i class="ti ti-clipboard-check"></i>확정주문</button><button class="btn btn-sm" style="${_old ? 'color:#b45309;border-color:#d9a441' : 'color:var(--t3)'}" onclick="quoteRollover('${q.id}')" title="오늘 날짜·새 견적번호로 넘깁니다 (내용은 그대로)"><i class="ti ti-calendar-plus"></i>이월</button>`))}
@@ -10338,12 +10415,22 @@ function openQuoteView(id) {
       ${sumRow('합계', fmtWon(_tt) + '원', true)}
       ${(() => { const d = quoteDeposit(q); return d ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;margin-top:4px;border-top:1px dashed var(--bd2)"><span style="font-size:12px;color:#1a56b8;font-weight:700">계약금 ${_pctTxt(d.pct)}%</span><span style="font-size:14px;font-weight:800;color:#1a56b8">${fmtWon(d.amt)}원</span></div>
       <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:12px;color:var(--t2);font-weight:500">잔금</span><span style="font-size:13px;font-weight:700">${fmtWon(d.rest)}원</span></div>` : ''; })()}
+      ${(() => { const b = quoteBalanceDue(q); return b ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;margin-top:4px;border-top:1px dashed var(--bd2)"><span style="font-size:12px;color:#0F6E56;font-weight:700">기받은 계약금${b.from ? ' <span style="font-weight:500;color:var(--t3)">' + esc(b.from) + '</span>' : ''}</span><span style="font-size:14px;font-weight:800;color:#0F6E56">- ${fmtWon(b.pre)}원</span></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:12.5px;color:var(--t1);font-weight:700">이번 청구액 (잔금)</span><span style="font-size:15px;font-weight:800;color:var(--gd)">${fmtWon(b.due)}원</span></div>` : ''; })()}
       ${_pa > 0 ? sumRow('입금', fmtWon(_pa) + '원') : ''}
       ${_rem > 0 ? `<div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:12px;color:var(--t2);font-weight:500">미수</span><span style="font-size:14px;font-weight:800;color:var(--red-t)">${fmtWon(_rem)}원</span></div>` : ''}
       ${_cRem > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0 0;margin-top:5px;border-top:1px dashed var(--bd2)"><span style="font-size:11.5px;color:var(--t3)">이 거래처 총 미수 <span style="color:var(--t2)">(원장 기준)</span></span><span style="display:flex;gap:6px;align-items:center"><span style="font-size:14px;font-weight:800;color:var(--red-t)">${fmtWon(_cRem)}원</span>${canLedger() ? `<button class="btn btn-sm" style="padding:2px 7px;font-size:11px" onclick="openLedgerFor(${JSON.stringify(q.client || '').replace(/"/g, '&quot;')})"><i class="ti ti-book"></i>원장</button>` : ''}</span></div>` : ''}
     </div>
     ${(q.memo || '').trim() ? `<div class="sec-label"><i class="ti ti-notes"></i>비고</div><div style="font-size:12.5px;color:var(--t2);white-space:pre-wrap;background:var(--soft);border-radius:10px;padding:10px 12px;margin-bottom:12px">${esc(q.memo)}</div>` : ''}
     <div style="padding:0 2px">${basinDrawListHtml(q, 'quotes')}</div>
+    ${(() => {
+      /* ★ 계약금이 들어온 확정 견적 → 수량 고쳐서 잔금 견적서 만들기 */
+      if (!q.ordered || quoteSuperseded(q) || quoteIsBalance(q) || !(_pa > 0)) return '';
+      return `<div style="background:#eef7f1;border:1.5px solid #bfe3d0;border-radius:11px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#2f6b3a;line-height:1.6">
+        <b><i class="ti ti-receipt-2"></i> 수량이 바뀌었나요?</b> 받은 돈 <b>${fmtWon(_pa)}원</b>을 빼고 <b>잔금만</b> 청구하는 견적서를 만들 수 있습니다.
+        <button class="btn btn-sm btn-block" style="margin-top:7px;background:#0F6E56;color:#fff;border-color:#0F6E56" onclick="closeModal();quoteBalanceNew('${q.id}')"><i class="ti ti-receipt-2"></i>잔금 견적서 만들기</button></div>`;
+    })()}
+    ${quoteSuperseded(q) ? `<div style="background:#f6f6f6;border:1.5px solid #ddd;border-radius:11px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#555;line-height:1.6"><b><i class="ti ti-arrow-right-bar"></i> 잔금 견적서로 대체된 견적입니다.</b><br>매출·미수에서는 빠져 있습니다 — 같은 일감을 두 번 세지 않기 위해서입니다. 기록은 그대로 남습니다.${(() => { const nq = (state.quotes || []).find(x => x.id === q.supersededBy); return nq ? `<button class="btn btn-sm btn-block" style="margin-top:7px" onclick="closeModal();openQuoteView('${nq.id}')"><i class="ti ti-external-link"></i>잔금 견적서 ${esc(nq.docNo || '')} 보기</button>` : ''; })()}</div>` : ''}
     <div class="frm-foot" style="display:flex;gap:6px;flex-wrap:wrap">
       <button class="btn" onclick="closeModal()">닫기</button>
       <button class="btn" onclick="closeModal();openQuoteInline('${q.id}')"><i class="ti ti-edit"></i>수정</button>
@@ -12819,6 +12906,8 @@ function quoteDocHtml(q) {
       <tr class="tot"><td>합계금액</td><td style="text-align:right">${(+q.discount || 0) > 0 ? `<span class="was">할인 전 <s>${fmtWon((+q.supply || 0) + (+q.vat || 0))} 원</s></span>` : ''}${fmtWon(q.total)} 원</td></tr>
       ${(() => { const d = quoteDeposit(q); return d ? `<tr class="dep"><td class="k">계약금 (${_pctTxt(d.pct)}%)</td><td class="v">${fmtWon(d.amt)} 원</td></tr>
       <tr><td class="k">잔금</td><td class="v">${fmtWon(d.rest)} 원</td></tr>` : ''; })()}
+      ${(() => { const b = quoteBalanceDue(q); return b ? `<tr class="dep"><td class="k">기받은 계약금${b.from ? ' (' + e(b.from) + ')' : ''}</td><td class="v">- ${fmtWon(b.pre)} 원</td></tr>
+      <tr class="tot"><td>이번 청구액 (잔금)</td><td style="text-align:right">${fmtWon(b.due)} 원</td></tr>` : ''; })()}
     </table>
   </div>
   ${hasBasinItems(items) ? `<div class="notice"><div class="nh">⚠ 세면대 주문제작 특이사항 (필독)</div><ul>${BASIN_NOTICE.map(l => `<li>${e(l)}</li>`).join('')}</ul></div>` : ''}
@@ -13724,6 +13813,7 @@ function _quoteSheetXml(q) {
   if ((+q.discount || 0) > 0) { span(rr, 0, 4, 10, '할인 (D/C)', 's'); put(rr, 5, 11, -Math.round(+q.discount || 0), 'n'); rr++; }
   span(rr, 0, 4, 12, '합계금액', 's'); put(rr, 5, 13, Math.round(+q.total || 0), 'n'); rowH[rr] = 26; rr++;
   { const d = quoteDeposit(q); if (d) { span(rr, 0, 4, 10, '계약금 (' + _pctTxt(d.pct) + '%)', 's'); put(rr, 5, 11, d.amt, 'n'); rr++; span(rr, 0, 4, 10, '잔금', 's'); put(rr, 5, 11, d.rest, 'n'); rr++; } }
+  { const b = quoteBalanceDue(q); if (b) { span(rr, 0, 4, 10, '기받은 계약금' + (b.from ? ' (' + b.from + ')' : ''), 's'); put(rr, 5, 11, -b.pre, 'n'); rr++; span(rr, 0, 4, 12, '이번 청구액 (잔금)', 's'); put(rr, 5, 13, b.due, 'n'); rowH[rr] = 26; rr++; } }
   rr++;
   if (q.memo) { span(rr, 0, 5, 14, '비고 : ' + q.memo, 's'); rowH[rr] = 44; rr++; }
   if (hasBasinItems(items)) { span(rr, 0, 5, 15, '⚠ 세면대 주문제작 특이사항 (필독)', 's'); rowH[rr] = 22; rr++; (typeof BASIN_NOTICE !== 'undefined' ? BASIN_NOTICE : []).forEach(l => { span(rr, 0, 5, 16, '· ' + l, 's'); rr++; }); }
