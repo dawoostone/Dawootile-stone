@@ -10604,8 +10604,21 @@ function quoteMarginBreakdown(q) {
 const GUBUN = ['자재', '운송', '시공', '부속', '기타'];   // 가공은 공장 견적 총액으로 별도 입력
 function hebeFromSpec(spec) { const m = (spec || '').match(/(\d{3,4})\s*[*xX×]\s*(\d{3,4})/); if (m) { return +((+m[1] / 1000) * (+m[2] / 1000)).toFixed(2); } return ''; }
 function costGubunOf(name) { const n = (name || ''); if (/운송|배송|운반|파렛트|팔레트|팔렛|파레트|빠렛/.test(n)) return '운송'; if (/재단|타공|고스라|뒷도|배면|워터젯|사선|모서리|가공|연마|코너/.test(n)) return '가공'; if (/시공|실측|설치/.test(n)) return '시공'; return '자재'; }
-function openCostForm(id) { if (!isAdmin()) { toast('원가는 관리자만 볼 수 있습니다'); return; } filters.costEdit = id; render(); const _pg = el('pg-' + tab); if (_pg) _pg.scrollIntoView({ block: 'start' }); }
-function costCancel() { filters.costEdit = ''; render(); }
+/* ── 원가 목록 스크롤 고정 (2026-09-28) ───────────────────────
+   사용자: "원가 정산 스크롤 고정 좀" → "아니 원가 목록에서"
+   원가 목록은 617줄(1만 픽셀)인데 한 번에 344px 만 보인다.
+   한 건 입력하고 돌아오면 목록이 맨 위로 튕겨서 아까 보던 자리를 다시 찾아야 했다.
+   → 들어갈 때 자리를 기억해 두고, 돌아오면 그 자리로 되돌린다. */
+let _costListTop = 0;
+function costListRemember() { const L = el('settle-cost-list'); if (L && L.scrollTop > 0) _costListTop = L.scrollTop; }
+function costListRestore() {
+  if (!(_costListTop > 0)) return;
+  const put = () => { const L = el('settle-cost-list'); if (L) L.scrollTop = _costListTop; };
+  requestAnimationFrame(() => { put(); requestAnimationFrame(put); });
+  setTimeout(put, 150);
+}
+function openCostForm(id) { if (!isAdmin()) { toast('원가는 관리자만 볼 수 있습니다'); return; } costListRemember(); filters.costEdit = id; render(); const _pg = el('pg-' + tab); if (_pg) _pg.scrollIntoView({ block: 'start' }); }
+function costCancel() { filters.costEdit = ''; render(); costListRestore(); }
 /* ── 세면대 중국 원가 → 원화 원가 ─────────────────────────────
    (중국원가 + 200) ÷ 위안환율 × 원화환율 × 1.4  +  브라켓  +  석종 추가금
    · 브라켓 : 기장 1500 초과 40,000 / 1500 이하 20,000
@@ -10814,7 +10827,7 @@ async function submitCost(id) {
   const processCost = el('ct-process') ? _numv(el('ct-process').value) : Math.round(+q.processCost || 0);
   const costTotal = lines.reduce((a, b) => a + (+b.cost || 0), 0) + processCost; const sup = +q.supply || 0; const margin = sup - costTotal;
   await Store.update('quotes', id, { costLines: lines, processCost: processCost, costTotal: costTotal, margin: margin, marginRate: sup > 0 ? +(margin / sup).toFixed(4) : 0 });
-  filters.costEdit = ''; toast('원가 저장 · 마진 ' + fmtWon(margin)); render();
+  filters.costEdit = ''; toast('원가 저장 · 마진 ' + fmtWon(margin)); render(); costListRestore();
 }
 /* ── 원가 원장 : 원가 줄 옆에 «그 항목이 얼마에 팔렸는지» 붙이기 (2026-09-28)
    사용자: "원가 원장 볼 때 매출액도 옆에 항목별로 나왔으면 함"
@@ -12497,8 +12510,8 @@ function renderSettle() {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px"><div style="font-size:11.5px;color:var(--t3);font-weight:700"><i class="ti ti-report-money"></i> 원가 원장 (전표별 원가 입력 · 매출 · 마진)</div>
       <button class="btn btn-sm" onclick="downloadCostLedger()"><i class="ti ti-download"></i>원가원장 엑셀</button></div>
     <div style="font-size:11px;color:var(--t3);margin-bottom:8px">각 견적(현장)의 <b>입력/수정</b> 버튼으로 원가를 여기서 정리하세요.</div>
-    <div data-keepscroll id="settle-cost-list" style="max-height:42vh;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">
-      <thead><tr style="border-bottom:1.5px solid var(--bd);color:var(--t2);font-size:11px"><th style="padding:6px 8px;text-align:left">날짜</th><th style="padding:6px 8px;text-align:left">거래처</th><th style="padding:6px 8px;text-align:left">전표</th><th style="padding:6px 8px;text-align:right">매출</th><th style="padding:6px 8px;text-align:right">원가</th><th style="padding:6px 8px;text-align:right">마진</th><th style="padding:6px 8px;text-align:right">마진율</th><th style="padding:6px 8px;text-align:center">원가</th></tr></thead>
+    <div data-keepscroll id="settle-cost-list" style="max-height:42vh;overflow:auto"><table style="width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px">
+      <thead><tr style="color:var(--t2);font-size:11px">${['날짜:left', '거래처:left', '전표:left', '매출:right', '원가:right', '마진:right', '마진율:right', '원가:center'].map(x => { const _p = x.split(':'); return `<th style="padding:6px 8px;text-align:${_p[1]};position:sticky;top:0;z-index:2;background:var(--card,#fff);border-bottom:1.5px solid var(--bd)">${_p[0]}</th>`; }).join('')}</tr></thead>
       <tbody>${cRows}</tbody></table></div></div>`;
   // 회사지출 입력 + 목록
   const expRows = expMonth.slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0));
@@ -14258,6 +14271,69 @@ ${section('■ 업체별 현장 수 (현장 많은 업체 순)', clientRows, '�
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
   toast('시공 통계 엑셀 다운로드');
 }
+/* ── 이 출고가 «어느 기사편에 뭐랑 같이» 나갔는지 (2026-09-28) ──
+   사용자: "출고내역에서 항목별로 누르면 어느 기사편에 뭐랑 같이 나갔는지 알수 있어야 함"
+   이어지는 길:  출고 기록(transactions.shipId)
+                → 출고관리 건(chulgoReqs.sourceShipId / stockShipId)
+                → 배차(dispatchId) → 같은 차로 나간 다른 건들
+   ※ 출고관리를 안 거치고 바로 등록한 건은 기사 정보가 없다 — 그럴 땐 그렇다고 적는다. */
+function outShipKey(t) { return (t && (t.shipId || t.id)) || ''; }
+/* 같은 출고증으로 같이 나간 자재들 */
+function outSameSlip(t) {
+  const k = outShipKey(t); if (!k) return [];
+  return (state.transactions || []).filter(x => x && x.type === 'out' && outShipKey(x) === k);
+}
+/* 이 출고에 연결된 출고관리 건 */
+function outChulgoReq(t) {
+  const k = outShipKey(t); if (!k) return null;
+  return (state.chulgoReqs || []).find(r => r && (r.sourceShipId === k || r.stockShipId === k)) || null;
+}
+/* 기사 · 배차 · 같은 차로 나간 다른 건 */
+function outTripInfo(t) {
+  const req = outChulgoReq(t); if (!req) return null;
+  const did = String(req.dispatchId || '').trim();
+  const mates = did ? (state.chulgoReqs || []).filter(r => r && r.id !== req.id && String(r.dispatchId || '').trim() === did) : [];
+  return {
+    req: req,
+    driver: req.companyDispatch ? '업체 배차' : String(req.driver || '').trim(),
+    loadTime: String(req.loadTime || '').trim(),
+    dest: String(req.dispatchDest || '').trim(),
+    vehicle: String(req.vehicle || '').trim(),
+    dispatchId: did,
+    mates: mates
+  };
+}
+/* 출고 내역 수정 창 맨 위에 붙는 «같이 나간 것» 칸 */
+function outTripHtml(t) {
+  const same = outSameSlip(t).filter(x => x.id !== t.id);
+  const trip = outTripInfo(t);
+  const line = x => `${esc(x.itemName || '')} <b>${+x.jang || 0}장</b>${x.lot ? ' · 롯트 ' + esc(x.lot) : ''}${x.pattern ? ' · 패턴 ' + esc(x.pattern) : ''}`;
+  const rq = r => {
+    const its = (r.items || []).map(i => esc(i.name || '') + ' ' + (+i.qty || 0) + '장').join(', ');
+    const _wh = String(r.dispatchDest || r.destOrig || r.siteAddr || '').trim();
+    return `<div style="padding:4px 0;border-top:1px dashed var(--bd)"><b>${esc(r.client || '-')}</b>${_wh ? ' <span style="color:var(--t3);font-weight:500">→ ' + esc(_wh) + '</span>' : ''}<div style="color:var(--t3);font-size:11.5px">${its || '품목 없음'}</div></div>`;
+  };
+  const head = (ic, tx) => `<div style="font-size:11.5px;font-weight:700;color:var(--t2);margin:9px 0 3px"><i class="ti ${ic}"></i> ${tx}</div>`;
+  let h = '';
+  // ① 기사 · 배차
+  if (trip && (trip.driver || trip.loadTime || trip.dest)) {
+    h += head('ti-steering-wheel', '기사 · 배차') +
+      `<div style="font-size:13px;font-weight:700;color:#185fa5">${esc(trip.driver || '기사 미지정')}` +
+      `${trip.loadTime ? ` <span style="font-weight:600;color:var(--t2)">· 상차 ${esc(trip.loadTime)}</span>` : ''}</div>` +
+      `${trip.dest ? `<div style="font-size:11.5px;color:var(--t3)">하차 ${esc(trip.dest)}${trip.vehicle ? ' · ' + esc(trip.vehicle) : ''}</div>` : ''}`;
+  } else {
+    h += head('ti-steering-wheel', '기사 · 배차') + `<div style="font-size:12px;color:var(--t3)">출고관리 배차를 거치지 않은 건이라 기사 기록이 없습니다.</div>`;
+  }
+  // ② 같은 출고증
+  if (same.length) h += head('ti-package', '같은 출고증으로 함께 나간 자재 ' + same.length + '건') +
+    `<div style="font-size:12.5px;color:var(--t2);line-height:1.6">${same.map(x => '· ' + line(x)).join('<br>')}</div>`;
+  // ③ 같은 차
+  if (trip && trip.mates.length) h += head('ti-truck-delivery', '같은 기사편으로 함께 나간 다른 건 ' + trip.mates.length + '건') +
+    `<div style="font-size:12.5px">${trip.mates.map(rq).join('')}</div>`;
+  if (!same.length && (!trip || !trip.mates.length)) h += `<div style="font-size:12px;color:var(--t3);margin-top:7px"><i class="ti ti-package"></i> 이 자재만 단독으로 나갔습니다.</div>`;
+  return `<div style="background:var(--soft);border-radius:10px;padding:10px 12px;margin-bottom:12px">
+    <div style="font-size:11px;color:var(--t3);font-weight:700">${esc(t.date || '')} · ${esc(t.targetName || '-')}${t.dest || t.factory ? ' · → ' + esc(t.dest || t.factory) : ''}</div>${h}</div>`;
+}
 /* 출고 내역 수정 — 롯트·패턴 재배정(재고 자동 재계산) + 장수 보정 */
 function openOutEdit(id) {
   const t = state.transactions.find(x => x.id === id && x.type === 'out'); if (!t) return;
@@ -14266,7 +14342,8 @@ function openOutEdit(id) {
   const patOpts = [...new Set(mine.flatMap(x => x.type === 'in' ? (x.patterns || []).map(p => (p.pattern || '').trim()) : [(x.pattern || '').trim()]).filter(p => p && p !== '-'))].sort();
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-edit"></i>출고 내역 수정</h3><button class="x" onclick="closeModal()">×</button></div>
-    <div style="font-size:13px;color:var(--t2);margin-bottom:12px"><b style="color:var(--t1)">${esc(t.itemName || '')}</b>${t.spec ? ' · ' + esc(t.spec) : ''}</div>
+    <div style="font-size:13px;color:var(--t2);margin-bottom:10px"><b style="color:var(--t1)">${esc(t.itemName || '')}</b>${t.spec ? ' · ' + esc(t.spec) : ''}</div>
+    ${outTripHtml(t)}
     <div class="frm">
       <div class="fld"><label>출고일</label><input type="date" id="oe-date" value="${esc(t.date || '')}"></div>
       <div class="fld"><label>장수</label><input id="oe-jang" inputmode="numeric" value="${esc(t.jang || 0)}"></div>
