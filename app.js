@@ -10754,6 +10754,10 @@ function renderCostForm() {
   (q.items || []).forEach(it => { const c = marginCat(it.name); const k = c === '가공' ? 'proc' : c === '시공' ? 'cons' : c === '운송' ? 'trans' : 'mat'; _costRev[k] += Math.round(+it.amt || 0); });
   const _procItems = (q.items || []).filter(it => costGubunOf(it.name) === '가공');
   const _procSale = _procItems.reduce((a, it) => a + Math.round(+it.amt || 0), 0);   // 가공비 칸에 붙일 매출 (원가 줄에서 빠진 항목들)
+  /* ★ 가공이 없는 견적에는 가공비 칸을 아예 안 띄운다 (2026-09-28)
+     사용자: "가공 안 들어간 견적서는 헷갈리니까 원가 정산에서 가공비 칸 빼줬으면 좋겠음"
+     단, 예전에 가공비를 적어 둔 건이면 칸을 띄운다 — 안 그러면 저장할 때 그 금액이 0으로 지워진다. */
+  const _hasProc = _procItems.length > 0 || (+q.processCost || 0) > 0;
   const lines = (q.costLines && q.costLines.length) ? q.costLines : (q.items || []).filter(it => costGubunOf(it.name) !== '가공').map(it => ({ gubun: costGubunOf(it.name), factory: '', name: it.name, spec: it.spec || '', hebe: hebeFromSpec(it.spec || ''), qty: it.qty || '', unitCost: '', cost: '', cnStone: it.stone || '' }));
   const _sm = costSaleMap(q);
   const rows = lines.map(l => costLineHtml(l, _sm.line(l.name))).join('');
@@ -10761,29 +10765,29 @@ function renderCostForm() {
     <div class="ph"><div><h2><i class="ti ti-calculator"></i>원가 정리</h2><p>${esc(q.docNo || '')} · ${esc(q.client || '')} · 매출 ${fmtWon(q.supply)}</p></div>
       <button class="btn btn-sm" onclick="costCancel()"><i class="ti ti-arrow-left"></i> 목록</button></div>
     <div id="cost-root" class="card" style="padding:14px 16px">
-      <div style="font-size:11px;color:var(--t3);margin-bottom:8px">자재: <b>헤베×수량×원가단가</b> 자동 · 운송·시공·부속·기타: <b>수량×원가단가</b> 자동 (수량 비우면 1회, 헤베 안 씀) · 가공비는 <b>공장 견적 총액</b>으로 아래에 입력 · <b style="color:#c0341d">관리자 전용</b></div>
+      <div style="font-size:11px;color:var(--t3);margin-bottom:8px">자재: <b>헤베×수량×원가단가</b> 자동 · 운송·시공·부속·기타: <b>수량×원가단가</b> 자동 (수량 비우면 1회, 헤베 안 씀)${_hasProc ? ' · 가공비는 <b>공장 견적 총액</b>으로 아래에 입력' : ''} · <b style="color:#c0341d">관리자 전용</b></div>
       <div style="display:flex;gap:5px;font-size:10.5px;color:var(--t3);font-weight:600;padding:0 2px 4px;flex-wrap:wrap"><div style="width:66px">구분</div><div style="flex:2;min-width:90px">품목명</div><div style="flex:1;min-width:64px">규격</div><div style="width:52px;text-align:right">헤베</div><div style="width:48px;text-align:right">수량</div><div style="width:76px;text-align:right">원가단가</div><div style="width:88px;text-align:right">원가</div><div style="width:28px"></div></div>
       <div id="ct-rows">${rows}</div>
       <button type="button" class="btn btn-ghost btn-sm btn-block" onclick="addCostRow()"><i class="ti ti-plus"></i>자재·운송 등 항목 추가</button>
-      <div style="background:#fff6ee;border:1.5px solid #f0d6b8;border-radius:11px;padding:11px 13px;margin-top:12px">
+      ${!_hasProc ? '' : `<div style="background:#fff6ee;border:1.5px solid #f0d6b8;border-radius:11px;padding:11px 13px;margin-top:12px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
           <div style="min-width:0"><div style="font-size:13px;font-weight:700;color:#a2560f"><i class="ti ti-tools"></i> 가공비 (공장 견적 총액)</div>
             <div style="font-size:11px;color:var(--t3);margin-top:3px;line-height:1.5">견적서 가공 항목은 공장과 미터수·내용이 달라 항목별 대신 <b>공장에서 받은 견적 총액</b>을 그대로 입력하세요.${_procItems.length ? '<br>견적서상 가공: ' + esc(_procItems.map(x => x.name).join(', ')) + ' <b>· 매출 ' + fmtWon(_procSale) + '</b>' : ''}</div></div>
           <input id="ct-process" inputmode="numeric" value="${esc(q.processCost || '')}" oninput="costRecalc()" placeholder="0" style="width:140px;text-align:right;font-size:16px;font-weight:800;padding:9px 11px;border:1.5px solid #e6bf93;border-radius:9px;background:#fff;color:#a2560f">
         </div>
-      </div>
+      </div>`}
       <div style="background:var(--soft);border-radius:11px;padding:12px 14px;margin-top:12px;max-width:460px;margin-left:auto">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
           <thead><tr style="color:var(--t3);font-size:11px"><th style="text-align:left;padding:2px 4px">분류</th><th style="text-align:right;padding:2px 4px">매출</th><th style="text-align:right;padding:2px 4px">원가</th><th style="text-align:right;padding:2px 4px">마진</th></tr></thead>
           <tbody>
             <tr><td style="padding:3px 4px">자재</td><td style="text-align:right">${fmtWon(_costRev.mat)}</td><td style="text-align:right;color:#b45309"><span id="cc_mat">0</span></td><td style="text-align:right;font-weight:700"><span id="cm_mat">0</span></td></tr>
-            <tr><td style="padding:3px 4px">가공</td><td style="text-align:right">${fmtWon(_costRev.proc)}</td><td style="text-align:right;color:#b45309"><span id="cc_proc">0</span></td><td style="text-align:right;font-weight:700"><span id="cm_proc">0</span></td></tr>
+            ${!_hasProc ? '' : `<tr><td style="padding:3px 4px">가공</td><td style="text-align:right">${fmtWon(_costRev.proc)}</td><td style="text-align:right;color:#b45309"><span id="cc_proc">0</span></td><td style="text-align:right;font-weight:700"><span id="cm_proc">0</span></td></tr>`}
             <tr><td style="padding:3px 4px">시공</td><td style="text-align:right">${fmtWon(_costRev.cons)}</td><td style="text-align:right;color:#b45309"><span id="cc_cons">0</span></td><td style="text-align:right;font-weight:700"><span id="cm_cons">0</span></td></tr>
             <tr><td style="padding:3px 4px">운송</td><td style="text-align:right">${fmtWon(_costRev.trans)}</td><td style="text-align:right;color:#b45309"><span id="cc_trans">0</span></td><td style="text-align:right;font-weight:700"><span id="cm_trans">0</span></td></tr>
           </tbody>
           <tfoot><tr style="border-top:1.5px solid var(--bd2);font-size:14px"><td style="padding:5px 4px;font-weight:800">총</td><td style="text-align:right;font-weight:700">${fmtWon(q.supply)}</td><td style="text-align:right;font-weight:700;color:#b45309"><span id="ct-total">0</span></td><td style="text-align:right;font-weight:800"><span id="ct-margin" style="color:var(--gd)">0</span></td></tr></tfoot>
         </table>
-        <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--t3);margin-top:6px"><span>가공 원가 = 공장 견적 총액</span><span>총마진율 <b id="ct-rate">-</b></span></div>
+        <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--t3);margin-top:6px"><span>${_hasProc ? '가공 원가 = 공장 견적 총액' : ''}</span><span>총마진율 <b id="ct-rate">-</b></span></div>
       </div>
       <div class="frm-foot" style="margin-top:12px"><button class="btn" style="flex:1" onclick="costCancel()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitCost('${q.id}')"><i class="ti ti-check"></i>원가 저장</button></div>
     </div>`;
@@ -10806,7 +10810,8 @@ async function submitCost(id) {
     }
     lines.push(line);
   });
-  const processCost = el('ct-process') ? _numv(el('ct-process').value) : 0;
+  /* ★ 가공비 칸을 안 띄운 견적이면 예전에 적어 둔 값을 그대로 둔다 (0으로 지우지 않는다) */
+  const processCost = el('ct-process') ? _numv(el('ct-process').value) : Math.round(+q.processCost || 0);
   const costTotal = lines.reduce((a, b) => a + (+b.cost || 0), 0) + processCost; const sup = +q.supply || 0; const margin = sup - costTotal;
   await Store.update('quotes', id, { costLines: lines, processCost: processCost, costTotal: costTotal, margin: margin, marginRate: sup > 0 ? +(margin / sup).toFixed(4) : 0 });
   filters.costEdit = ''; toast('원가 저장 · 마진 ' + fmtWon(margin)); render();
