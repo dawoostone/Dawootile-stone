@@ -9546,6 +9546,19 @@ function _cutDown(e) {
 }
 
 /* ── 결과 화면 그리기 (자동배치·손배치 공통) ───────────── */
+/* ★★ 2026-09-28 — 커팅플랜 총 조각수 (사용자: *"커팅플랜에 총 조각수도 확인할 수 있게 해줘"*)
+   ★ 무늬연결 블록은 «한 덩어리»로 놓이지만 실제로 자르는 조각은 그 안에 여러 장이다.
+     그래서 블록 안의 장수(subs)를 풀어서 센다 — 공장에서 자를 «진짜 조각 수»가 나온다. */
+function cutPieceCount(sheets) {
+  let pcs = 0, blocks = 0, blockPcs = 0;
+  (sheets || []).forEach(sh => (sh.placed || []).forEach(p => {
+    const n = (p.subs && p.subs.length) ? p.subs.length : 1;
+    pcs += n;
+    if (p.subs && p.subs.length) { blocks++; blockPcs += n; }
+  }));
+  return { pcs: pcs, blocks: blocks, blockPcs: blockPcs };
+}
+function cutSheetPcs(sh) { return cutPieceCount([sh]).pcs; }
 function cutRenderResult() {
   if (!_cutSheets || !_cutCtx) return;
   const c = _cutCtx;
@@ -9580,6 +9593,7 @@ function cutRenderResult() {
 
   el('cut-result').innerHTML = `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:8px">
+      ${(() => { const k = cutPieceCount(_cutSheets); return sc('총 조각수', k.pcs + ' 조각', k.blocks ? ('연결블록 ' + k.blocks + '개 · ' + k.blockPcs + '조각 포함') : ('판재 ' + used + '장에 배치'), '#185fa5'); })()}
       ${sc('부재 총 면적', m2(c.partArea) + ' ㎡')}
       ${sc('재단 길이 (톱질)', sawLen == null ? '—' : ((sawLen / 1000).toFixed(2) + ' m'), sawLen == null ? '손으로 옮김 — 다시 계산 안 함' : '빨간 점선 길이 합', '#d94a3d')}
       ${sc('마구리 둘레 합', (c.edgeLen / 1000).toFixed(2) + ' m', '부재 4면 · 연마용')}
@@ -9651,7 +9665,7 @@ function cutSheetSvg(sh, Ws, Hs, n, si) {
     : `<div style="font-size:11.5px;color:var(--t3);margin-top:3px">남는 부분 없음 — 판재를 다 썼습니다</div>`;
   // 톱질 선 — 한 번 들어가면 그 조각 끝까지 쭉 나가는 직선만 그린다
   const cuts = (_cutTouched ? [] : (sh.cuts || [])).map(c => `<line x1="${(c.x1 * sc).toFixed(1)}" y1="${(c.y1 * sc).toFixed(1)}" x2="${(c.x2 * sc).toFixed(1)}" y2="${(c.y2 * sc).toFixed(1)}" stroke="#d94a3d" stroke-width="1.1" stroke-dasharray="6 4" opacity=".85"/>`).join('');
-  return `<div style="margin-bottom:12px"><div style="font-size:12px;color:var(--t3);margin-bottom:3px">판재 ${n} · ${Ws}×${Hs}${_cutTouched ? ' <span style="color:#d69e2e">— 손으로 옮긴 배치</span>' : ' <span style="color:#d94a3d">— 빨간 점선 = 톱질 선</span> <span style="color:#2e7d5b">· 빗금 = 남는 부분</span>'}</div><svg viewBox="0 0 ${W.toFixed(1)} ${H.toFixed(1)}" style="width:100%;max-width:${W.toFixed(0)}px;border:1px solid #999;background:#fff">
+  return `<div style="margin-bottom:12px"><div style="font-size:12px;color:var(--t3);margin-bottom:3px">판재 ${n} · ${Ws}×${Hs} · <b style="color:#185fa5">${cutSheetPcs(sh)}조각</b>${_cutTouched ? ' <span style="color:#d69e2e">— 손으로 옮긴 배치</span>' : ' <span style="color:#d94a3d">— 빨간 점선 = 톱질 선</span> <span style="color:#2e7d5b">· 빗금 = 남는 부분</span>'}</div><svg viewBox="0 0 ${W.toFixed(1)} ${H.toFixed(1)}" style="width:100%;max-width:${W.toFixed(0)}px;border:1px solid #999;background:#fff">
     <defs><pattern id="${pid}" width="7" height="7" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><rect width="7" height="7" fill="#f7f8f9"/><line x1="0" y1="0" x2="0" y2="7" stroke="#c9ced6" stroke-width="1.6"/></pattern></defs>
     ${scrapSvg}${rects}${cuts}<rect x="0.5" y="0.5" width="${(W - 1).toFixed(1)}" height="${(H - 1).toFixed(1)}" fill="none" stroke="#333" stroke-width="1"/></svg>${scrapList}</div>`;
 }
@@ -9791,7 +9805,7 @@ function cutPlanListInner() {
       <button class="btn btn-sm btn-ghost" title="${p.pinned ? '고정 해제' : '고정 (오래돼도 안 지워짐)'}" style="color:${p.pinned ? '#d69e2e' : 'var(--t3)'};flex:none" onclick="cutPlanPin('${p.id}')"><i class="ti ti-star${p.pinned ? '-filled' : ''}"></i></button>
       <div style="min-width:0;flex:1">
         <div style="font-size:12.5px;font-weight:700">${esc(p.title || cutPlanTitle(p))}</div>
-        <div style="font-size:10.5px;color:var(--t3)">${esc(when)} · ${esc(p.by || '')}${p.sheets ? ' · 판재 ' + p.sheets + '장' : ''}${p.grain ? ' · 결방향' : ''}${(p.groups || []).length ? ' · 무늬연결 ' + p.groups.length : ''}</div>
+        <div style="font-size:10.5px;color:var(--t3)">${esc(when)} · ${esc(p.by || '')}${p.sheets ? ' · 판재 ' + p.sheets + '장' : ''}${(() => { const n = (p.parts || []).reduce((a, x) => a + (+x.q || 0), 0); return n ? ' · ' + n + '조각' : ''; })()}${p.grain ? ' · 결방향' : ''}${(p.groups || []).length ? ' · 무늬연결 ' + p.groups.length : ''}</div>
       </div>
       <input placeholder="이름 (선택)" value="${esc(p.name || '')}" style="${inp}" onchange="cutPlanRename('${p.id}',this.value)">
       <button class="btn btn-sm btn-pri" style="flex:none" onclick="cutPlanLoad('${p.id}')"><i class="ti ti-download"></i>불러오기</button>
