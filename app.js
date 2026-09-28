@@ -5590,21 +5590,41 @@ function openQuoteInline(id, copy) {
   filters.quoteEdit = id || 'new'; filters.quoteCopy = !!copy; filters.quoteCat = '';
   renderQuote(); if (el('pg-quote')) el('pg-quote').scrollIntoView({ block: 'start' });
 }
-function quoteCancel() { qDraftDrop(); filters.quoteEdit = ''; filters.quoteCopy = false; filters.quoteCat = ''; filters.quoteBalanceOf = ''; renderQuote(); }
-/* ★ 계약금 받은 견적 → 수량 고쳐서 «잔금 견적서» 만들기 (2026-09-28) */
+function quoteCancel() { qDraftDrop(); filters.quoteEdit = ''; filters.quoteCopy = false; filters.quoteCat = ''; filters.quoteBalanceOf = ''; filters.quoteBalancePre = 0; renderQuote(); }
+/* ★ 계약금 받은 견적 → 수량 고쳐서 «잔금 견적서» 만들기 (2026-09-28)
+   ★ 2026-09-28 고침 — 예전에는 «확정주문 + 앱이 자동으로 붙인 입금»이 있어야만 버튼이 떴다.
+     그런데 계약금은 보통 «확정주문을 누르기 전»에 들어온다. 실제로 삼성타일 Q20260904-13 은
+     계약금 1,655,808원(정확히 30%)이 9/4에 들어왔는데도 확정 전이라 아무것도 안 떴다.
+     이제 확정 여부와 상관없이 뜨고, **받은 금액을 직접 확인·수정**한다. */
+function quoteBalancePre(q) {
+  const got = Math.round(quotePaid(q));                       // ① 이 견적에 붙은 입금
+  if (got > 0) return { amt: got, src: '이 견적에 붙은 입금' };
+  const d = quoteDeposit(q);                                  // ② 견적서에 적어 둔 계약금
+  if (d && d.amt > 0) return { amt: d.amt, src: '견적서에 적은 계약금 ' + _pctTxt(d.pct) + '%' };
+  let ex = 0; try { ex = Math.round(clientMoneyOf(q.client).extra || 0); } catch (e) { }
+  if (ex > 0) return { amt: ex, src: '이 거래처에서 아직 어느 견적에도 안 붙은 입금' };
+  return { amt: 0, src: '' };
+}
 function quoteBalanceNew(id) {
   const q = (state.quotes || []).find(x => x.id === id); if (!q) { toast('견적을 찾을 수 없습니다'); return; }
   if (quoteSuperseded(q)) { toast('이미 잔금 견적서로 대체된 견적입니다'); return; }
   if (quoteIsBalance(q)) { toast('이 견적이 이미 잔금 견적서입니다'); return; }
-  const got = Math.round(quotePaid(q));
-  if (!(got > 0)) { toast('아직 들어온 돈이 없습니다 — 계약금이 입금된 뒤에 만들 수 있습니다'); return; }
+  const sug = quoteBalancePre(q), tot = Math.round(+q.total || 0);
+  const inp = prompt('잔금 견적서 — 이미 «받은 계약금»을 확인해 주세요 (숫자만)\n\n'
+    + '  원본 견적  ' + (q.docNo || '') + '  ·  합계 ' + fmtWon(tot) + '원\n'
+    + (sug.amt > 0 ? ('  ' + sug.src + '  ' + fmtWon(sug.amt) + '원\n') : '  (앱에서 찾은 금액이 없습니다 — 직접 적어주세요)\n')
+    + '\n이 금액을 새 합계에서 빼고 «잔금»을 청구합니다.',
+    sug.amt > 0 ? String(sug.amt) : '');
+  if (inp == null) return;                                     // 취소
+  const pre = Math.max(0, Math.round(_numv(inp)));
+  if (!(pre > 0)) { toast('받은 계약금을 숫자로 적어주세요'); return; }
   if (!confirm('이 견적으로 «잔금 견적서»를 만들까요?\n\n'
     + '  원본 견적       ' + (q.docNo || '') + '\n'
-    + '  기받은 계약금   ' + fmtWon(got) + '원\n\n'
+    + '  기받은 계약금   ' + fmtWon(pre) + '원\n\n'
     + '· 품목이 그대로 복사됩니다 — 수량만 고치면 됩니다.\n'
     + '· 저장하면 새 합계에서 위 금액을 뺀 «잔금»을 청구합니다.\n'
     + '· 원본은 「잔금 견적서로 대체됨」이 되어 매출·미수에서 빠집니다 (두 번 세지 않게).')) return;
-  filters.quoteBalanceOf = id;
+  filters.quoteBalanceOf = id; filters.quoteBalancePre = pre;
   openQuoteInline(id, true);          // 복사 모드로 폼을 연다 (품목 그대로, 번호·날짜는 새로)
 }
 /* 부대비용·가공 프리셋 (견적 폼에 항상 표시, 수량 입력한 것만 견적서 반영) */
@@ -5721,7 +5741,7 @@ function renderQuoteForm() {
     ${(() => {
       const bq = filters.quoteBalanceOf ? (state.quotes || []).find(x => x.id === filters.quoteBalanceOf) : null;
       if (!bq) return '';
-      const got = Math.round(quotePaid(bq));
+      const got = Math.max(0, Math.round(+filters.quoteBalancePre || quotePaid(bq)));
       return `<div style="background:#eef7f1;border:1.5px solid #bfe3d0;border-radius:12px;padding:11px 13px;margin-bottom:11px;font-size:12.5px;color:#2f6b3a;line-height:1.7">
         <b style="font-size:13.5px"><i class="ti ti-receipt-2"></i> 잔금 견적서를 만드는 중입니다</b><br>
         원본 <b>${esc(bq.docNo || '')}</b> 의 품목을 그대로 가져왔습니다 — <b>수량만 고치세요.</b><br>
@@ -6081,7 +6101,7 @@ async function submitQuote(id) {
     const _balId = String(filters.quoteBalanceOf || '');
     const _balQ = (_balId && !id) ? (state.quotes || []).find(x => x.id === _balId) : null;
     if (_balQ) {
-      data.prepaid = Math.max(0, Math.round(quotePaid(_balQ)));
+      data.prepaid = Math.max(0, Math.round(+filters.quoteBalancePre || quotePaid(_balQ)));
       data.prepaidFrom = _balQ.docNo || '';
       data.prepaidFromId = _balQ.id;
       data.depositPct = 0; data.depositAmt = 0;         // 잔금 견적서에는 새 계약금을 잡지 않는다
@@ -6093,7 +6113,7 @@ async function submitQuote(id) {
       try { await Store.update('quotes', _balId, { supersededBy: _newId, supersededAt: Date.now() }); } catch (e) { }
       try { moneyBust(); } catch (e) { }
     }
-    filters.quoteBalanceOf = '';
+    filters.quoteBalanceOf = ''; filters.quoteBalancePre = 0;
     /* ★ 견적이 들어간 걸 확인한 «바로 이 순간» 초안을 지우고 화면을 넘긴다.
        예전엔 단가표 손질을 다 끝낸 뒤에야 넘어가서, 그 사이에 사장님은
        «저장이 안 됐나?» 하고 다시 누르곤 했다. */
@@ -10424,10 +10444,12 @@ function openQuoteView(id) {
     ${(q.memo || '').trim() ? `<div class="sec-label"><i class="ti ti-notes"></i>비고</div><div style="font-size:12.5px;color:var(--t2);white-space:pre-wrap;background:var(--soft);border-radius:10px;padding:10px 12px;margin-bottom:12px">${esc(q.memo)}</div>` : ''}
     <div style="padding:0 2px">${basinDrawListHtml(q, 'quotes')}</div>
     ${(() => {
-      /* ★ 계약금이 들어온 확정 견적 → 수량 고쳐서 잔금 견적서 만들기 */
-      if (!q.ordered || quoteSuperseded(q) || quoteIsBalance(q) || !(_pa > 0)) return '';
+      /* ★ 잔금 견적서 만들기 — 확정 전이어도 뜬다 (계약금은 보통 확정 전에 들어온다) */
+      if (quoteSuperseded(q) || quoteIsBalance(q)) return '';
+      const sg = quoteBalancePre(q);
       return `<div style="background:#eef7f1;border:1.5px solid #bfe3d0;border-radius:11px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#2f6b3a;line-height:1.6">
-        <b><i class="ti ti-receipt-2"></i> 수량이 바뀌었나요?</b> 받은 돈 <b>${fmtWon(_pa)}원</b>을 빼고 <b>잔금만</b> 청구하는 견적서를 만들 수 있습니다.
+        <b><i class="ti ti-receipt-2"></i> 계약금 받고 수량이 바뀌었나요?</b> 받은 계약금을 빼고 <b>잔금만</b> 청구하는 견적서를 만들 수 있습니다.
+        ${sg.amt > 0 ? `<br><span style="color:var(--t2)">${esc(sg.src)} <b>${fmtWon(sg.amt)}원</b> — 누르면 금액을 확인·수정할 수 있습니다.</span>` : '<br><span style="color:var(--t3)">누르면 받은 금액을 직접 적을 수 있습니다.</span>'}
         <button class="btn btn-sm btn-block" style="margin-top:7px;background:#0F6E56;color:#fff;border-color:#0F6E56" onclick="closeModal();quoteBalanceNew('${q.id}')"><i class="ti ti-receipt-2"></i>잔금 견적서 만들기</button></div>`;
     })()}
     ${quoteSuperseded(q) ? `<div style="background:#f6f6f6;border:1.5px solid #ddd;border-radius:11px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#555;line-height:1.6"><b><i class="ti ti-arrow-right-bar"></i> 잔금 견적서로 대체된 견적입니다.</b><br>매출·미수에서는 빠져 있습니다 — 같은 일감을 두 번 세지 않기 위해서입니다. 기록은 그대로 남습니다.${(() => { const nq = (state.quotes || []).find(x => x.id === q.supersededBy); return nq ? `<button class="btn btn-sm btn-block" style="margin-top:7px" onclick="closeModal();openQuoteView('${nq.id}')"><i class="ti ti-external-link"></i>잔금 견적서 ${esc(nq.docNo || '')} 보기</button>` : ''; })()}</div>` : ''}
