@@ -16265,7 +16265,12 @@ async function submitShip() {
     for (const nm of zeroed) notifyStockOut(nm);   // 재고 소진 → 즉시 푸시
     // 출고 대기열(출고관리)에 등록 — 재고는 위에서 이미 차감됨(stockApplied). 소리 알림은 '출고 지시' 낼 때만.
     try {
-      const qItems = rows.map(r => ({ name: r.name, qty: r.qty, spec: [r.lot, r.pattern].map(s => (s || '').trim()).filter(Boolean).join(' / '), unit: '장', lot: r.lot || '', pattern: r.pattern || '' }));
+      /* ★ 2026-09-28 — 예전에는 규격 칸에 «롯트 / 패턴»을 넣어서 지시서 규격란에 «1», «2» 같은
+         롯트 번호가 찍혔다. 이제 규격은 자재의 «진짜 규격», 롯트·패턴은 따로 싣는다. */
+      const qItems = rows.map(r => {
+        const inv = (state.inventory || []).find(i => _normName(i.name) === _normName(r.name));
+        return { name: r.name, qty: r.qty, spec: (inv && inv.spec) ? String(inv.spec) : '', unit: '장', lot: (r.lot || '').trim(), pattern: (r.pattern || '').trim() };
+      });
       await Store.add('chulgoReqs', { docNo: chulgoNextDocNo('출고'), reqType: '출고', client: targetName, items: qItems, status: '대기열', stockApplied: true, sourceShipId: shipId, dispatchDest: dest, destOrig: dest, siteAddr: siteAddr, noSlip: noSlip, schedDate: date, memo: note || '', sender: (me && me.name) || '', createdAt: Date.now() });
     } catch (e) { }
     // ★ shippedAt(저장 시각) 말고 화면에서 고른 '출고일(date)'도 같이 남긴다 — 견적 카드에 이 날짜를 보여준다
@@ -16859,6 +16864,35 @@ function chulgoReqCard(r, forWarehouse) {
     </div>
   </div>`;
 }
+/* ★★ 2026-09-28 — 지시서 규격 / 롯트·패턴
+   사용자: *"출고지시서에 이렇게 뜨면 안되고 규격은 규격대로 잘 떠야 하고
+           패턴과 롯트는 지정하는 경우에 강조해서 떠야 함"*
+   ★ 옛 기록은 규격 칸에 «롯트 / 패턴»이 들어가 있다. 규격처럼 생겼는지 보고 갈라낸다. */
+function _isSpecText(v) { return /\d{2,}\s*[*xX×]\s*\d{2,}/.test(String(v == null ? '' : v)); }
+/* 규격 — 적어 둔 값이 진짜 규격이면 그대로, 아니면 재고에서 찾아온다 */
+function cgSpecOf(it) {
+  const s = String((it && it.spec) || '').trim();
+  if (_isSpecText(s)) return s;
+  const inv = (state.inventory || []).find(i => _normName(i.name) === _normName((it && it.name) || ''));
+  if (inv && inv.spec) return String(inv.spec);
+  return _isSpecText(s) ? s : '';        // 규격이 아닌 글자는 규격칸에 안 넣는다
+}
+/* 롯트·패턴 — 지정한 것만. 옛 기록은 규격 칸에 「롯트 / 패턴」으로 들어가 있다 */
+function cgLotPatOf(it) {
+  let lot = String((it && it.lot) || '').trim(), pat = String((it && it.pattern) || '').trim();
+  if (!lot && !pat) {
+    const s = String((it && it.spec) || '').trim();
+    if (s && !_isSpecText(s)) { const p = s.split('/').map(x => x.trim()); lot = p[0] || ''; pat = p[1] || ''; }
+  }
+  return { lot: lot, pat: pat, any: !!(lot || pat) };
+}
+/* 지시서에 찍을 글자 — 지정했을 때만 빨갛게 (안 지정했으면 조용히 «—») */
+function cgLotPatCell(it, esc2) {
+  const lp = cgLotPatOf(it); const E = esc2 || (x => String(x == null ? '' : x));
+  if (!lp.any) return '<span style="color:#999">—</span>';
+  const txt = [lp.lot ? '롯트 ' + E(lp.lot) : '', lp.pat ? '패턴 ' + E(lp.pat) : ''].filter(Boolean).join(' · ');
+  return '<b style="color:#c0341d">' + txt + '</b>';
+}
 /* 출고/입고 지시서 인쇄 — 회사 레터헤드 + 품목표 + 확인란 */
 function chulgoPrint(id) {
   const r = (state.chulgoReqs || []).find(x => x.id === id); if (!r) { toast('요청을 찾을 수 없습니다'); return; }
@@ -16874,8 +16908,8 @@ function chulgoPrint(id) {
   const _cgQ = (_cgTx && _cgTx.quoteId) ? (state.quotes || []).find(x => x.id === _cgTx.quoteId) : null;
   const _cgSite = _slipVal(r, 'siteAddr', _slipVal(_cgTx, 'siteAddr', (_cgQ && _cgQ.siteAddr) || ''));
   const _cgNo = !!(Object.prototype.hasOwnProperty.call(r, 'noSlip') ? r.noSlip : (_cgTx && _cgTx.noSlip));
-  let rows = items.map((it, i) => `<tr><td class="c">${i + 1}</td><td class="l">${e(it.name)}</td><td class="l">${e(it.spec)}</td><td class="r">${e(it.qty)}</td><td class="c">${e(it.unit)}</td></tr>`).join('');
-  for (let i = items.length; i < MIN; i++) rows += `<tr><td class="c">${i + 1}</td><td></td><td></td><td></td><td></td></tr>`;
+  let rows = items.map((it, i) => `<tr><td class="c">${i + 1}</td><td class="l">${e(it.name)}</td><td class="c">${e(cgSpecOf(it))}</td><td class="c">${cgLotPatCell(it, e)}</td><td class="r">${e(it.qty)}</td><td class="c">${e(it.unit)}</td></tr>`).join('');
+  for (let i = items.length; i < MIN; i++) rows += `<tr><td class="c">${i + 1}</td><td></td><td></td><td></td><td></td><td></td></tr>`;
   const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${title} ${e(r.client)} ${e(r.docNo)}</title>
 <style>
   *{box-sizing:border-box} body{font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#111;margin:0;padding:22px 26px}
@@ -16897,8 +16931,8 @@ function chulgoPrint(id) {
     <tr><td class="k">기사 / 배차</td><td>${r.companyDispatch ? '업체 배차' : (e(r.driver) || '-')}${r.loadTime ? ' · 상차 ' + e(r.loadTime) : ''}</td><td class="k">구분표시</td><td>${e(flTxt)}</td></tr>
     ${(r.dispatchDest || _cgSite) ? `<tr><td class="k">출고지</td><td colspan="3" style="font-weight:700">${e(r.dispatchDest || '')}${(_cgSite && _cgSite !== String(r.dispatchDest || '').trim()) ? `<div style="font-weight:600;margin-top:3px">현장 주소 : ${e(_cgSite)}</div>` : ''}</td></tr>` : ''}
   </table>
-  <table class="items"><colgroup><col style="width:8%"><col style="width:40%"><col style="width:28%"><col style="width:14%"><col style="width:10%"></colgroup>
-    <thead><tr><th>No</th><th>품목명</th><th>규격 / 롯트·패턴</th><th>수량</th><th>단위</th></tr></thead><tbody>${rows}</tbody></table>
+  <table class="items"><colgroup><col style="width:7%"><col style="width:33%"><col style="width:22%"><col style="width:20%"><col style="width:10%"><col style="width:8%"></colgroup>
+    <thead><tr><th>No</th><th>품목명</th><th>규격</th><th>롯트 · 패턴</th><th>수량</th><th>단위</th></tr></thead><tbody>${rows}</tbody></table>
   ${r.memo ? `<div style="margin-top:8px;font-size:12.5px;border:1px solid #444;padding:8px 10px"><b>메모</b> : ${e(r.memo)}</div>` : ''}
   <table class="foot"><tr><td class="k">요청자</td><td></td><td class="k">${isIn ? '입고' : '출고'}담당</td><td></td><td class="k">확인자</td><td></td></tr></table>
 </body></html>`;
@@ -17099,7 +17133,8 @@ function chulgoPrintDispatch(dispatchId) {
   let rows = ''; let no = 0;
   stops.forEach(s => {
     rows += `<tr><td class="grp" colspan="6">◼&nbsp; 거래처 : <b>${e(s.client)}</b> <span style="font-weight:600;color:#555">(${(s.items || []).length}품목)</span></td></tr>`;
-    (s.items || []).forEach(it => { no++; const pat = (it.pattern || '').trim(); rows += `<tr><td class="c">${no}</td><td class="l">${e(it.name)}${pat ? `<div style="font-size:11.5px;color:#c0341d;font-weight:700;margin-top:2px">무늬(패턴) : ${e(pat)}</div>` : ''}</td><td class="c">${e(it.spec)}</td><td class="c">${e(it.qty)}</td><td class="c">${e(it.unit)}</td><td class="l">${g.companyDispatch ? '업체 직접 수령' : e(s.dest)}</td></tr>`; });
+    (s.items || []).forEach(it => { no++; const lp = cgLotPatOf(it);
+      rows += `<tr><td class="c">${no}</td><td class="l">${e(it.name)}${lp.any ? `<div style="font-size:11.5px;color:#c0341d;font-weight:700;margin-top:2px">${[lp.lot ? '롯트 : ' + e(lp.lot) : '', lp.pat ? '무늬(패턴) : ' + e(lp.pat) : ''].filter(Boolean).join('　·　')}</div>` : ''}</td><td class="c">${e(cgSpecOf(it))}</td><td class="c">${e(it.qty)}</td><td class="c">${e(it.unit)}</td><td class="l">${g.companyDispatch ? '업체 직접 수령' : e(s.dest)}</td></tr>`; });
   });
   const MIN = Math.max(6, no);
   for (let i = no; i < MIN; i++) rows += `<tr><td class="c">${i + 1}</td><td></td><td></td><td></td><td></td><td></td></tr>`;
