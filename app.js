@@ -10239,7 +10239,18 @@ function renderQuoteSettings() {
           · <b>신성그룹</b> — 비워 두면 <b>유통 − 헤베당 7,000원</b>으로 나갑니다. 칸에 흐리게 보이는 숫자가 그 금액입니다.</div>
         <div class="search-box" style="margin-bottom:8px"><i class="ti ti-search"></i><input placeholder="자재명·규격 검색" value="${esc(filters.qsMatSearch || '')}" oninput="qsFilterPrices(this.value)" autocomplete="off" lang="ko"></div>
         <div data-keepscroll id="qs-prices" style="max-height:52vh;overflow:auto">
-          <table class="tbl"><thead><tr><th style="text-align:left">자재</th><th>대리점</th><th title="12T는 인테리어 − 헤베당 20,000원">유통</th><th>인테리어</th><th>소비자</th><th style="color:#5847b8;white-space:nowrap" title="비워 두면 유통가 기준(−7,000원/㎡ 규칙)으로 나갑니다">신성그룹</th><th style="color:#5847b8;white-space:nowrap" title="비워 두면 대리점가로 나갑니다">현대엘앤씨</th>${isAdmin() ? '<th style="color:#c0341d">원가🔒</th>' : ''}<th></th></tr></thead><tbody>${_qsPriceRowsHtml()}</tbody></table>
+          <table class="tbl" style="border-collapse:separate;border-spacing:0"><thead><tr>${(() => {
+            /* ★ 표제 줄은 스크롤을 내려도 맨 위에 붙어 있는다 (2026-09-28)
+               사용자: "자재별 유형단가에서 맨위에 표제 … 스크롤 내려도 따라다니게 해줘" */
+            const _st = 'position:sticky;top:0;z-index:3;background:var(--card,#fff);border-bottom:1.5px solid var(--bd)';
+            const _h = [['자재', 'text-align:left'], ['대리점', ''], ['유통', '', '12T는 인테리어 − 헤베당 20,000원'],
+              ['인테리어', ''], ['소비자', ''],
+              ['신성그룹', 'color:#5847b8;white-space:nowrap', '비워 두면 유통가 기준(−7,000원/㎡ 규칙)으로 나갑니다'],
+              ['현대엘앤씨', 'color:#5847b8;white-space:nowrap', '비워 두면 대리점가로 나갑니다']];
+            if (isAdmin()) _h.push(['원가🔒', 'color:#c0341d']);
+            _h.push(['', '']);
+            return _h.map(x => `<th style="${_st};${x[1] || ''}"${x[2] ? ` title="${esc(x[2])}"` : ''}>${x[0]}</th>`).join('');
+          })()}</tr></thead><tbody>${_qsPriceRowsHtml()}</tbody></table>
         </div>
         <div style="font-size:11px;color:var(--t3);margin-top:6px">단가는 칸을 벗어나면(Tab/클릭) 자동 저장됩니다. 상위 120개 표시 — 검색으로 좁혀주세요.</div>
       </div>
@@ -10712,14 +10723,15 @@ function costNameChanged(inpEl) {
    · 세면대    → 수량 × 원가단가 (개당 값이라 헤베를 안 쓴다)
    · 그 외     → 수량 × 원가단가, 수량을 비우면 «1회»
    헤베 칸은 안 쓰는 줄에서는 회색으로 잠근다. */
-function ctRowMode(row) {
+function ctRowMode(row, p) {
+  p = p || 'ct';                      // 'ct' = 원가 줄 · 'ci' = 이슈(실수) 줄 — 규칙은 똑같다
   if (!row) return;
-  const gEl = row.querySelector('.ct-gubun'); if (!gEl) return;
+  const gEl = row.querySelector('.' + p + '-gubun'); if (!gEl) return;
   const isMat = gEl.value === '자재';
-  const bx = row.nextElementSibling;
+  const bx = (p === 'ct') ? row.nextElementSibling : null;
   const isBasin = !!(bx && bx.classList.contains('ct-basin') && bx.style.display !== 'none');
   const useHebe = isMat && !isBasin;
-  const he = row.querySelector('.ct-hebe');
+  const he = row.querySelector('.' + p + '-hebe');
   if (he) {
     he.disabled = !useHebe;
     he.placeholder = useHebe ? '헤베' : '—';
@@ -10727,11 +10739,50 @@ function ctRowMode(row) {
     he.style.color = useHebe ? '' : 'var(--t3)';
     if (!useHebe && he.value !== '') he.value = '';
   }
-  const qe = row.querySelector('.ct-qty');
+  const qe = row.querySelector('.' + p + '-qty');
   if (qe && !isMat && !(_numv(qe.value) > 0)) qe.value = 1;   // 운송·시공 등은 1회
 }
-function ctRowsRefresh() { document.querySelectorAll('#ct-rows .ct-row').forEach(ctRowMode); }
-function ctGubunChanged(sel) { const r = sel.closest('.ct-row'); ctRowMode(r); costRecalc(); }
+function ctRowsRefresh() { document.querySelectorAll('#ct-rows .ct-row').forEach(r => ctRowMode(r, 'ct')); }
+function ctGubunChanged(sel) { const r = sel.closest('.ct-row'); ctRowMode(r, 'ct'); costRecalc(); }
+/* ── 이슈(실수) 추가 비용 (2026-09-28) ─────────────────────────
+   사용자: "원가 정산할 때 이슈 (실수) 에 따른 추가 비용도 따로 정산할 수 있게 해줘
+            구분 / 품목명 / 규격 / 헤베면 헤베 있고 원가 원가단가 있고
+            다만 귀책 사유 적을 수 있게 해서 원가 합산으로"
+   원가 줄과 칸 구성·계산 규칙이 같고, 귀책자 + 사유 한 줄이 더 붙는다.
+   매출은 0원이므로 넣은 만큼 그대로 마진이 깎인다. */
+const COST_BLAMES = ['우리(사내)', '공장', '기사', '시공팀', '거래처', '중국 발주', '기타'];
+function issueLineHtml(d) {
+  d = d || {}; const inp = 'font-size:13px;padding:6px 7px;border:1.5px solid var(--bd2);border-radius:7px';
+  return `<div class="ci-row" style="border:1px solid #f0cfc9;background:#fffaf9;border-radius:9px;padding:7px 8px;margin-bottom:7px">
+    <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+      <select class="ci-gubun" onchange="ciGubunChanged(this)" style="${inp};flex:none;width:66px">${GUBUN.map(g => `<option ${d.gubun === g ? 'selected' : ''}>${g}</option>`).join('')}</select>
+      <input class="ci-name" placeholder="품목명 (예: 재제작 자재)" value="${esc(d.name || '')}" style="${inp};flex:2;min-width:90px" lang="ko">
+      <input class="ci-spec" placeholder="규격" value="${esc(d.spec || '')}" style="${inp};flex:1;min-width:64px" lang="en">
+      <input class="ci-hebe" inputmode="decimal" placeholder="헤베" value="${esc(d.hebe || '')}" oninput="costRecalc()" style="${inp};flex:none;width:52px;text-align:right">
+      <input class="ci-qty" inputmode="numeric" placeholder="수량" value="${esc(d.qty || '')}" oninput="costRecalc()" style="${inp};flex:none;width:48px;text-align:right">
+      <input class="ci-unit" inputmode="numeric" placeholder="원가단가" value="${esc(d.unitCost || '')}" oninput="costRecalc()" style="${inp};flex:none;width:76px;text-align:right">
+      <input class="ci-cost" inputmode="numeric" placeholder="원가" value="${esc(d.cost || '')}" oninput="costRecalc()" style="${inp};flex:none;width:88px;text-align:right;background:#fff0ee;font-weight:700;color:#b42318">
+      <button type="button" class="btn btn-ghost btn-sm" onclick="const r=this.closest('.ci-row');r.remove();costRecalc()"><i class="ti ti-x"></i></button>
+    </div>
+    <div style="display:flex;gap:5px;align-items:center;margin-top:5px;flex-wrap:wrap">
+      <span style="font-size:11px;color:#b42318;font-weight:800;flex:none">귀책</span>
+      <select class="ci-blame" style="${inp};flex:none;width:112px">${COST_BLAMES.map(b => `<option ${d.blame === b ? 'selected' : ''}>${b}</option>`).join('')}</select>
+      <input class="ci-why" placeholder="사유 (예: 치수 오측 → 재제작)" value="${esc(d.blameNote || '')}" style="${inp};flex:1;min-width:130px" lang="ko">
+    </div>
+  </div>`;
+}
+function ciRowsRefresh() { document.querySelectorAll('#ci-rows .ci-row').forEach(r => ctRowMode(r, 'ci')); }
+function ciGubunChanged(sel) { const r = sel.closest('.ci-row'); ctRowMode(r, 'ci'); costRecalc(); }
+function addIssueRow() { const c = el('ci-rows'); if (c) { c.insertAdjacentHTML('beforeend', issueLineHtml({ gubun: '자재' })); ciRowsRefresh(); costRecalc(); } }
+/* 이슈 줄 하나를 읽어 저장할 모양으로 */
+function issueLineRead(r) {
+  const g = c => { const e = r.querySelector('.' + c); return e ? e.value : ''; };
+  const name = String(g('ci-name') || '').trim(), cost = _numv(g('ci-cost'));
+  if (!(name || cost > 0)) return null;
+  return { gubun: g('ci-gubun'), name: name, spec: String(g('ci-spec') || '').trim(),
+           hebe: _numv(g('ci-hebe')) || '', qty: _numv(g('ci-qty')) || '', unitCost: _numv(g('ci-unit')) || '',
+           cost: cost, blame: g('ci-blame'), blameNote: String(g('ci-why') || '').trim() };
+}
 function costLineHtml(d, _ctSale) {
   d = d || {}; const inp = 'font-size:13px;padding:6px 7px;border:1.5px solid var(--bd2);border-radius:7px';
   if (_ctSale === undefined) _ctSale = null;
@@ -10769,11 +10820,25 @@ function costRecalc() {
     const c = _numv(costEl.value);
     if (g === '운송') cTrans += c; else if (g === '시공') cCons += c; else cMat += c;
   });
+  // ★ 이슈(실수) 추가 비용 — 원가 줄과 계산 규칙이 같다. 매출은 없다.
+  let cIssue = 0;
+  document.querySelectorAll('#ci-rows .ci-row').forEach(r => {
+    const g = r.querySelector('.ci-gubun').value;
+    const hebe = _numv(r.querySelector('.ci-hebe').value), qty = _numv(r.querySelector('.ci-qty').value), unit = _numv(r.querySelector('.ci-unit').value);
+    const costEl = r.querySelector('.ci-cost');
+    if (g === '자재') {
+      if (hebe > 0) { if (qty > 0 && unit > 0) costEl.value = Math.round(hebe * qty * unit); }
+      else if (unit > 0) { costEl.value = Math.round((qty > 0 ? qty : 1) * unit); }
+    } else if (unit > 0) { costEl.value = Math.round((qty > 0 ? qty : 1) * unit); }
+    cIssue += _numv(costEl.value);
+  });
+  if (el('ci-total')) el('ci-total').textContent = fmtWon(cIssue);
+  const _ir = el('ct-issue-row'); if (_ir) _ir.style.display = cIssue > 0 ? '' : 'none';
   const proc = el('ct-process') ? _numv(el('ct-process').value) : 0;
-  const cost = { mat: cMat, proc: proc, cons: cCons, trans: cTrans };
+  const cost = { mat: cMat, proc: proc, cons: cCons, trans: cTrans, issue: cIssue };
   const setCat = (k) => { const m = (_costRev[k] || 0) - cost[k]; if (el('cc_' + k)) el('cc_' + k).textContent = fmtWon(cost[k]); const me = el('cm_' + k); if (me) { me.textContent = fmtWon(m); me.style.color = m < 0 ? 'var(--red-t)' : 'var(--gd)'; } };
-  setCat('mat'); setCat('proc'); setCat('cons'); setCat('trans');
-  const totCost = cMat + proc + cCons + cTrans;
+  setCat('mat'); setCat('proc'); setCat('cons'); setCat('trans'); setCat('issue');
+  const totCost = cMat + proc + cCons + cTrans + cIssue;
   const margin = _costSupply - totCost;
   if (el('ct-total')) el('ct-total').textContent = fmtWon(totCost);
   if (el('ct-margin')) { el('ct-margin').textContent = fmtWon(margin); el('ct-margin').style.color = margin < 0 ? 'var(--red-t)' : 'var(--gd)'; }
@@ -10783,7 +10848,7 @@ function renderCostForm() {
   keepScrolls();
   const q = (state.quotes || []).find(x => x.id === filters.costEdit); if (!q) { filters.costEdit = ''; render(); return; }
   _costSupply = +q.supply || 0;
-  _costRev = { mat: 0, proc: 0, cons: 0, trans: 0 };
+  _costRev = { mat: 0, proc: 0, cons: 0, trans: 0, issue: 0 };   // 이슈는 매출이 없다
   (q.items || []).forEach(it => { const c = marginCat(it.name); const k = c === '가공' ? 'proc' : c === '시공' ? 'cons' : c === '운송' ? 'trans' : 'mat'; _costRev[k] += Math.round(+it.amt || 0); });
   const _procItems = (q.items || []).filter(it => costGubunOf(it.name) === '가공');
   const _procSale = _procItems.reduce((a, it) => a + Math.round(+it.amt || 0), 0);   // 가공비 칸에 붙일 매출 (원가 줄에서 빠진 항목들)
@@ -10792,6 +10857,7 @@ function renderCostForm() {
      단, 예전에 가공비를 적어 둔 건이면 칸을 띄운다 — 안 그러면 저장할 때 그 금액이 0으로 지워진다. */
   const _hasProc = _procItems.length > 0 || (+q.processCost || 0) > 0;
   const lines = (q.costLines && q.costLines.length) ? q.costLines : (q.items || []).filter(it => costGubunOf(it.name) !== '가공').map(it => ({ gubun: costGubunOf(it.name), factory: '', name: it.name, spec: it.spec || '', hebe: costHebeOf(it.name, it.spec || ''), qty: it.qty || '', unitCost: '', cost: '', cnStone: it.stone || '' }));
+  const _issueRows = (q.issueLines || []).map(issueLineHtml).join('');
   const _sm = costSaleMap(q);
   const rows = lines.map(l => costLineHtml(l, _sm.line(l.name))).join('');
   el('pg-' + tab).innerHTML = `
@@ -10809,6 +10875,15 @@ function renderCostForm() {
           <input id="ct-process" inputmode="numeric" value="${esc(q.processCost || '')}" oninput="costRecalc()" placeholder="0" style="width:140px;text-align:right;font-size:16px;font-weight:800;padding:9px 11px;border:1.5px solid #e6bf93;border-radius:9px;background:#fff;color:#a2560f">
         </div>
       </div>`}
+      <div style="background:#fff8f7;border:1.5px solid #f0cfc9;border-radius:11px;padding:11px 13px;margin-top:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <div style="font-size:13px;font-weight:700;color:#b42318"><i class="ti ti-alert-triangle"></i> 이슈(실수) 추가 비용</div>
+          <div style="font-size:12px;color:#b42318;font-weight:700">합계 <span id="ci-total">0</span>원</div>
+        </div>
+        <div style="font-size:11px;color:var(--t3);margin-bottom:7px;line-height:1.5">실수·하자 때문에 더 들어간 비용을 적습니다. <b>매출은 없으므로 적은 만큼 마진이 줄어듭니다.</b> 계산은 위 원가 줄과 같습니다 (자재는 헤베×수량×단가, 나머지는 수량×단가).</div>
+        <div id="ci-rows">${_issueRows}</div>
+        <button type="button" class="btn btn-ghost btn-sm btn-block" style="color:#b42318" onclick="addIssueRow()"><i class="ti ti-plus"></i>이슈 비용 줄 추가</button>
+      </div>
       <div style="background:var(--soft);border-radius:11px;padding:12px 14px;margin-top:12px;max-width:460px;margin-left:auto">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
           <thead><tr style="color:var(--t3);font-size:11px"><th style="text-align:left;padding:2px 4px">분류</th><th style="text-align:right;padding:2px 4px">매출</th><th style="text-align:right;padding:2px 4px">원가</th><th style="text-align:right;padding:2px 4px">마진</th></tr></thead>
@@ -10817,6 +10892,7 @@ function renderCostForm() {
             ${!_hasProc ? '' : `<tr><td style="padding:3px 4px">가공</td><td style="text-align:right">${fmtWon(_costRev.proc)}</td><td style="text-align:right;color:#b45309"><span id="cc_proc">0</span></td><td style="text-align:right;font-weight:700"><span id="cm_proc">0</span></td></tr>`}
             <tr><td style="padding:3px 4px">시공</td><td style="text-align:right">${fmtWon(_costRev.cons)}</td><td style="text-align:right;color:#b45309"><span id="cc_cons">0</span></td><td style="text-align:right;font-weight:700"><span id="cm_cons">0</span></td></tr>
             <tr><td style="padding:3px 4px">운송</td><td style="text-align:right">${fmtWon(_costRev.trans)}</td><td style="text-align:right;color:#b45309"><span id="cc_trans">0</span></td><td style="text-align:right;font-weight:700"><span id="cm_trans">0</span></td></tr>
+            <tr id="ct-issue-row" style="display:none"><td style="padding:3px 4px;color:#b42318;font-weight:700">이슈</td><td style="text-align:right;color:var(--t3)">-</td><td style="text-align:right;color:#b42318;font-weight:700"><span id="cc_issue">0</span></td><td style="text-align:right;font-weight:700"><span id="cm_issue">0</span></td></tr>
           </tbody>
           <tfoot><tr style="border-top:1.5px solid var(--bd2);font-size:14px"><td style="padding:5px 4px;font-weight:800">총</td><td style="text-align:right;font-weight:700">${fmtWon(q.supply)}</td><td style="text-align:right;font-weight:700;color:#b45309"><span id="ct-total">0</span></td><td style="text-align:right;font-weight:800"><span id="ct-margin" style="color:var(--gd)">0</span></td></tr></tfoot>
         </table>
@@ -10826,6 +10902,7 @@ function renderCostForm() {
     </div>`;
   costBasinRefresh();
   ctRowsRefresh();
+  ciRowsRefresh();
   costRecalc();
 }
 async function submitCost(id) {
@@ -10845,8 +10922,11 @@ async function submitCost(id) {
   });
   /* ★ 가공비 칸을 안 띄운 견적이면 예전에 적어 둔 값을 그대로 둔다 (0으로 지우지 않는다) */
   const processCost = el('ct-process') ? _numv(el('ct-process').value) : Math.round(+q.processCost || 0);
-  const costTotal = lines.reduce((a, b) => a + (+b.cost || 0), 0) + processCost; const sup = +q.supply || 0; const margin = sup - costTotal;
-  await Store.update('quotes', id, { costLines: lines, processCost: processCost, costTotal: costTotal, margin: margin, marginRate: sup > 0 ? +(margin / sup).toFixed(4) : 0 });
+  const issueLines = [];
+  document.querySelectorAll('#ci-rows .ci-row').forEach(r => { const L = issueLineRead(r); if (L) issueLines.push(L); });
+  const issueCost = issueLines.reduce((a, b) => a + (+b.cost || 0), 0);
+  const costTotal = lines.reduce((a, b) => a + (+b.cost || 0), 0) + processCost + issueCost; const sup = +q.supply || 0; const margin = sup - costTotal;
+  await Store.update('quotes', id, { costLines: lines, processCost: processCost, issueLines: issueLines, issueCost: issueCost, costTotal: costTotal, margin: margin, marginRate: sup > 0 ? +(margin / sup).toFixed(4) : 0 });
   filters.costEdit = ''; toast('원가 저장 · 마진 ' + fmtWon(margin)); render(); costListRestore();
 }
 /* ── 원가 원장 : 원가 줄 옆에 «그 항목이 얼마에 팔렸는지» 붙이기 (2026-09-28)
@@ -10882,17 +10962,19 @@ function costSaleMap(q) {
 function downloadCostLedger() {
   if (!isAdmin()) { toast('관리자만'); return; }
   if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후'); return; }
-  const qs = (state.quotes || []).filter(q => (q.costLines && q.costLines.length) || (+q.processCost || 0) > 0).sort((a, b) => (qDate(a) || '').localeCompare(qDate(b) || ''));
+  const qs = (state.quotes || []).filter(q => (q.costLines && q.costLines.length) || (+q.processCost || 0) > 0 || (q.issueLines && q.issueLines.length)).sort((a, b) => (qDate(a) || '').localeCompare(qDate(b) || ''));
   if (!qs.length) { toast('원가 입력된 견적이 없습니다'); return; }
   const head = ['날짜', '거래처', '전표', '구분', '공장', '품목명', '규격', '헤베수', '수량', '원가단가', '원가', '매출액', '마진', '마진율'];
   const aoa = [['견적서(현장)별 원가·마진 원장'], ['출력일 ' + todayStr()], [], head];
   let tSup = 0, tCost = 0;
   qs.forEach(q => {
-    const sup = +q.supply || 0; const pc = +q.processCost || 0; const ct = (q.costLines || []).reduce((a, b) => a + (+b.cost || 0), 0) + pc; tSup += sup; tCost += ct;
+    const sup = +q.supply || 0; const pc = +q.processCost || 0; const ic = (q.issueLines || []).reduce((a, b) => a + (+b.cost || 0), 0);
+    const ct = (q.costLines || []).reduce((a, b) => a + (+b.cost || 0), 0) + pc + ic; tSup += sup; tCost += ct;
     const sm = costSaleMap(q);
     const cell4 = (sale, cost) => (sale == null) ? ['', '', ''] : [sale, sale - cost, sale > 0 ? +((sale - cost) / sale).toFixed(4) : 0];
     (q.costLines || []).forEach(l => { const _c = +l.cost || 0; const _s = sm.line(l.name); aoa.push([qDate(q), q.client || '', q.docNo || '', l.gubun || '', l.factory || '', l.name || '', l.spec || '', l.hebe || '', l.qty || '', l.unitCost || '', _c].concat(cell4(_s, _c))); });
     if (pc > 0) { const _ps = sm.proc(); aoa.push([qDate(q), q.client || '', q.docNo || '', '가공', '공장견적', '가공비(공장 견적 총액)', '', '', '', '', pc].concat(cell4(_ps, pc))); }
+    (q.issueLines || []).forEach(l => { aoa.push([qDate(q), q.client || '', q.docNo || '', '이슈', l.blame || '', '⚠ ' + (l.name || '') + (l.blameNote ? ' — ' + l.blameNote : ''), l.spec || '', l.hebe || '', l.qty || '', l.unitCost || '', +l.cost || 0, '', '', '']); });
     const mg = sup - ct; aoa.push(['', '', q.docNo || '', '소계', '', '▣ ' + (q.client || '') + ' / ' + (q.docNo || ''), '', '', '', '', ct, sup, mg, sup > 0 ? +(mg / sup).toFixed(4) : 0]); aoa.push([]);
   });
   aoa.push(['', '', '', '총계', '', '', '', '', '', '', tCost, tSup, tSup - tCost, tSup > 0 ? +((tSup - tCost) / tSup).toFixed(4) : 0]);
