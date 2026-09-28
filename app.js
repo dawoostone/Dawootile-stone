@@ -10008,8 +10008,63 @@ function quotePriceItems() {
   (state.priceList || []).forEach(p => { const k = _normName(p.itemName); if (p.itemName && !map[k]) map[k] = { name: p.itemName, spec: p.spec || '' }; });
   return Object.values(map).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 }
-async function savePriceRow(itemName) {
+/* ── 단가표를 «헤베(㎡)»로도 보여주기 + 12T / 신성그룹 규칙 (2026-09-28) ──
+   사용자: "헷갈리니까 우리가 볼 때는 헤베로 볼 수 있게 해줘"
+           "12티는 인테리어 단가 기준 헤베 당 -20000원씩 하는 게 유통 단가임"
+           "신성그룹은 그 유통단가에서 -7000원"
+   ★ 저장되는 값은 지금처럼 «한 장 값» 그대로다. 헤베는 보여주기만 한다.
+     (12T 한 장 = 1.6 × 3.2 = 5.12㎡ · 6T 한 장 = 1.2 × 2.7 = 3.24㎡) */
+const PL_12T_MINUS_M2 = 20000;   // 12T : 유통 = 인테리어 − 헤베당 20,000
+const PL_SIN_MINUS_M2 = 7000;    // 신성그룹 = 유통 − 헤베당 7,000
+function plM2Text(won, area) {
+  const w = Math.round(+won || 0), a = +area || 0;
+  if (!(w > 0) || !(a > 0)) return '';
+  return '㎡ ' + fmtWon(w / a);
+}
+function plIs12T(name) { return /12\s*T/i.test(String(name == null ? '' : name)); }
+/* 12T 유통단가 = 인테리어 − 헤베당 20,000 (못 구하면 0) */
+function plDistFrom12T(name, interior) {
+  if (!plIs12T(name)) return 0;
+  const a = itemAreaM2(name), iv = Math.round(+interior || 0);
+  if (!(a > 0) || !(iv > 0)) return 0;
+  const v = Math.round(iv - PL_12T_MINUS_M2 * a);
+  return v > 0 ? v : 0;
+}
+/* 신성그룹 규칙 — 거래처에 저장해 둔 규칙을 그대로 쓴다 (없으면 유통 − 헤베당 7,000) */
+function plSinRule() {
+  const c = (state.clients || []).find(x => /신성/.test(String(x.value || '')) && x.priceRule && PRICE_RULE_BASES[x.priceRule.base]);
+  return (c && c.priceRule) || { base: 'dist', minusM2: PL_SIN_MINUS_M2 };
+}
+function plSinHint(name, vals) {
+  if (itemCategory(name) !== '세라믹') return 0;        // 슬라브만 (세면대는 장당이라 ㎡로 빼면 안 된다)
+  const a = itemAreaM2(name); if (!(a >= 2)) return 0;
+  const r = plSinRule();
+  const base = Math.round(+((vals || {})[r.base]) || 0); if (!(base > 0)) return 0;
+  const v = Math.round(base - (+r.minusM2 || 0) * a);
+  return v > 0 ? v : 0;
+}
+/* 한 줄의 «㎡ 00,000» 글씨와 신성그룹 흐린 숫자를 지금 값에 맞춰 다시 적는다 */
+function plRowHints(row, name) {
+  if (!row) return;
+  const a = itemAreaM2(name);
+  const g = c => { const e = row.querySelector('.' + c); return e ? _numv(e.value) : 0; };
+  const set = (c, v) => { const d = row.querySelector('.qsp-m2[data-for="' + c + '"]'); if (d) d.textContent = plM2Text(v, a); };
+  ['qsp-agy', 'qsp-dist', 'qsp-int', 'qsp-con', 'qsp-sin', 'qsp-hyu', 'qsp-cost'].forEach(c => set(c, g(c)));
+  const se = row.querySelector('.qsp-sin');
+  if (se) {
+    const hint = plSinHint(name, { dist: g('qsp-dist'), agency: g('qsp-agy'), interior: g('qsp-int'), consumer: g('qsp-con') });
+    se.placeholder = hint > 0 ? fmtWon(hint) : '';
+    if (!(g('qsp-sin') > 0)) { const d = row.querySelector('.qsp-m2[data-for="qsp-sin"]'); if (d) d.textContent = plM2Text(hint, a); }
+  }
+}
+async function savePriceRow(itemName, changed) {
   const row = document.querySelector(`.qs-prow[data-nm="${CSS.escape(itemName)}"]`); if (!row) return;
+  /* ★ 12T — 인테리어 단가를 고치면 «인테리어 − 헤베당 20,000» 을 유통 칸에 넣는다 */
+  if (changed === 'interior') {
+    const _d = plDistFrom12T(itemName, _numv(row.querySelector('.qsp-int').value));
+    const _de = row.querySelector('.qsp-dist');
+    if (_d > 0 && _de) _de.value = _d;
+  }
   const patch = { dist: _numv(row.querySelector('.qsp-dist').value), agency: _numv(row.querySelector('.qsp-agy').value), interior: _numv(row.querySelector('.qsp-int').value), consumer: _numv(row.querySelector('.qsp-con').value) };
   const sinEl = row.querySelector('.qsp-sin'); if (sinEl) patch.sinsung = _numv(sinEl.value);
   const hyuEl = row.querySelector('.qsp-hyu'); if (hyuEl) patch.hyundai = _numv(hyuEl.value);
@@ -10017,6 +10072,7 @@ async function savePriceRow(itemName) {
   const costEl = row.querySelector('.qsp-cost'); if (costEl && isAdmin()) patch.cost = _numv(costEl.value);   // 원가는 관리자만 저장
   const pl = (state.priceList || []).find(p => _normName(p.itemName) === _normName(itemName));
   if (pl) await Store.update('priceList', pl.id, patch); else await Store.add('priceList', Object.assign({ itemName, dist: 0, agency: 0, interior: 0, consumer: 0, sinsung: 0, hyundai: 0 }, patch));
+  plRowHints(row, itemName);
   const ok = row.querySelector('.qsp-ok'); if (ok) { ok.style.opacity = 1; setTimeout(() => { ok.style.opacity = 0; }, 1200); }
 }
 async function deletePriceRow(id, name) {
@@ -10077,8 +10133,8 @@ function priceListTemplate() {
   if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후 다시'); return; }
   const adm = isAdmin();
   const items = quotePriceItems();
-  const head = ['자재명', '규격', '유통', '대리점', '인테리어', '소비자', '신성그룹', '현대엘앤씨'].concat(adm ? ['원가'] : []);
-  const aoa = [head].concat(items.map(i => { const pl = (state.priceList || []).find(p => _normName(p.itemName) === _normName(i.name)) || {}; const row = [i.name, i.spec || '', pl.dist || '', pl.agency || '', pl.interior || '', pl.consumer || '', pl.sinsung || '', pl.hyundai || '']; if (adm) row.push(pl.cost || ''); return row; }));
+  const head = ['자재명', '규격', '대리점', '유통', '인테리어', '소비자', '신성그룹', '현대엘앤씨'].concat(adm ? ['원가'] : []);
+  const aoa = [head].concat(items.map(i => { const pl = (state.priceList || []).find(p => _normName(p.itemName) === _normName(i.name)) || {}; const row = [i.name, i.spec || '', pl.agency || '', pl.dist || '', pl.interior || '', pl.consumer || '', pl.sinsung || '', pl.hyundai || '']; if (adm) row.push(pl.cost || ''); return row; }));
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '단가표');
   XLSX.writeFile(wb, '단가표양식_' + todayStr() + '.xlsx');
@@ -10097,17 +10153,22 @@ function _qsPriceRowsHtml() {
   let mats = quotePriceItems();
   if (matSearch) mats = mats.filter(i => (i.name || '').toLowerCase().includes(matSearch) || (i.spec || '').toLowerCase().includes(matSearch));
   const inp = 'width:100%;font-size:13px;padding:7px 4px;border:1.5px solid var(--bd2);border-radius:8px;text-align:right';
-  const cols = adm ? 9 : 8;   // 자재 + 유통·대리점·인테리어·소비자·신성그룹·현대엘앤씨 (+원가) + 버튼
+  const m2s = 'font-size:10px;color:var(--t3);text-align:right;margin-top:2px;min-height:12px;white-space:nowrap';
+  const cols = adm ? 9 : 8;   // 자재 + 대리점·유통·인테리어·소비자·신성그룹·현대엘앤씨 (+원가) + 버튼
   return mats.slice(0, 150).map(i => { const pl = (state.priceList || []).find(p => _normName(p.itemName) === _normName(i.name)) || {}; const nm = esc(i.name).replace(/'/g, "\\'");
-    const _cat = itemCategory(i.name); return `<tr class="qs-prow" data-nm="${esc(i.name)}"><td style="text-align:left"><b>${esc(i.name)}</b>${i.spec ? `<div style="font-size:10.5px;color:var(--t3)">${esc(i.spec)}</div>` : ''}<select onchange="saveItemCat('${nm}',this.value)" style="margin-top:3px;font-size:10.5px;padding:2px 4px;border:1px solid var(--bd2);border-radius:6px;color:var(--t2)">${LCATS.map(cc => `<option ${_cat === cc ? 'selected' : ''}>${cc}</option>`).join('')}</select></td>
-      <td><input class="qsp-dist" inputmode="numeric" value="${esc(pl.dist || '')}" onchange="savePriceRow('${nm}')" style="${inp}"></td>
-      <td><input class="qsp-agy" inputmode="numeric" value="${esc(pl.agency || '')}" onchange="savePriceRow('${nm}')" style="${inp}"></td>
-      <td><input class="qsp-int" inputmode="numeric" value="${esc(pl.interior || '')}" onchange="savePriceRow('${nm}')" style="${inp}"></td>
-      <td><input class="qsp-con" inputmode="numeric" value="${esc(pl.consumer || '')}" onchange="savePriceRow('${nm}')" style="${inp}"></td>
-      <td><input class="qsp-sin" inputmode="numeric" value="${esc(pl.sinsung || '')}" onchange="savePriceRow('${nm}')" style="${inp};background:#f7f5ff;border-color:#cdc4f0"></td>
-      <td><input class="qsp-hyu" inputmode="numeric" value="${esc(pl.hyundai || '')}" onchange="savePriceRow('${nm}')" style="${inp};background:#f7f5ff;border-color:#cdc4f0"></td>
-      ${adm ? `<td><input class="qsp-cost" inputmode="numeric" value="${esc(pl.cost || '')}" onchange="savePriceRow('${nm}')" style="${inp};background:#fff6f6;border-color:#e6b0b0"></td>` : ''}
-      <td style="width:46px;white-space:nowrap;text-align:center"><i class="ti ti-check qsp-ok" style="color:var(--gd);opacity:0;transition:opacity .2s"></i>${pl.id ? `<i class="ti ti-trash" onclick="deletePriceRow('${pl.id}','${nm}')" title="단가 삭제" style="color:#c0341d;cursor:pointer;margin-left:8px;font-size:16px"></i>` : ''}</td></tr>`; }).join('') || `<tr><td colspan="${cols}"><div class="empty" style="padding:14px">자재가 없습니다</div></td></tr>`;
+    const _a = itemAreaM2(i.name);
+    const _sin = plSinHint(i.name, pl);
+    /* 한 칸 = 숫자 입력 + 그 밑에 헤베당 금액 (보기 전용) */
+    const cel = (cls, val, sty, tag) => `<td><input class="${cls}" inputmode="numeric" value="${esc(val || '')}" onchange="savePriceRow('${nm}'${tag ? ",'" + tag + "'" : ''})" style="${inp}${sty || ''}"><div class="qsp-m2" data-for="${cls}" style="${m2s}">${plM2Text(val, _a)}</div></td>`;
+    const _cat = itemCategory(i.name); return `<tr class="qs-prow" data-nm="${esc(i.name)}"><td style="text-align:left"><b>${esc(i.name)}</b>${i.spec ? `<div style="font-size:10.5px;color:var(--t3)">${esc(i.spec)}</div>` : ''}${_a > 0 ? `<div style="font-size:10px;color:var(--t3)">한 장 ${_a.toFixed(2)}㎡</div>` : ''}<select onchange="saveItemCat('${nm}',this.value)" style="margin-top:3px;font-size:10.5px;padding:2px 4px;border:1px solid var(--bd2);border-radius:6px;color:var(--t2)">${LCATS.map(cc => `<option ${_cat === cc ? 'selected' : ''}>${cc}</option>`).join('')}</select></td>
+      ${cel('qsp-agy', pl.agency)}
+      ${cel('qsp-dist', pl.dist)}
+      ${cel('qsp-int', pl.interior, '', 'interior')}
+      ${cel('qsp-con', pl.consumer)}
+      <td><input class="qsp-sin" inputmode="numeric" value="${esc(pl.sinsung || '')}" placeholder="${_sin > 0 ? fmtWon(_sin) : ''}" onchange="savePriceRow('${nm}')" style="${inp};background:#f7f5ff;border-color:#cdc4f0"><div class="qsp-m2" data-for="qsp-sin" style="${m2s}">${plM2Text((+pl.sinsung || 0) || _sin, _a)}</div></td>
+      ${cel('qsp-hyu', pl.hyundai, ';background:#f7f5ff;border-color:#cdc4f0')}
+      ${adm ? cel('qsp-cost', pl.cost, ';background:#fff6f6;border-color:#e6b0b0') : ''}
+      <td style="width:46px;white-space:nowrap;text-align:center;vertical-align:top;padding-top:11px"><i class="ti ti-check qsp-ok" style="color:var(--gd);opacity:0;transition:opacity .2s"></i>${pl.id ? `<i class="ti ti-trash" onclick="deletePriceRow('${pl.id}','${nm}')" title="단가 삭제" style="color:#c0341d;cursor:pointer;margin-left:8px;font-size:16px"></i>` : ''}</td></tr>`; }).join('') || `<tr><td colspan="${cols}"><div class="empty" style="padding:14px">자재가 없습니다</div></td></tr>`;
 }
 function qsFilterClients(v) { filters.qsClientSearch = v; const c = el('qs-clients'); if (c) c.innerHTML = _qsClientRowsHtml(); }
 function qsFilterPrices(v) { filters.qsMatSearch = v; const b = document.querySelector('#qs-prices tbody'); if (b) b.innerHTML = _qsPriceRowsHtml(); }
@@ -10170,11 +10231,15 @@ function renderQuoteSettings() {
           <button class="btn btn-sm" onclick="priceListTemplate()"><i class="ti ti-download"></i> 양식 다운로드</button>
           <input type="file" id="pl-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="priceListImport(this)">
         </div>
-        <div style="font-size:11px;color:var(--t3);margin-bottom:8px">엑셀/CSV 열: <b>자재명 · 규격 · 유통 · 대리점 · 인테리어 · 소비자 · 신성그룹 · 현대엘앤씨</b> (열 이름만 맞으면 순서 무관).
+        <div style="font-size:11px;color:var(--t3);margin-bottom:8px">엑셀/CSV 열: <b>자재명 · 규격 · 대리점 · 유통 · 인테리어 · 소비자 · 신성그룹 · 현대엘앤씨</b> (열 이름만 맞으면 순서 무관).
           <b style="color:#5847b8">신성그룹·현대엘앤씨</b> 칸을 <b>비워 두면</b> 신성그룹은 <b>유통가 기준</b>(−7,000원/㎡ 규칙), 현대엘앤씨는 <b>대리점가</b>로 나갑니다. PDF는 자동 인식이 안 되니 엑셀/CSV로 올려주세요.</div>
+        <div style="font-size:11px;color:#8a5a00;background:#fff8ec;border:1px solid #f0dcb8;border-radius:8px;padding:7px 9px;margin-bottom:8px;line-height:1.55">
+          숫자는 <b>한 장 값</b>입니다. 칸 아래 작은 글씨가 <b>헤베(㎡)당 금액</b>이에요. <b>12T 한 장 5.12㎡ · 6T 한 장 3.24㎡</b><br>
+          · <b>12T 유통단가</b> — 인테리어 단가를 고치면 <b>인테리어 − 헤베당 20,000원</b>으로 유통 칸이 자동으로 채워집니다.<br>
+          · <b>신성그룹</b> — 비워 두면 <b>유통 − 헤베당 7,000원</b>으로 나갑니다. 칸에 흐리게 보이는 숫자가 그 금액입니다.</div>
         <div class="search-box" style="margin-bottom:8px"><i class="ti ti-search"></i><input placeholder="자재명·규격 검색" value="${esc(filters.qsMatSearch || '')}" oninput="qsFilterPrices(this.value)" autocomplete="off" lang="ko"></div>
         <div data-keepscroll id="qs-prices" style="max-height:52vh;overflow:auto">
-          <table class="tbl"><thead><tr><th style="text-align:left">자재</th><th>유통</th><th>대리점</th><th>인테리어</th><th>소비자</th><th style="color:#5847b8;white-space:nowrap" title="비워 두면 유통가 기준(−7,000원/㎡ 규칙)으로 나갑니다">신성그룹</th><th style="color:#5847b8;white-space:nowrap" title="비워 두면 대리점가로 나갑니다">현대엘앤씨</th>${isAdmin() ? '<th style="color:#c0341d">원가🔒</th>' : ''}<th></th></tr></thead><tbody>${_qsPriceRowsHtml()}</tbody></table>
+          <table class="tbl"><thead><tr><th style="text-align:left">자재</th><th>대리점</th><th title="12T는 인테리어 − 헤베당 20,000원">유통</th><th>인테리어</th><th>소비자</th><th style="color:#5847b8;white-space:nowrap" title="비워 두면 유통가 기준(−7,000원/㎡ 규칙)으로 나갑니다">신성그룹</th><th style="color:#5847b8;white-space:nowrap" title="비워 두면 대리점가로 나갑니다">현대엘앤씨</th>${isAdmin() ? '<th style="color:#c0341d">원가🔒</th>' : ''}<th></th></tr></thead><tbody>${_qsPriceRowsHtml()}</tbody></table>
         </div>
         <div style="font-size:11px;color:var(--t3);margin-top:6px">단가는 칸을 벗어나면(Tab/클릭) 자동 저장됩니다. 상위 120개 표시 — 검색으로 좁혀주세요.</div>
       </div>
@@ -10608,12 +10673,42 @@ function costNameChanged(inpEl) {
   const row = inpEl.closest('.ct-row'); if (!row) return;
   const box = row.nextElementSibling;
   if (box && box.classList.contains('ct-basin')) box.style.display = costIsBasin(inpEl.value) ? 'flex' : 'none';
+  ctRowMode(row);   // 세면대가 되면 헤베 칸을 잠근다
 }
-function costLineHtml(d) {
+/* ── 원가 줄 모드 (2026-09-28) ─────────────────────────────────
+   사용자: "자재 아닌 경우는 헤베당으로 계산 될 필요 없고
+            시공비, 운송비는 1 회로 해서
+            원가 단가 넣으면 바로 원가 금액 계산되어서 입력되어야 함"
+   · 자재      → 헤베 × 수량 × 원가단가
+   · 세면대    → 수량 × 원가단가 (개당 값이라 헤베를 안 쓴다)
+   · 그 외     → 수량 × 원가단가, 수량을 비우면 «1회»
+   헤베 칸은 안 쓰는 줄에서는 회색으로 잠근다. */
+function ctRowMode(row) {
+  if (!row) return;
+  const gEl = row.querySelector('.ct-gubun'); if (!gEl) return;
+  const isMat = gEl.value === '자재';
+  const bx = row.nextElementSibling;
+  const isBasin = !!(bx && bx.classList.contains('ct-basin') && bx.style.display !== 'none');
+  const useHebe = isMat && !isBasin;
+  const he = row.querySelector('.ct-hebe');
+  if (he) {
+    he.disabled = !useHebe;
+    he.placeholder = useHebe ? '헤베' : '—';
+    he.style.background = useHebe ? '' : 'var(--soft)';
+    he.style.color = useHebe ? '' : 'var(--t3)';
+    if (!useHebe && he.value !== '') he.value = '';
+  }
+  const qe = row.querySelector('.ct-qty');
+  if (qe && !isMat && !(_numv(qe.value) > 0)) qe.value = 1;   // 운송·시공 등은 1회
+}
+function ctRowsRefresh() { document.querySelectorAll('#ct-rows .ct-row').forEach(ctRowMode); }
+function ctGubunChanged(sel) { const r = sel.closest('.ct-row'); ctRowMode(r); costRecalc(); }
+function costLineHtml(d, _ctSale) {
   d = d || {}; const inp = 'font-size:13px;padding:6px 7px;border:1.5px solid var(--bd2);border-radius:7px';
+  if (_ctSale === undefined) _ctSale = null;
   return `<div class="ct-row" style="display:flex;gap:5px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
-    <select class="ct-gubun" onchange="costRecalc()" style="${inp};flex:none;width:66px">${GUBUN.map(g => `<option ${d.gubun === g ? 'selected' : ''}>${g}</option>`).join('')}</select>
-    <input class="ct-name" placeholder="품목명" value="${esc(d.name || '')}" oninput="costNameChanged(this)" style="${inp};flex:2;min-width:90px" lang="ko">
+    <select class="ct-gubun" onchange="ctGubunChanged(this)" style="${inp};flex:none;width:66px">${GUBUN.map(g => `<option ${d.gubun === g ? 'selected' : ''}>${g}</option>`).join('')}</select>
+    <div style="flex:2;min-width:90px"><input class="ct-name" placeholder="품목명" value="${esc(d.name || '')}" oninput="costNameChanged(this)" style="${inp};width:100%" lang="ko">${_ctSale != null ? `<div style="font-size:10px;color:var(--t3);margin-top:2px">매출 ${fmtWon(_ctSale)}</div>` : ''}</div>
     <input class="ct-spec" placeholder="규격" value="${esc(d.spec || '')}" style="${inp};flex:1;min-width:64px" lang="en">
     <input class="ct-hebe" inputmode="decimal" placeholder="헤베" value="${esc(d.hebe || '')}" oninput="costRecalc()" style="${inp};flex:none;width:52px;text-align:right">
     <input class="ct-qty" inputmode="numeric" placeholder="수량" value="${esc(d.qty || '')}" oninput="costRecalc()" style="${inp};flex:none;width:48px;text-align:right">
@@ -10622,7 +10717,7 @@ function costLineHtml(d) {
     <button type="button" class="btn btn-ghost btn-sm" onclick="const r=this.closest('.ct-row');const b=r.nextElementSibling;if(b&&b.classList.contains('ct-basin'))b.remove();r.remove();costRecalc()"><i class="ti ti-x"></i></button>
   </div>${costBasinBoxHtml(d)}`;
 }
-function addCostRow() { const c = el('ct-rows'); if (c) { c.insertAdjacentHTML('beforeend', costLineHtml({ gubun: '자재' })); costBasinRefresh(); } }
+function addCostRow() { const c = el('ct-rows'); if (c) { c.insertAdjacentHTML('beforeend', costLineHtml({ gubun: '자재' })); costBasinRefresh(); ctRowsRefresh(); } }
 /* 화면을 새로 그린 뒤 세면대 줄들의 계산 결과를 한 번씩 채워준다 */
 function costBasinRefresh() { document.querySelectorAll('#ct-rows .ct-basin .ct-cncost').forEach(x => { try { costBasinCalc(x); } catch (e) { } }); }
 function costRecalc() {
@@ -10635,7 +10730,9 @@ function costRecalc() {
     const _bx = r.nextElementSibling;
     const _isBasinRow = !!(_bx && _bx.classList.contains('ct-basin') && _bx.style.display !== 'none');
     if (_isBasinRow) { if (qty > 0 && unit > 0) costEl.value = Math.round(qty * unit); }
-    else if (g === '자재' && hebe > 0 && qty > 0 && unit > 0) { costEl.value = Math.round(hebe * qty * unit); }
+    else if (g === '자재') { if (hebe > 0 && qty > 0 && unit > 0) costEl.value = Math.round(hebe * qty * unit); }
+    // ★ 운송·시공·부속·기타 — 헤베를 안 쓴다. 원가단가만 넣으면 바로 금액이 들어간다 (수량 비면 1회)
+    else if (unit > 0) { costEl.value = Math.round((qty > 0 ? qty : 1) * unit); }
     const c = _numv(costEl.value);
     if (g === '운송') cTrans += c; else if (g === '시공') cCons += c; else cMat += c;
   });
@@ -10656,20 +10753,22 @@ function renderCostForm() {
   _costRev = { mat: 0, proc: 0, cons: 0, trans: 0 };
   (q.items || []).forEach(it => { const c = marginCat(it.name); const k = c === '가공' ? 'proc' : c === '시공' ? 'cons' : c === '운송' ? 'trans' : 'mat'; _costRev[k] += Math.round(+it.amt || 0); });
   const _procItems = (q.items || []).filter(it => costGubunOf(it.name) === '가공');
+  const _procSale = _procItems.reduce((a, it) => a + Math.round(+it.amt || 0), 0);   // 가공비 칸에 붙일 매출 (원가 줄에서 빠진 항목들)
   const lines = (q.costLines && q.costLines.length) ? q.costLines : (q.items || []).filter(it => costGubunOf(it.name) !== '가공').map(it => ({ gubun: costGubunOf(it.name), factory: '', name: it.name, spec: it.spec || '', hebe: hebeFromSpec(it.spec || ''), qty: it.qty || '', unitCost: '', cost: '', cnStone: it.stone || '' }));
-  const rows = lines.map(costLineHtml).join('');
+  const _sm = costSaleMap(q);
+  const rows = lines.map(l => costLineHtml(l, _sm.line(l.name))).join('');
   el('pg-' + tab).innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-calculator"></i>원가 정리</h2><p>${esc(q.docNo || '')} · ${esc(q.client || '')} · 매출 ${fmtWon(q.supply)}</p></div>
       <button class="btn btn-sm" onclick="costCancel()"><i class="ti ti-arrow-left"></i> 목록</button></div>
     <div id="cost-root" class="card" style="padding:14px 16px">
-      <div style="font-size:11px;color:var(--t3);margin-bottom:8px">자재: 헤베×수량×원가단가 자동 · 가공비는 <b>공장 견적 총액</b>으로 아래에 입력 · 운송/부속/기타는 직접 입력 · <b style="color:#c0341d">관리자 전용</b></div>
+      <div style="font-size:11px;color:var(--t3);margin-bottom:8px">자재: <b>헤베×수량×원가단가</b> 자동 · 운송·시공·부속·기타: <b>수량×원가단가</b> 자동 (수량 비우면 1회, 헤베 안 씀) · 가공비는 <b>공장 견적 총액</b>으로 아래에 입력 · <b style="color:#c0341d">관리자 전용</b></div>
       <div style="display:flex;gap:5px;font-size:10.5px;color:var(--t3);font-weight:600;padding:0 2px 4px;flex-wrap:wrap"><div style="width:66px">구분</div><div style="flex:2;min-width:90px">품목명</div><div style="flex:1;min-width:64px">규격</div><div style="width:52px;text-align:right">헤베</div><div style="width:48px;text-align:right">수량</div><div style="width:76px;text-align:right">원가단가</div><div style="width:88px;text-align:right">원가</div><div style="width:28px"></div></div>
       <div id="ct-rows">${rows}</div>
       <button type="button" class="btn btn-ghost btn-sm btn-block" onclick="addCostRow()"><i class="ti ti-plus"></i>자재·운송 등 항목 추가</button>
       <div style="background:#fff6ee;border:1.5px solid #f0d6b8;border-radius:11px;padding:11px 13px;margin-top:12px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
           <div style="min-width:0"><div style="font-size:13px;font-weight:700;color:#a2560f"><i class="ti ti-tools"></i> 가공비 (공장 견적 총액)</div>
-            <div style="font-size:11px;color:var(--t3);margin-top:3px;line-height:1.5">견적서 가공 항목은 공장과 미터수·내용이 달라 항목별 대신 <b>공장에서 받은 견적 총액</b>을 그대로 입력하세요.${_procItems.length ? '<br>견적서상 가공: ' + esc(_procItems.map(x => x.name).join(', ')) : ''}</div></div>
+            <div style="font-size:11px;color:var(--t3);margin-top:3px;line-height:1.5">견적서 가공 항목은 공장과 미터수·내용이 달라 항목별 대신 <b>공장에서 받은 견적 총액</b>을 그대로 입력하세요.${_procItems.length ? '<br>견적서상 가공: ' + esc(_procItems.map(x => x.name).join(', ')) + ' <b>· 매출 ' + fmtWon(_procSale) + '</b>' : ''}</div></div>
           <input id="ct-process" inputmode="numeric" value="${esc(q.processCost || '')}" oninput="costRecalc()" placeholder="0" style="width:140px;text-align:right;font-size:16px;font-weight:800;padding:9px 11px;border:1.5px solid #e6bf93;border-radius:9px;background:#fff;color:#a2560f">
         </div>
       </div>
@@ -10689,6 +10788,7 @@ function renderCostForm() {
       <div class="frm-foot" style="margin-top:12px"><button class="btn" style="flex:1" onclick="costCancel()">취소</button><button class="btn btn-pri" style="flex:2" onclick="submitCost('${q.id}')"><i class="ti ti-check"></i>원가 저장</button></div>
     </div>`;
   costBasinRefresh();
+  ctRowsRefresh();
   costRecalc();
 }
 async function submitCost(id) {
@@ -10711,6 +10811,36 @@ async function submitCost(id) {
   await Store.update('quotes', id, { costLines: lines, processCost: processCost, costTotal: costTotal, margin: margin, marginRate: sup > 0 ? +(margin / sup).toFixed(4) : 0 });
   filters.costEdit = ''; toast('원가 저장 · 마진 ' + fmtWon(margin)); render();
 }
+/* ── 원가 원장 : 원가 줄 옆에 «그 항목이 얼마에 팔렸는지» 붙이기 (2026-09-28)
+   사용자: "원가 원장 볼 때 매출액도 옆에 항목별로 나왔으면 함"
+   원가 줄은 견적 항목에서 만들어지므로 «품목명»으로 짝을 맞춘다.
+   ★ 같은 이름이 두 줄이면 한 번 쓴 항목은 다시 안 쓴다 (매출이 두 번 세지지 않게).
+   ★ 가공은 원가를 총액 한 줄로 넣으므로, 견적서의 가공 항목 금액을 모두 더해서 붙인다. */
+function costSaleMap(q) {
+  const used = new Set();
+  const items = (q && q.items) || [];
+  const amt = it => Math.round(+((it && it.amt) || 0));
+  return {
+    /* 원가 줄 하나에 붙는 매출 (못 찾으면 null — 0원과 구별해서 «-» 로 둔다) */
+    line: function (name) {
+      const k = _normName(name || ''); if (!k) return null;
+      let sum = null;
+      items.forEach((it, idx) => {
+        if (used.has(idx)) return;
+        if (_normName(it.name || '') !== k) return;
+        if (costGubunOf(it.name) === '가공') return;      // 가공은 아래 총액 줄에서 센다
+        used.add(idx); sum = (sum || 0) + amt(it);
+      });
+      return sum;
+    },
+    /* 가공비 한 줄에 붙는 매출 = 견적서 가공 항목 전부 */
+    proc: function () {
+      let sum = 0, n = 0;
+      items.forEach((it, idx) => { if (costGubunOf(it.name) === '가공') { used.add(idx); sum += amt(it); n++; } });
+      return n ? sum : null;
+    }
+  };
+}
 function downloadCostLedger() {
   if (!isAdmin()) { toast('관리자만'); return; }
   if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후'); return; }
@@ -10721,8 +10851,10 @@ function downloadCostLedger() {
   let tSup = 0, tCost = 0;
   qs.forEach(q => {
     const sup = +q.supply || 0; const pc = +q.processCost || 0; const ct = (q.costLines || []).reduce((a, b) => a + (+b.cost || 0), 0) + pc; tSup += sup; tCost += ct;
-    (q.costLines || []).forEach(l => { aoa.push([qDate(q), q.client || '', q.docNo || '', l.gubun || '', l.factory || '', l.name || '', l.spec || '', l.hebe || '', l.qty || '', l.unitCost || '', +l.cost || 0, '', '', '']); });
-    if (pc > 0) aoa.push([qDate(q), q.client || '', q.docNo || '', '가공', '공장견적', '가공비(공장 견적 총액)', '', '', '', '', pc, '', '', '']);
+    const sm = costSaleMap(q);
+    const cell4 = (sale, cost) => (sale == null) ? ['', '', ''] : [sale, sale - cost, sale > 0 ? +((sale - cost) / sale).toFixed(4) : 0];
+    (q.costLines || []).forEach(l => { const _c = +l.cost || 0; const _s = sm.line(l.name); aoa.push([qDate(q), q.client || '', q.docNo || '', l.gubun || '', l.factory || '', l.name || '', l.spec || '', l.hebe || '', l.qty || '', l.unitCost || '', _c].concat(cell4(_s, _c))); });
+    if (pc > 0) { const _ps = sm.proc(); aoa.push([qDate(q), q.client || '', q.docNo || '', '가공', '공장견적', '가공비(공장 견적 총액)', '', '', '', '', pc].concat(cell4(_ps, pc))); }
     const mg = sup - ct; aoa.push(['', '', q.docNo || '', '소계', '', '▣ ' + (q.client || '') + ' / ' + (q.docNo || ''), '', '', '', '', ct, sup, mg, sup > 0 ? +(mg / sup).toFixed(4) : 0]); aoa.push([]);
   });
   aoa.push(['', '', '', '총계', '', '', '', '', '', '', tCost, tSup, tSup - tCost, tSup > 0 ? +((tSup - tCost) / tSup).toFixed(4) : 0]);
