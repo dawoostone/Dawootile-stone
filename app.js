@@ -1453,7 +1453,12 @@ async function runCustPriceSync() {
         const cur = await cref('roles').doc(email).get();
         const old = cur.exists ? ((cur.data() || {}).custPrices || null) : null;
         if (old && JSON.stringify(old) === sig) { _cpLast[email] = sig; continue; }
-        await Store.setMerge('roles', email, { custPrices: map, custPricesAt: Date.now() });
+        /* ★ 단가표에서 «지운» 자재의 옛 단가가 고객 화면에 남던 문제 (2026-09-28)
+           setMerge 는 맵을 «키 단위로 합치기»만 해서, 없어진 키를 지우지 않는다.
+           → 문서가 이미 있으면 update 로 custPrices 를 통째로 갈아끼운다.
+           (실측: 신성그룹 계정에 이미 없어진 단가 8개가 남아 있었다) */
+        if (cur.exists) await Store.update('roles', email, { custPrices: map, custPricesAt: Date.now() });
+        else await Store.setMerge('roles', email, { custPrices: map, custPricesAt: Date.now() });
         _cpLast[email] = sig;
       } catch (e) { console.warn('custPrice sync', email, e); }
     }
