@@ -10603,6 +10603,15 @@ function quoteMarginBreakdown(q) {
 }
 const GUBUN = ['자재', '운송', '시공', '부속', '기타'];   // 가공은 공장 견적 총액으로 별도 입력
 function hebeFromSpec(spec) { const m = (spec || '').match(/(\d{3,4})\s*[*xX×]\s*(\d{3,4})/); if (m) { return +((+m[1] / 1000) * (+m[2] / 1000)).toFixed(2); } return ''; }
+/* 원가 줄의 헤베 — 견적서 규격 → 재고 규격 → 이름의 6T/12T 순으로 찾는다 (2026-09-28)
+   사용자: "왜 원가 정산에 자재 헤베 안들어가있는 것들있지?"
+   견적서에 규격을 안 적은 자재(로마 팬텀 아이보리 12T 등)는 예전에 헤베가 빈칸으로 나왔다.
+   폽업·통관비·관세처럼 «장»으로 안 세는 것은 그대로 빈칸 — 대신 수량×원가단가로 계산한다. */
+function costHebeOf(name, spec) {
+  const h = hebeFromSpec(spec); if (h) return h;
+  let a = 0; try { a = +itemAreaM2(name) || 0; } catch (e) { a = 0; }
+  return a > 0 ? +a.toFixed(2) : '';
+}
 /* ★ 원가 분류는 매출 분류(marginCat)와 «똑같은» 규칙을 쓴다 (2026-09-28)
    사용자: "따내기도 가공이야 원가에도 따내기가 항목 따로 빠져있음"
    예전에는 규칙이 둘로 갈려 있어서 실제 견적 자료에서 4가지가 서로 다르게 잡혔다 —
@@ -10750,7 +10759,11 @@ function costRecalc() {
     const _bx = r.nextElementSibling;
     const _isBasinRow = !!(_bx && _bx.classList.contains('ct-basin') && _bx.style.display !== 'none');
     if (_isBasinRow) { if (qty > 0 && unit > 0) costEl.value = Math.round(qty * unit); }
-    else if (g === '자재') { if (hebe > 0 && qty > 0 && unit > 0) costEl.value = Math.round(hebe * qty * unit); }
+    // 자재 — 헤베가 있으면 «헤베×수량×단가», 헤베가 없는 자재(폽업·통관비·관세 등)는 «수량×단가»
+    else if (g === '자재') {
+      if (hebe > 0) { if (qty > 0 && unit > 0) costEl.value = Math.round(hebe * qty * unit); }
+      else if (unit > 0) { costEl.value = Math.round((qty > 0 ? qty : 1) * unit); }
+    }
     // ★ 운송·시공·부속·기타 — 헤베를 안 쓴다. 원가단가만 넣으면 바로 금액이 들어간다 (수량 비면 1회)
     else if (unit > 0) { costEl.value = Math.round((qty > 0 ? qty : 1) * unit); }
     const c = _numv(costEl.value);
@@ -10778,14 +10791,14 @@ function renderCostForm() {
      사용자: "가공 안 들어간 견적서는 헷갈리니까 원가 정산에서 가공비 칸 빼줬으면 좋겠음"
      단, 예전에 가공비를 적어 둔 건이면 칸을 띄운다 — 안 그러면 저장할 때 그 금액이 0으로 지워진다. */
   const _hasProc = _procItems.length > 0 || (+q.processCost || 0) > 0;
-  const lines = (q.costLines && q.costLines.length) ? q.costLines : (q.items || []).filter(it => costGubunOf(it.name) !== '가공').map(it => ({ gubun: costGubunOf(it.name), factory: '', name: it.name, spec: it.spec || '', hebe: hebeFromSpec(it.spec || ''), qty: it.qty || '', unitCost: '', cost: '', cnStone: it.stone || '' }));
+  const lines = (q.costLines && q.costLines.length) ? q.costLines : (q.items || []).filter(it => costGubunOf(it.name) !== '가공').map(it => ({ gubun: costGubunOf(it.name), factory: '', name: it.name, spec: it.spec || '', hebe: costHebeOf(it.name, it.spec || ''), qty: it.qty || '', unitCost: '', cost: '', cnStone: it.stone || '' }));
   const _sm = costSaleMap(q);
   const rows = lines.map(l => costLineHtml(l, _sm.line(l.name))).join('');
   el('pg-' + tab).innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-calculator"></i>원가 정리</h2><p>${esc(q.docNo || '')} · ${esc(q.client || '')} · 매출 ${fmtWon(q.supply)}</p></div>
       <button class="btn btn-sm" onclick="costCancel()"><i class="ti ti-arrow-left"></i> 목록</button></div>
     <div id="cost-root" class="card" style="padding:14px 16px">
-      <div style="font-size:11px;color:var(--t3);margin-bottom:8px">자재: <b>헤베×수량×원가단가</b> 자동 · 운송·시공·부속·기타: <b>수량×원가단가</b> 자동 (수량 비우면 1회, 헤베 안 씀)${_hasProc ? ' · 가공비는 <b>공장 견적 총액</b>으로 아래에 입력' : ''} · <b style="color:#c0341d">관리자 전용</b></div>
+      <div style="font-size:11px;color:var(--t3);margin-bottom:8px">자재: <b>헤베×수량×원가단가</b> 자동 <span style="color:var(--t3)">(헤베는 견적 규격 → 재고 규격 순으로 자동)</span> · 헤베가 없는 자재·운송·시공·부속·기타: <b>수량×원가단가</b> 자동 (수량 비우면 1회)${_hasProc ? ' · 가공비는 <b>공장 견적 총액</b>으로 아래에 입력' : ''} · <b style="color:#c0341d">관리자 전용</b></div>
       <div style="display:flex;gap:5px;font-size:10.5px;color:var(--t3);font-weight:600;padding:0 2px 4px;flex-wrap:wrap"><div style="width:66px">구분</div><div style="flex:2;min-width:90px">품목명</div><div style="flex:1;min-width:64px">규격</div><div style="width:52px;text-align:right">헤베</div><div style="width:48px;text-align:right">수량</div><div style="width:76px;text-align:right">원가단가</div><div style="width:88px;text-align:right">원가</div><div style="width:28px"></div></div>
       <div id="ct-rows">${rows}</div>
       <button type="button" class="btn btn-ghost btn-sm btn-block" onclick="addCostRow()"><i class="ti ti-plus"></i>자재·운송 등 항목 추가</button>
