@@ -18290,15 +18290,17 @@ async function chulgoDone(id) {
   await Store.update('chulgoReqs', id, patch);
   toast('완료 처리' + (patch.stockApplied ? ' · 재고 반영됨' : ''));
 }
-/* 출고 취소: 연결된 출고 기록 삭제 + 재고 복구 + 홀딩 되돌림 */
+/* 출고 취소: 연결된 출고 기록 삭제 + 재고 복구 + 홀딩 되돌림 + 견적서 출고 해제
+   ★ 2026-09-29 — 사용자: "출고 삭제하고 되돌리면 견적에서 출고 이전으로 돌아와야 함"
+   되돌린 견적서 번호 목록을 돌려준다 (없으면 빈 목록). */
 async function cancelChulgoStock(r) {
-  if (!r || r.reqType !== '출고') return;
+  if (!r || r.reqType !== '출고') return [];
   if (r.sourceBasinId) {   // 세면대 출고 취소 — 발주를 완료 이전 단계(출항)로 되돌림
     const b = (state.basins || []).find(x => x.id === r.sourceBasinId);
     if (b && (b.stage || '') === '완료') { const st = BASIN_STAGES[BASIN_STAGES.length - 2] || '국내입고'; await basinSetStage(b.id, st, { shipDate: '' }); }
-    return;
+    return [];
   }
-  if (!r.sourceShipId) return;
+  if (!r.sourceShipId) return [];
   const key = r.sourceShipId;
   const txns = (state.transactions || []).filter(t => t.type === 'out' && (t.shipId || t.id) === key);
   // 출고 정보 보관(트랜잭션 삭제 전) — 홀딩 복귀용
@@ -18316,15 +18318,20 @@ async function cancelChulgoStock(r) {
       await Store.add('holdings', { vendor: vendor, items: items, materialName: items[0].materialName, jang: items[0].jang, hebe: items[0].hebe, useDate: shipItems[0].useDate || '', status: '홀딩', note: '출고 대기열 취소 · 홀딩 복귀' });
     } catch (e) { }
   }
+  /* ★ 견적서를 «출고 이전»(확정 주문 상태)으로 되돌린다.
+     그 견적에 «남아 있는 출고»가 하나도 없을 때만 푼다 —
+     나눠서 여러 번 출고한 건은 한 건만 취소해도 출고 완료가 그대로 남는다. */
+  return await quoteUnshipIfNone(txns.map(t => t.quoteId), txns.map(t => t.id));
 }
 async function delChulgoReq(id) {
   const r = (state.chulgoReqs || []).find(x => x.id === id); if (!r) return;
   const isOut = r.reqType === '출고' && (r.sourceShipId || r.sourceBasinId);
-  const msg = r.sourceBasinId ? '이 세면대 출고를 취소할까요?\n· 발주가 완료 이전 단계로 되돌아가고\n· 대기열/지시에서 제거됩니다.' : (isOut ? '이 출고를 취소하고 홀딩으로 되돌릴까요?\n· 재고가 복구되고\n· 홀딩(예약)으로 복귀되며\n· 출고 내역·대기열/지시에서 함께 제거됩니다.' : '이 항목을 삭제할까요?');
+  const msg = r.sourceBasinId ? '이 세면대 출고를 취소할까요?\n· 발주가 완료 이전 단계로 되돌아가고\n· 대기열/지시에서 제거됩니다.' : (isOut ? '이 출고를 취소하고 홀딩으로 되돌릴까요?\n· 재고가 복구되고\n· 홀딩(예약)으로 복귀되며\n· 출고 내역·대기열/지시에서 함께 제거되고\n· 연결된 견적서도 출고 이전(확정 주문)으로 돌아갑니다.' : '이 항목을 삭제할까요?');
   if (!confirm(msg)) return;
-  if (isOut) await cancelChulgoStock(r);
+  let _un = [];
+  if (isOut) _un = (await cancelChulgoStock(r)) || [];
   await Store.remove('chulgoReqs', id);
-  toast(isOut ? '출고 취소됨 · 재고 복구' : '삭제됨');
+  toast((isOut ? '출고 취소됨 · 재고 복구' : '삭제됨') + (_un.length ? ' · 견적 ' + _un.join(', ') + ' 출고 이전으로' : ''));
 }
 async function cancelDispatch(dispatchId) {
   const reqs = (state.chulgoReqs || []).filter(r => r.dispatchId === dispatchId && (r.status || '') !== '완료');
