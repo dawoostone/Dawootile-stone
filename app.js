@@ -14831,7 +14831,9 @@ function shipLoadAt(items) {
   const set = [];
   (items || []).forEach(t => { if (!t) return; const d = normDepot(t.depot); if (d && set.indexOf(d) < 0) set.push(d); });
   if (!set.length) set.push(HOME_DEPOT);
-  return set.map(d => d === HOME_DEPOT ? HOME_DEPOT_LABEL : d).join(' · ');
+  /* ★ 출고증에는 «다우세라믹» 만 찍는다 — 「(본사)」는 우리끼리 쓰는 말이라 서류에서 뺀다
+     (창고 고르는 목록에는 그대로 「다우세라믹(본사)」로 남는다) */
+  return set.map(d => d === HOME_DEPOT ? '다우세라믹' : d).join(' · ');
 }
 function printShipSlip(key) {
   const items = state.transactions.filter(t => t.type === 'out' && (t.shipId || t.id) === key)
