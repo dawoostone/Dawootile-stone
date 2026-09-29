@@ -10028,8 +10028,10 @@ function quotePriceItems() {
   const map = {};
   (state.inventory || []).forEach(i => { if (i.name) map[_normName(i.name)] = { name: i.name, spec: i.spec || '' }; });
   (state.priceList || []).forEach(p => { const k = _normName(p.itemName); if (p.itemName && !map[k]) map[k] = { name: p.itemName, spec: p.spec || '' }; });
-  // ★ 비규격 세면대는 단가표에 적을 값이 없다 — 목록에서 뺀다
-  return Object.values(map).filter(x => !isCustomBasin(x.name)).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  /* ★ 비규격 세면대도 여기에는 «남겨 둔다» — 견적 쓸 때 「세면대」만 쳐도 바로 뜨게 (2026-09-29)
+     사용자: "세면대라고 입력하면 세면대 비규격 주문제작이 바로 떠야 됨 단가 기억이랑 상관 없이"
+     단가를 안 쓰는 것과 «목록에 뜨는 것»은 별개다. 단가표 화면에서만 따로 뺀다. */
+  return Object.values(map).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 }
 /* ── 단가표를 «헤베(㎡)»로도 보여주기 + 12T / 신성그룹 규칙 (2026-09-28) ──
    사용자: "헷갈리니까 우리가 볼 때는 헤베로 볼 수 있게 해줘"
@@ -10156,7 +10158,7 @@ function priceListImport(input) {
 function priceListTemplate() {
   if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후 다시'); return; }
   const adm = isAdmin();
-  const items = quotePriceItems();
+  const items = quotePriceItems().filter(i => !isCustomBasin(i.name));   // ★ 단가 양식에서도 뺀다
   const head = ['자재명', '규격', '대리점', '유통', '인테리어', '소비자', '신성그룹', '현대엘앤씨'].concat(adm ? ['원가'] : []);
   const aoa = [head].concat(items.map(i => { const pl = (state.priceList || []).find(p => _normName(p.itemName) === _normName(i.name)) || {}; const row = [i.name, i.spec || '', pl.agency || '', pl.dist || '', pl.interior || '', pl.consumer || '', pl.sinsung || '', pl.hyundai || '']; if (adm) row.push(pl.cost || ''); return row; }));
   const ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -10174,7 +10176,7 @@ function _qsClientRowsHtml() {
 function _qsPriceRowsHtml() {
   const adm = isAdmin();
   const matSearch = (filters.qsMatSearch || '').trim().toLowerCase();
-  let mats = quotePriceItems();
+  let mats = quotePriceItems().filter(i => !isCustomBasin(i.name));   // ★ 단가표에는 적을 값이 없어 여기서만 뺀다
   if (matSearch) mats = mats.filter(i => (i.name || '').toLowerCase().includes(matSearch) || (i.spec || '').toLowerCase().includes(matSearch));
   const inp = 'width:100%;font-size:13px;padding:7px 4px;border:1.5px solid var(--bd2);border-radius:8px;text-align:right';
   const m2s = 'font-size:10px;color:var(--t3);text-align:right;margin-top:2px;min-height:12px;white-space:nowrap';
@@ -12717,13 +12719,23 @@ function renderSettle() {
     <div style="font-size:11.5px;color:var(--t3);font-weight:700;margin-bottom:9px"><i class="ti ti-chart-bar"></i> 영업이익 요약 (${esc(ym)})</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(102px,1fr));gap:8px">
       ${pnlCell('매출(공급가)', salesAll, 'var(--gd)', monthQuotes.length + '건')}
-      ${pnlCell('원가', costSum, '#b45309', '원가입력 ' + costed.length + '건')}
+      ${pnlCell('원가', costSum, '#b45309', (() => {
+        if (costed.length) return '원가입력 ' + costed.length + '건';
+        /* ★ 원가는 «견적 날짜»가 있는 달에 잡힌다. 이 달에 하나도 없으면 어느 달에 있는지 알려준다
+           (실측: 원가 입력 60건이 전부 8월 견적인데 9월 화면을 보고 있어 «반영 안 된다»고 보였다) */
+        const other = {};
+        (state.quotes || []).forEach(x => { if ((+x.costTotal || 0) > 0 || (x.costLines && x.costLines.length)) { const k = qDate(x).slice(0, 7); if (k && k !== ym) other[k] = (other[k] || 0) + 1; } });
+        const ks = Object.keys(other).sort().reverse();
+        if (!ks.length) return '원가입력 0건';
+        return '이 달 0건 · ' + ks.slice(0, 2).map(k => k.replace('-', '.') + ' ' + other[k] + '건').join(' · ');
+      })())}
       ${pnlCell('매출총이익', grossProfit, grossProfit >= 0 ? '#0f766e' : '#dc2626', '마진율 ' + grossRate + '%')}
       ${pnlCell('총지출', expSum, '#7c3aed', '수기 ' + expMonth.length + '건 · 매입 ' + purExp.n + '건')}
       ${pnlCell('매입 실지출', purMonthAll.total, '#c0341d', '세액 포함 ' + purMonthAll.n + '건')}
       ${pnlCell('영업이익', opProfit, opProfit >= 0 ? '#0f766e' : '#dc2626', '이익률 ' + opRate + '%')}
     </div>
     <div style="font-size:11px;color:var(--t3);margin-top:8px;line-height:1.5">· 매출총이익 = 원가 입력된 견적의 (매출 − 원가) 기준 · 영업이익 = 매출총이익 − 총지출
+      <br>· 원가는 <b>견적서 날짜가 있는 달</b>에 잡힙니다 — 지난 달 건에 원가를 넣었다면 위 <b>◀ ▶</b>로 그 달로 넘겨서 보세요.
       <br>· <b>총지출</b> = 수기 회사지출 ${fmtWon(expManual)} + 매입 계산서 공급가 ${fmtWon(purExp.supply)} <span style="color:var(--t3)">(견적 원가로 연결한 매입은 여기서 빠집니다)</span>
       <br>· <b>매입 실지출</b>은 부가세까지 포함해 실제로 통장에서 나간 금액입니다. 부가세는 나중에 공제받으므로 이익 계산에는 넣지 않습니다.${noCost > 0 ? `<br>· <b style="color:#dc2626">원가 미입력 견적 ${noCost}건</b> — 아래 <b>원가 원장</b>의 입력 버튼으로 입력하면 마진에 반영됩니다` : ''}</div>
   </div>`;
