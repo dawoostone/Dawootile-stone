@@ -10752,12 +10752,14 @@ function costNameChanged(inpEl) {
   const row = inpEl.closest('.ct-row'); if (!row) return;
   const box = row.nextElementSibling;
   if (box && box.classList.contains('ct-basin')) box.style.display = costIsBasin(inpEl.value) ? 'flex' : 'none';
-  /* ★ 직접 더한 줄에 품목명을 적으면 헤베·원가단가를 단가표에서 채워 준다 (비어 있을 때만) */
+  /* ★ 품목명을 적거나 고치면 헤베·원가단가를 단가표에서 다시 가져온다.
+     사용자: "이미 적혀있는 것도 덮어써주면 되고" (2026-09-29) */
   const _nm = String(inpEl.value || '').trim();
   if (_nm) {
     const he = row.querySelector('.ct-hebe'), ue = row.querySelector('.ct-unit');
-    if (he && !he.disabled && !_numv(he.value)) { const h = costHebeOf(_nm, ''); if (h) he.value = h; }
-    if (ue && !_numv(ue.value)) { const u = costUnitOf(_nm, (he ? _numv(he.value) : 0)); if (u) ue.value = u; }
+    if (he && !he.disabled) { const h = costHebeOf(_nm, (row.querySelector('.ct-spec') || {}).value || ''); if (h) he.value = h; }
+    const u = costUnitOf(_nm, (he ? _numv(he.value) : 0));
+    if (ue && u) ue.value = u;
   }
   ctRowMode(row);   // 세면대가 되면 헤베 칸을 잠근다
   costRecalc();
@@ -10903,7 +10905,13 @@ function renderCostForm() {
      사용자: "가공 안 들어간 견적서는 헷갈리니까 원가 정산에서 가공비 칸 빼줬으면 좋겠음"
      단, 예전에 가공비를 적어 둔 건이면 칸을 띄운다 — 안 그러면 저장할 때 그 금액이 0으로 지워진다. */
   const _hasProc = _procItems.length > 0 || (+q.processCost || 0) > 0;
-  const lines = (q.costLines && q.costLines.length) ? q.costLines : (q.items || []).filter(it => costGubunOf(it.name) !== '가공').map(it => ({ gubun: costGubunOf(it.name), factory: '', name: it.name, spec: it.spec || '', hebe: costHebeOf(it.name, it.spec || ''), qty: it.qty || '', unitCost: costUnitOf(it.name, costHebeOf(it.name, it.spec || '')), cost: '', cnStone: it.stone || '' }));
+  /* ★ 예전에 원가단가 없이 저장한 줄(실측 49줄)은 단가표 원가로 채워 준다 — 적어 둔 값은 그대로 둔다 */
+  const lines = (q.costLines && q.costLines.length) ? q.costLines.map(l => {
+    const o = Object.assign({}, l);
+    if (!(+o.hebe || 0)) { const h = costHebeOf(o.name, o.spec || ''); if (h) o.hebe = h; }
+    if (!(+o.unitCost || 0)) { const u = costUnitOf(o.name, +o.hebe || 0); if (u) o.unitCost = u; }
+    return o;
+  }) : (q.items || []).filter(it => costGubunOf(it.name) !== '가공').map(it => ({ gubun: costGubunOf(it.name), factory: '', name: it.name, spec: it.spec || '', hebe: costHebeOf(it.name, it.spec || ''), qty: it.qty || '', unitCost: costUnitOf(it.name, costHebeOf(it.name, it.spec || '')), cost: '', cnStone: it.stone || '' }));
   const _dcRaw = quoteDcRaw(q), _dcSup = quoteDcSupply(q), _saleNet = quoteSaleNet(q);
   const _issueRows = (q.issueLines || []).map(issueLineHtml).join('');
   const _sm = costSaleMap(q);
@@ -11019,6 +11027,58 @@ function costSaleMap(q) {
       return n ? sum : null;
     }
   };
+}
+/* ── 자재만 있는 견적 — 원가 한 번에 넣기 (2026-09-29) ────────
+   사용자: "아직도 미입력이라고 뜨는데 원가가 / 직접 다 눌러봐야 되는건지 ?
+            자재만 있는 건 알아서 원가 잡아넣으면 될 것 같은데"
+   ★ 가공·시공·운송이 섞인 건은 사람이 판단해야 하므로 건드리지 않는다.
+   ★ 자재 중 하나라도 단가표에 «원가🔒» 가 없으면 그 건은 통째로 건너뛴다
+     (일부만 넣으면 원가가 적게 잡혀 마진이 부풀려진다). */
+function costAutoLinesFor(q) {
+  const its = ((q && q.items) || []).filter(it => String((it && it.name) || '').trim());
+  if (!its.length) return null;
+  if (!its.every(it => costGubunOf(it.name) === '자재')) return null;
+  const lines = [];
+  for (const it of its) {
+    const hebe = costHebeOf(it.name, it.spec || '');
+    const unit = costUnitOf(it.name, hebe) || 0;
+    if (!(unit > 0)) return null;
+    const qty = Math.round(+it.qty || 0) || 1;
+    const cost = hebe > 0 ? Math.round(hebe * qty * unit) : Math.round(qty * unit);
+    lines.push({ gubun: '자재', factory: '', name: it.name, spec: it.spec || '', hebe: hebe || '', qty: it.qty || '', unitCost: unit, cost: cost, cnStone: it.stone || '' });
+  }
+  return lines;
+}
+function costAutoPending(ym) { return costLedgerList(ym).filter(q => !((q.costTotal != null) || (q.costLines && q.costLines.length))); }
+async function costAutoFill() {
+  if (!isAdmin()) { toast('관리자만 할 수 있습니다'); return; }
+  const ym = filters.settleMonth || todayStr().slice(0, 7);
+  const pend = costAutoPending(ym);
+  const tg = [], skip = [];
+  pend.forEach(q => { const L = costAutoLinesFor(q); if (L) tg.push({ q: q, lines: L }); else skip.push(q); });
+  const where = (filters.costSearch || '').trim() ? '「' + (filters.costSearch || '').trim() + '」 로 찾은 건' : ym.replace('-', '. ') + ' 건';
+  if (!tg.length) { toast(where + ' 중 자동으로 넣을 수 있는 건이 없습니다' + (skip.length ? ' (건너뛸 건 ' + skip.length + '건)' : '')); return; }
+  let cost = 0, sale = 0;
+  tg.forEach(x => { cost += x.lines.reduce((a, b) => a + (+b.cost || 0), 0); sale += quoteSaleNet(x.q); });
+  const mg = sale - cost;
+  const msg = where + ' 중 «자재만 있는» 견적 ' + tg.length + '건에 원가를 넣습니다.\n\n'
+    + '· 매출 합계  ' + fmtWon(sale) + '원\n'
+    + '· 원가 합계  ' + fmtWon(cost) + '원\n'
+    + '· 마진      ' + fmtWon(mg) + '원 (' + (sale > 0 ? Math.round(mg / sale * 100) : 0) + '%)\n\n'
+    + '단가표의 «원가🔒» 칸으로 계산합니다.\n이미 원가를 넣은 건은 건드리지 않습니다.'
+    + (skip.length ? '\n\n건너뛰는 건 ' + skip.length + '건 — 가공·시공·운송이 섞였거나 단가표에 원가가 없는 자재가 있는 건입니다.' : '');
+  if (!confirm(msg)) return;
+  let n = 0, fail = 0;
+  for (const x of tg) {
+    const ct = x.lines.reduce((a, b) => a + (+b.cost || 0), 0);
+    const sup = quoteSaleNet(x.q), margin = sup - ct;
+    try {
+      await Store.update('quotes', x.q.id, { costLines: x.lines, processCost: 0, costTotal: ct, saleNet: sup, margin: margin, marginRate: sup > 0 ? +(margin / sup).toFixed(4) : 0, costAutoAt: Date.now(), costAutoBy: (me && me.name) || '' });
+      n++;
+    } catch (e) { fail++; }
+  }
+  toast(n + '건 원가 자동 입력' + (fail ? ' · 실패 ' + fail + '건' : ''));
+  setTimeout(() => { if (tab === 'settle') renderSettle(); }, 500);
 }
 function downloadCostLedger() {
   if (!isAdmin()) { toast('관리자만'); return; }
@@ -12766,7 +12826,9 @@ function renderSettle() {
   const cRows = _costLedgerRowsHtml(ym);
   const costLedger = `<div class="card" style="margin-bottom:12px;padding:13px 14px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px"><div style="font-size:11.5px;color:var(--t3);font-weight:700"><i class="ti ti-report-money"></i> 원가 원장 (전표별 원가 입력 · 매출 · 마진)</div>
-      <button class="btn btn-sm" onclick="downloadCostLedger()"><i class="ti ti-download"></i>원가원장 엑셀</button></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        ${isAdmin() ? `<button class="btn btn-sm btn-pri" onclick="costAutoFill()" title="가공·시공·운송이 없는 건만 · 단가표 원가로 계산"><i class="ti ti-wand"></i>자재만 있는 건 원가 자동</button>` : ''}
+        <button class="btn btn-sm" onclick="downloadCostLedger()"><i class="ti ti-download"></i>원가원장 엑셀</button></div></div>
     <div class="search-box" style="margin-bottom:7px"><i class="ti ti-search"></i><input id="cl-search" placeholder="업체명 · 전표번호로 찾기 (전체 기간)" value="${esc(filters.costSearch || '')}" oninput="costLedgerSearch(this.value)" autocomplete="off" lang="ko"><i id="cl-search-x" class="ti ti-x" onclick="costLedgerSearchClear()" style="cursor:pointer;color:var(--t3);display:${(filters.costSearch || '').trim() ? '' : 'none'}"></i></div>
     <div id="cl-hint" style="font-size:11px;color:var(--t3);margin-bottom:8px">${_costLedgerHint(ym)}</div>
     <div data-keepscroll id="settle-cost-list" style="max-height:42vh;overflow:auto"><table style="width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px">
