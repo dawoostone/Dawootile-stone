@@ -10657,6 +10657,19 @@ function costHebeOf(name, spec) {
        (세면대인데 원가 줄에서 아예 사라져 중국원가 계산칸도 못 띄웠다)
    이제 규칙을 하나로 합쳐 매출·원가가 영원히 어긋나지 않게 한다. */
 function costGubunOf(name) { return marginCat(name); }
+/* ── 원가단가 자동 채우기 (2026-09-29) ─────────────────────────
+   사용자: "자재 원가가 안뜬다고 원가가"
+   단가표에 «원가🔒» 칸이 있는데(216개 중 112개) 원가 정리에서 안 가져오고 있었다.
+   ★ 단가표의 원가는 «한 장» 값이다 (유통·대리점 단가와 같은 기준).
+     헤베를 쓰는 자재는 ㎡당으로 바꿔 넣어야 «헤베×수량×단가» 가 맞는다.
+     예) 스타투아리오 골드 장당 225,280 ÷ 5.12㎡ = ㎡당 44,000 */
+function costUnitOf(name, hebe) {
+  const pl = (state.priceList || []).find(p => _normName(p.itemName) === _normName(name || ''));
+  const c = Math.round(+((pl && pl.cost) || 0)) || 0;
+  if (!(c > 0)) return '';
+  const h = +hebe || 0;
+  return h > 0 ? Math.round(c / h) : c;
+}
 /* ── 원가 목록 스크롤 고정 (2026-09-28) ───────────────────────
    사용자: "원가 정산 스크롤 고정 좀" → "아니 원가 목록에서"
    원가 목록은 617줄(1만 픽셀)인데 한 번에 344px 만 보인다.
@@ -10739,7 +10752,15 @@ function costNameChanged(inpEl) {
   const row = inpEl.closest('.ct-row'); if (!row) return;
   const box = row.nextElementSibling;
   if (box && box.classList.contains('ct-basin')) box.style.display = costIsBasin(inpEl.value) ? 'flex' : 'none';
+  /* ★ 직접 더한 줄에 품목명을 적으면 헤베·원가단가를 단가표에서 채워 준다 (비어 있을 때만) */
+  const _nm = String(inpEl.value || '').trim();
+  if (_nm) {
+    const he = row.querySelector('.ct-hebe'), ue = row.querySelector('.ct-unit');
+    if (he && !he.disabled && !_numv(he.value)) { const h = costHebeOf(_nm, ''); if (h) he.value = h; }
+    if (ue && !_numv(ue.value)) { const u = costUnitOf(_nm, (he ? _numv(he.value) : 0)); if (u) ue.value = u; }
+  }
   ctRowMode(row);   // 세면대가 되면 헤베 칸을 잠근다
+  costRecalc();
 }
 /* ── 원가 줄 모드 (2026-09-28) ─────────────────────────────────
    사용자: "자재 아닌 경우는 헤베당으로 계산 될 필요 없고
@@ -10882,7 +10903,7 @@ function renderCostForm() {
      사용자: "가공 안 들어간 견적서는 헷갈리니까 원가 정산에서 가공비 칸 빼줬으면 좋겠음"
      단, 예전에 가공비를 적어 둔 건이면 칸을 띄운다 — 안 그러면 저장할 때 그 금액이 0으로 지워진다. */
   const _hasProc = _procItems.length > 0 || (+q.processCost || 0) > 0;
-  const lines = (q.costLines && q.costLines.length) ? q.costLines : (q.items || []).filter(it => costGubunOf(it.name) !== '가공').map(it => ({ gubun: costGubunOf(it.name), factory: '', name: it.name, spec: it.spec || '', hebe: costHebeOf(it.name, it.spec || ''), qty: it.qty || '', unitCost: '', cost: '', cnStone: it.stone || '' }));
+  const lines = (q.costLines && q.costLines.length) ? q.costLines : (q.items || []).filter(it => costGubunOf(it.name) !== '가공').map(it => ({ gubun: costGubunOf(it.name), factory: '', name: it.name, spec: it.spec || '', hebe: costHebeOf(it.name, it.spec || ''), qty: it.qty || '', unitCost: costUnitOf(it.name, costHebeOf(it.name, it.spec || '')), cost: '', cnStone: it.stone || '' }));
   const _dcRaw = quoteDcRaw(q), _dcSup = quoteDcSupply(q), _saleNet = quoteSaleNet(q);
   const _issueRows = (q.issueLines || []).map(issueLineHtml).join('');
   const _sm = costSaleMap(q);
@@ -10891,7 +10912,7 @@ function renderCostForm() {
     <div class="ph"><div><h2><i class="ti ti-calculator"></i>원가 정리</h2><p>${esc(q.docNo || '')} · ${esc(q.client || '')} · 매출 ${fmtWon(q.supply)}</p></div>
       <button class="btn btn-sm" onclick="costCancel()"><i class="ti ti-arrow-left"></i> 목록</button></div>
     <div id="cost-root" class="card" style="padding:14px 16px">
-      <div style="font-size:11px;color:var(--t3);margin-bottom:8px">자재: <b>헤베×수량×원가단가</b> 자동 <span style="color:var(--t3)">(헤베는 견적 규격 → 재고 규격 순으로 자동)</span> · 헤베가 없는 자재·운송·시공·부속·기타: <b>수량×원가단가</b> 자동 (수량 비우면 1회)${_hasProc ? ' · 가공비는 <b>공장 견적 총액</b>으로 아래에 입력' : ''} · <b style="color:#c0341d">관리자 전용</b></div>
+      <div style="font-size:11px;color:var(--t3);margin-bottom:8px">자재: <b>헤베×수량×원가단가</b> 자동 <span style="color:var(--t3)">(헤베는 견적 규격 → 재고 규격 · <b>원가단가는 단가표의 원가🔒</b>에서 자동 — 장당 값을 헤베당으로 환산)</span> · 헤베가 없는 자재·운송·시공·부속·기타: <b>수량×원가단가</b> 자동 (수량 비우면 1회)${_hasProc ? ' · 가공비는 <b>공장 견적 총액</b>으로 아래에 입력' : ''} · <b style="color:#c0341d">관리자 전용</b></div>
       <div style="display:flex;gap:5px;font-size:10.5px;color:var(--t3);font-weight:600;padding:0 2px 4px;flex-wrap:wrap"><div style="width:66px">구분</div><div style="flex:2;min-width:90px">품목명</div><div style="flex:1;min-width:64px">규격</div><div style="width:52px;text-align:right">헤베</div><div style="width:48px;text-align:right">수량</div><div style="width:76px;text-align:right">원가단가</div><div style="width:88px;text-align:right">원가</div><div style="width:28px"></div></div>
       <div id="ct-rows">${rows}</div>
       <button type="button" class="btn btn-ghost btn-sm btn-block" onclick="addCostRow()"><i class="ti ti-plus"></i>자재·운송 등 항목 추가</button>
@@ -14671,6 +14692,17 @@ function companyStampImport(input) {
   rd.readAsDataURL(f);
 }
 async function removeStamp() { if (!confirm('도장 이미지를 제거할까요?')) return; await saveCompanyField('stampImg', ''); toast('도장 제거됨'); setTimeout(() => { if (filters.quoteSettings) renderQuoteSettings(); }, 300); }
+/* ── 출고증 «상차지» — 출고 등록 때 고른 창고로 (2026-09-29) ──
+   사용자: "출고 창고 거봉석재 선택하면 다우세라믹 상차가 아니라 거봉석재 상차라고 떠야됨"
+   예전에는 «다우세라믹 상차»가 글자로 박혀 있어서, 거봉석재 창고에서 나간 건도
+   다우세라믹에서 실은 것처럼 찍혔다.
+   ★ 한 출고건에 창고가 섞여 있으면 (실측 1건) 둘 다 적는다. */
+function shipLoadAt(items) {
+  const set = [];
+  (items || []).forEach(t => { if (!t) return; const d = normDepot(t.depot); if (d && set.indexOf(d) < 0) set.push(d); });
+  if (!set.length) set.push(HOME_DEPOT);
+  return set.map(d => d === HOME_DEPOT ? HOME_DEPOT_LABEL : d).join(' · ');
+}
 function printShipSlip(key) {
   const items = state.transactions.filter(t => t.type === 'out' && (t.shipId || t.id) === key)
     .sort((a, b) => (a.itemName || '').localeCompare(b.itemName || ''));
@@ -14683,7 +14715,7 @@ function printShipSlip(key) {
   const dayKeys = [...new Set(state.transactions.filter(t => t.type === 'out' && (t.date || '') === (g.date || '')).map(t => t.shipId || t.id))].sort();
   const seq = Math.max(1, dayKeys.indexOf(key) + 1);
   const docNo = (g.date || '').replace(/-/g, '') + '-' + seq;
-  const route = (g.dest || '') ? '다우세라믹 상차 →<br>' + e(g.dest) + ' 하차' : '';
+  const route = (g.dest || '') ? e(shipLoadAt(items)) + ' 상차 →<br>' + e(g.dest) + ' 하차' : '';
   /* 현장명·현장 주소 — 출고 등록 때 적은 값이 «최종»이다. 지웠으면 지운 채로 나간다.
      칸 자체가 없는 옛날 기록만 연결된 견적서에서 끌어온다. */
   const _lq = g.quoteId ? (state.quotes || []).find(x => x.id === g.quoteId) : null;
