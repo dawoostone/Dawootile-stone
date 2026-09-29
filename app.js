@@ -257,6 +257,21 @@ function canTax() {
   return lm.canTax !== false;
 }
 function isCustomerRole() { return me && me.role === 'customer'; }  // 고객(거래처) — 재고 조회 전용
+/* ── 고객·시공팀 화면: 좌측 메뉴를 아예 안 띄운다 (2026-09-29) ──
+   사용자: "고객 화면에서는 좌측 메뉴 아예 안뜨게 해줘"
+   body.cust-mode 는 이미 하단바·햄버거·서랍메뉴를 숨기고 있었지만
+   «좌측 사이드바(.sidebar)» 만 빠져 있어서 고객에게 홈·현장·출고·정산까지 다 보였다.
+   화면 본문(.wrap)의 왼쪽 여백도 같이 없앤다. */
+function custChromeCss() {
+  if (document.getElementById('cust-chrome-css')) return;
+  const st = document.createElement('style');
+  st.id = 'cust-chrome-css';
+  st.textContent = 'body.cust-mode .sidebar{display:none!important}'
+    + 'body.cust-mode #app{padding-left:0!important}'
+    + 'body.cust-mode .topbar{left:0!important}'
+    + 'body.cust-mode .wrap{margin-left:auto!important;margin-right:auto!important;max-width:1100px}';
+  document.head.appendChild(st);
+}
 function isCrewRole() { return me && me.role === 'crew'; }  // 시공팀 — 자기 시공 스케줄만
 function isRestrictedRole() { return isCustomerRole() || isCrewRole(); }
 /* ===== 메뉴 접근 권한 (직원별) ===== */
@@ -418,6 +433,7 @@ async function afterAuth(user) {
   el('app').style.display = 'block';
   el('me-av').textContent = initial(me.name);
   el('me-nm').textContent = me.name;
+  custChromeCss();                                                 // 고객·시공팀 화면에서 좌측 메뉴를 아예 없앤다
   document.body.classList.toggle('cust-mode', isRestrictedRole());  // 고객·시공팀: 전용 UI
   if (isRestrictedRole()) { go('stock'); }
   else { ensureStaffRoles(); render(); applyMenuPerms(); refreshPushToken(); }
