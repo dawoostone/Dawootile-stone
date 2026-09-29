@@ -11148,30 +11148,169 @@ async function costAutoFill() {
   toast(n + '건 원가 자동 입력' + (fail ? ' · 실패 ' + fail + '건' : ''));
   setTimeout(() => { if (tab === 'settle') renderSettle(); }, 500);
 }
-function downloadCostLedger() {
+/* ══════════════════════════════════════════════════════════
+   원가원장 엑셀 — 「원가정리」 양식처럼 (2026-09-29)
+   ──────────────────────────────────────────────────────────
+   사용자: "원가원장 너무 가시성 떨어짐 — 위에 꺼 참고해서 양식을 편집해줘"
+   ★ 화면에 보이는 그대로 받아진다 (그 달, 또는 검색한 결과).
+   ★ 엑셀에서 4번째 줄(표 제목)이 고정되고, 구분마다 색이 다르다.
+   ── 참고 ──
+   지금 쓰는 엑셀 모듈(기본판)은 «셀 색»을 넣을 수 없다.
+   그래서 색을 넣을 수 있는 판을 «이 버튼을 누를 때만» 따로 받아서 쓰고,
+   다른 엑셀 기능(단가표·지출 등)은 원래 판을 그대로 쓰도록 되돌려 놓는다.
+   ══════════════════════════════════════════════════════════ */
+let _xlsxS = null;
+async function xlsxStyled() {
+  if (_xlsxS) return _xlsxS;
+  if (typeof XLSX === 'undefined') return null;
+  const prev = window.XLSX;                    /* 원래 판을 잠깐 맡아 둔다 */
+  try {
+    await new Promise((ok, ng) => {
+      const sc = document.createElement('script');
+      sc.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
+      sc.onload = ok; sc.onerror = function () { ng(new Error('cdn')); };
+      document.head.appendChild(sc);
+    });
+    _xlsxS = window.XLSX;
+  } catch (e) { _xlsxS = prev; }               /* 못 받으면 색 없이라도 받아지게 */
+  window.XLSX = prev;                          /* 다른 엑셀 기능은 원래 판 그대로 */
+  return _xlsxS;
+}
+/* 표 제목 14칸 · 열 너비 · 구분별 색 */
+const CL_HEAD = ['날짜', '거래처', '전표', '구분', '공장', '품목명', '규격', '헤베수', '수량', '원가단가', '원가', '매출액', '마진', '마진율'];
+const CL_WCH = [11, 24, 13, 7, 11, 44, 28, 8, 7, 12, 15, 15, 14, 9];
+const CL_FILL = { '자재': 'DEEBF7', '가공': 'E2EFDA', '시공': 'FFF2CC', '운송': 'FDEADA', '부속': 'F2F2F2', '기타': 'EDEDED', '이슈': 'FFD9D4', '할인': 'FCE0E6' };
+/* aoa(줄 목록) + meta(줄 종류) → 색까지 입힌 시트 */
+function _clSheet(XS, aoa, meta) {
+  const ws = XS.utils.aoa_to_sheet(aoa);
+  const N = CL_HEAD.length;
+  const bd = { style: 'thin', color: { rgb: 'FFBFBFBF' } };
+  const box = { top: bd, bottom: bd, left: bd, right: bd };
+  const MONEY = '#,##0;\\(#,##0\\);\\-';
+  const cell = (r, c) => { const a = XS.utils.encode_cell({ r: r, c: c }); if (!ws[a]) ws[a] = { t: 's', v: '' }; return ws[a]; };
+  /* 1줄 제목 · 2줄 부제 (14칸을 하나로 합친다) */
+  cell(0, 0).s = { font: { sz: 14, bold: true, color: { rgb: 'FF1F3864' } }, alignment: { vertical: 'center' } };
+  cell(1, 0).s = { font: { sz: 9, color: { rgb: 'FFC00000' } }, alignment: { vertical: 'center' } };
+  ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: N - 1 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: N - 1 } }];
+  ws['!rows'] = [{ hpt: 23 }, { hpt: 14 }, { hpt: 6 }, { hpt: 20 }];
+  for (let r = 3; r < aoa.length; r++) {
+    const kind = meta[r] || '';
+    if (kind === 'gap') continue;
+    for (let c = 0; c < N; c++) {
+      const k = cell(r, c);
+      const st = { border: box, font: { sz: 10 }, alignment: { vertical: 'center', horizontal: c <= 6 ? 'left' : (c === 13 ? 'center' : 'right') } };
+      if (kind === 'head') {
+        st.fill = { patternType: 'solid', fgColor: { rgb: 'FF44546A' } };
+        st.font = { sz: 10, bold: true, color: { rgb: 'FFFFFFFF' } };
+        st.alignment = { vertical: 'center', horizontal: 'center' };
+      } else if (kind === 'tot') {
+        st.fill = { patternType: 'solid', fgColor: { rgb: 'FF1F3864' } };
+        st.font = { sz: 11, bold: true, color: { rgb: 'FFFFFFFF' } };
+      } else if (kind === 'sub') {
+        st.fill = { patternType: 'solid', fgColor: { rgb: 'FFFCE4D6' } };
+        st.font = { sz: 10, bold: true, color: { rgb: 'FF833C00' } };
+      } else if (kind === 'none') {
+        st.fill = { patternType: 'solid', fgColor: { rgb: 'FFFDECEA' } };
+        st.font = { sz: 10, bold: true, color: { rgb: 'FFC0341D' } };
+      } else if (c === 3 && CL_FILL[kind]) {
+        st.fill = { patternType: 'solid', fgColor: { rgb: 'FF' + CL_FILL[kind] } };
+        st.font = { sz: 10, bold: true };
+        st.alignment = { vertical: 'center', horizontal: 'center' };
+      } else if (c === 10) {
+        st.fill = { patternType: 'solid', fgColor: { rgb: 'FFEAF3E0' } };
+        st.font = { sz: 10, bold: true };
+      }
+      if (kind !== 'head' && typeof k.v === 'number') {
+        k.z = (c === 7) ? '0.00;;""' : (c === 13) ? '0.0%;;""' : MONEY;
+      }
+      k.s = st;
+    }
+  }
+  ws['!cols'] = CL_WCH.map(w => ({ wch: w }));
+  ws['!autofilter'] = { ref: XS.utils.encode_range({ s: { r: 3, c: 0 }, e: { r: Math.max(4, aoa.length) - 1, c: N - 1 } }) };
+  ws['!margins'] = { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 };
+  return ws;
+}
+/* 엑셀 모듈 기본판은 «틀 고정»을 못 넣는다.
+   그래서 다 만들어진 엑셀 파일(사실은 zip 압축파일) 안에 있는
+   시트 설명서에 «위 n줄 고정» 한 줄을 직접 끼워 넣어 준다.
+   혹시 실패하면 고정 없이 그냥 받아지게 한다 (파일은 무조건 받아진다). */
+function clSaveXlsx(XS, wb, name, freezeRows) {
+  let out = null;
+  try {
+    const buf = XS.write(wb, { type: 'array', bookType: 'xlsx' });
+    const zip = XS.CFB.read(new Uint8Array(buf), { type: 'array' });
+    const ent = (zip.FileIndex || []).filter(f => /sheet1\.xml$/.test(f.name || ''))[0];
+    const xml = new TextDecoder().decode(new Uint8Array(ent.content));
+    const tl = 'A' + (freezeRows + 1);
+    const pane = '<pane ySplit="' + freezeRows + '" topLeftCell="' + tl + '" activePane="bottomLeft" state="frozen"/>'
+      + '<selection pane="bottomLeft" activeCell="' + tl + '" sqref="' + tl + '"/>';
+    const nx = xml.replace(/<sheetView([^>]*)\/>/, '<sheetView$1>' + pane + '</sheetView>');
+    if (nx === xml) throw new Error('sheetView 를 못 찾음');
+    const nb = new TextEncoder().encode(nx);
+    ent.content = nb; ent.size = nb.length;
+    out = XS.CFB.write(zip, { fileType: 'zip', type: 'array' });
+  } catch (e) { out = null; }
+  if (!out) { XS.writeFile(wb, name); return false; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  return true;
+}
+async function downloadCostLedger() {
   if (!isAdmin()) { toast('관리자만'); return; }
   if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후'); return; }
-  const qs = (state.quotes || []).filter(q => (q.costLines && q.costLines.length) || (+q.processCost || 0) > 0 || (q.issueLines && q.issueLines.length)).sort((a, b) => (qDate(a) || '').localeCompare(qDate(b) || ''));
-  if (!qs.length) { toast('원가 입력된 견적이 없습니다'); return; }
-  const head = ['날짜', '거래처', '전표', '구분', '공장', '품목명', '규격', '헤베수', '수량', '원가단가', '원가', '매출액', '마진', '마진율'];
-  const aoa = [['견적서(현장)별 원가·마진 원장'], ['출력일 ' + todayStr()], [], head];
-  let tSup = 0, tCost = 0;
+  const ym = filters.settleMonth || todayStr().slice(0, 7);
+  const srch = (filters.costSearch || '').trim();
+  const qs = costLedgerList(ym).slice().sort((a, b) => (qDate(a) || '').localeCompare(qDate(b) || ''));
+  if (!qs.length) { toast(srch ? '「' + srch + '」 로 찾은 건이 없습니다' : '이번 달 확정 주문 건이 없습니다'); return; }
+  toast('엑셀 만드는 중…');
+  const XS = await xlsxStyled();
+  if (!XS) { toast('엑셀 모듈을 못 불러왔습니다'); return; }
+  const aoa = [[''], [''], [], CL_HEAD.slice()];
+  const meta = ['title', 'sub', 'gap', 'head'];
+  const push = (row, k) => { aoa.push(row); meta.push(k); };
+  let tSup = 0, tCost = 0, nNo = 0;
   qs.forEach(q => {
-    const sup = quoteSaleNet(q); const pc = +q.processCost || 0; const ic = (q.issueLines || []).reduce((a, b) => a + (+b.cost || 0), 0);
-    const ct = (q.costLines || []).reduce((a, b) => a + (+b.cost || 0), 0) + pc + ic; tSup += sup; tCost += ct;
+    const sup = quoteSaleNet(q);
+    const pc = +q.processCost || 0;
+    const ic = (q.issueLines || []).reduce((a, b) => a + (+b.cost || 0), 0);
+    const has = (q.costLines && q.costLines.length) || pc > 0 || ic > 0 || (q.costTotal != null);
+    const rep = quoteSalesRepOf(q);
+    const who = ' · 담당 ' + (q.by || '-') + (rep ? ' · 영업 ' + rep : '');
+    const tag = '▣ ' + (q.client || '') + ' / ' + (q.docNo || '') + who;
+    if (!has) {                                /* 원가를 아직 안 넣은 건 — 붉게 한 줄 */
+      nNo++; tSup += sup;
+      push([qDate(q), q.client || '', q.docNo || '', '미입력', '', tag + '  ← 원가 미입력', '', '', '', '', '', sup, '', ''], 'none');
+      push([], 'gap');
+      return;
+    }
+    const ct = (q.costLines || []).reduce((a, b) => a + (+b.cost || 0), 0) + pc + ic;
+    tSup += sup; tCost += ct;
     const sm = costSaleMap(q);
-    const cell4 = (sale, cost) => (sale == null) ? ['', '', ''] : [sale, sale - cost, sale > 0 ? +((sale - cost) / sale).toFixed(4) : 0];
-    (q.costLines || []).forEach(l => { const _c = +l.cost || 0; const _s = sm.line(l.name); aoa.push([qDate(q), q.client || '', q.docNo || '', l.gubun || '', l.factory || '', l.name || '', l.spec || '', l.hebe || '', l.qty || '', l.unitCost || '', _c].concat(cell4(_s, _c))); });
-    if (pc > 0) { const _ps = sm.proc(); aoa.push([qDate(q), q.client || '', q.docNo || '', '가공', '공장견적', '가공비(공장 견적 총액)', '', '', '', '', pc].concat(cell4(_ps, pc))); }
-    (q.issueLines || []).forEach(l => { aoa.push([qDate(q), q.client || '', q.docNo || '', '이슈', l.blame || '', '⚠ ' + (l.name || '') + (l.blameNote ? ' — ' + l.blameNote : ''), l.spec || '', l.hebe || '', l.qty || '', l.unitCost || '', +l.cost || 0, '', '', '']); });
+    const c3 = (sale, cost) => (sale == null) ? ['', '', ''] : [sale, sale - cost, sale > 0 ? +((sale - cost) / sale).toFixed(4) : 0];
+    (q.costLines || []).forEach(l => {
+      const _c = +l.cost || 0, _s = sm.line(l.name);
+      push([qDate(q), q.client || '', q.docNo || '', l.gubun || '', l.factory || '', l.name || '', l.spec || '', +l.hebe || '', +l.qty || '', +l.unitCost || '', _c].concat(c3(_s, _c)), l.gubun || '');
+    });
+    if (pc > 0) push([qDate(q), q.client || '', q.docNo || '', '가공', '공장견적', '가공비(공장 견적 총액)', '', '', '', '', pc].concat(c3(sm.proc(), pc)), '가공');
+    (q.issueLines || []).forEach(l => {
+      push([qDate(q), q.client || '', q.docNo || '', '이슈', l.blame || '', '⚠ ' + (l.name || '') + (l.blameNote ? ' — ' + l.blameNote : ''), l.spec || '', +l.hebe || '', +l.qty || '', +l.unitCost || '', +l.cost || 0, '', '', ''], '이슈');
+    });
     const _dc = quoteDcSupply(q);
-    if (_dc > 0) aoa.push([qDate(q), q.client || '', q.docNo || '', '할인', '', '할인 (D/C)' + (q.discountNote ? ' — ' + q.discountNote : ''), '', '', '', '', '', -_dc, '', '']);
-    const _rep = quoteSalesRepOf(q);
-    const mg = sup - ct; aoa.push(['', '', q.docNo || '', '소계', '', '▣ ' + (q.client || '') + ' / ' + (q.docNo || '') + ' · 담당 ' + (q.by || '-') + (_rep ? ' · 영업 ' + _rep : ''), '', '', '', '', ct, sup, mg, sup > 0 ? +(mg / sup).toFixed(4) : 0]); aoa.push([]);
+    if (_dc > 0) push([qDate(q), q.client || '', q.docNo || '', '할인', '', '할인 (D/C)' + (q.discountNote ? ' — ' + q.discountNote : ''), '', '', '', '', '', -_dc, '', ''], '할인');
+    const mg = sup - ct;
+    push(['', '', q.docNo || '', '소계', '', tag, '', '', '', '', ct, sup, mg, sup > 0 ? +(mg / sup).toFixed(4) : 0], 'sub');
+    push([], 'gap');
   });
-  aoa.push(['', '', '', '총계', '', '', '', '', '', '', tCost, tSup, tSup - tCost, tSup > 0 ? +((tSup - tCost) / tSup).toFixed(4) : 0]);
-  const ws = XLSX.utils.aoa_to_sheet(aoa); ws['!cols'] = [{ wch: 11 }, { wch: 18 }, { wch: 12 }, { wch: 7 }, { wch: 8 }, { wch: 24 }, { wch: 16 }, { wch: 7 }, { wch: 6 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 8 }];
-  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '원가원장'); XLSX.writeFile(wb, '원가원장_' + todayStr() + '.xlsx');
+  push(['', '', '', '총계', '', '견적서 ' + qs.length + '건' + (nNo ? ' (원가 미입력 ' + nNo + '건 포함)' : ''), '', '', '', '', tCost, tSup, tSup - tCost, tSup > 0 ? +((tSup - tCost) / tSup).toFixed(4) : 0], 'tot');
+  aoa[0][0] = '원가 원장 — ' + (srch ? '「' + srch + '」 검색 결과 (전체 기간)' : ym.slice(0, 4) + '년 ' + (+ym.slice(5, 7)) + '월');
+  aoa[1][0] = '출력일 ' + todayStr() + ' · 견적서 ' + qs.length + '건 · 매출 ' + fmtWon(tSup) + ' · 원가 ' + fmtWon(tCost) + ' · 마진 ' + fmtWon(tSup - tCost)
+    + (nNo ? '   ※ 붉은 줄 ' + nNo + '건은 원가 미입력 — 마진에 안 잡힙니다' : '');
+  const wb = XS.utils.book_new();
+  XS.utils.book_append_sheet(wb, _clSheet(XS, aoa, meta), '원가원장');
+  clSaveXlsx(XS, wb, '원가원장_' + (srch ? srch.replace(/[\\/:*?"<>|]/g, '') : ym) + '.xlsx', 4);
   toast('원가 원장 엑셀 다운로드');
 }
 /* ══════════════════════════════════════════════════════════
