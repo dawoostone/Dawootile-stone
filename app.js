@@ -370,6 +370,7 @@ function startSubscriptions() {
   loadAppConfig();   // 출고관리 연동 수신 주소 로드
 }
 function init() {
+  custChromeCss();   // 고객·시공팀 화면용 CSS — body.cust-mode 에만 걸리므로 직원 화면엔 영향 없다
   if (!CLOUD) {
     // 미리보기(로컬) 모드: 인증 없이 이 기기에서만 동작
     el('sync').classList.add('local'); el('sync-t').textContent = '미리보기';
@@ -1280,14 +1281,64 @@ function render() {
   else if (tab === 'settings') renderSettings();
 }
 /* ---------- 고객(거래처) 재고 조회 전용 화면 (읽기 전용) ---------- */
+/* ── 고객 화면에 안 보일 품목 (2026-09-29) ─────────────────────
+   사용자: "고객 화면에 노출할 품목이랑 노출하지 않을 품목도 설정할 수 있도록 해줘"
+   재고 품목에 custHide 를 켜 두면 고객 재고 조회에서 빠진다. 직원 화면은 그대로. */
+function custHidden(i) { return !!(i && i.custHide); }
 function custStockList() {
   const q = (filters.custSearch || '').trim().toLowerCase();
-  let l = state.inventory.filter(i => catIsCeramicLike(itemCat(i))).sort((a, b) => (a.name || '').localeCompare(b.name || ''));   // 부자재는 직원용 — 고객엔 세라믹·석재만
+  let l = state.inventory.filter(i => catIsCeramicLike(itemCat(i)) && !custHidden(i)).sort((a, b) => (a.name || '').localeCompare(b.name || ''));   // 부자재는 직원용 · 숨김 지정한 품목 제외
   if (q) l = l.filter(i => (i.name || '').toLowerCase().includes(q) || (i.spec || '').toLowerCase().includes(q));
   return l;
 }
 /* 고객에게 보이는 수량 = 가용수량(전체 홀딩 제외). 미러 필드 availJang 사용, 없으면 실재고로 대체 */
 function custAvail(i) { return (i.availJang == null) ? Math.max(0, +i.jang || 0) : Math.max(0, +i.availJang || 0); }
+/* 고객 노출 설정 — 세라믹·석재 품목마다 보임/숨김을 켜고 끈다 (관리자·직원용) */
+function custVisRowsHtml() {
+  const q = (filters.custVisSearch || '').trim().toLowerCase();
+  let l = (state.inventory || []).filter(i => catIsCeramicLike(itemCat(i)));
+  if (q) l = l.filter(i => (i.name || '').toLowerCase().includes(q) || (i.spec || '').toLowerCase().includes(q));
+  l = l.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'));
+  if (!l.length) return '<div class="empty" style="padding:16px">' + (q ? '찾은 품목이 없습니다' : '품목이 없습니다') + '</div>';
+  return l.slice(0, 400).map(i => {
+    const off = custHidden(i);
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:9px;padding:8px 6px;border-bottom:1px solid var(--soft);background:${off ? '#fff7f6' : 'transparent'}">
+      <div style="min-width:0;flex:1">
+        <div style="font-weight:600;font-size:13.5px;color:${off ? 'var(--t3)' : 'var(--t1)'}">${esc(i.name || '')}</div>
+        <div style="font-size:11px;color:var(--t3)">${esc(i.spec || '')}${i.spec ? ' · ' : ''}가용 ${custAvail(i)}장</div>
+      </div>
+      <button class="btn btn-sm" style="flex:none;min-width:74px;${off ? 'color:#c0341d;border-color:#e8a99f' : 'color:#0f766e;border-color:#a9d8c6'}" onclick="custVisToggle('${i.id}')">
+        <i class="ti ti-${off ? 'eye-off' : 'eye'}"></i>${off ? '숨김' : '보임'}</button>
+    </div>`;
+  }).join('');
+}
+function custVisCountHtml() {
+  const all = (state.inventory || []).filter(i => catIsCeramicLike(itemCat(i)));
+  const off = all.filter(custHidden).length;
+  return `고객에게 <b style="color:#0f766e">${all.length - off}개</b> 보임 · <b style="color:#c0341d">${off}개</b> 숨김 <span style="color:var(--t3)">(세라믹·석재 ${all.length}개 · 부자재는 원래 고객에게 안 보입니다)</span>`;
+}
+function custVisRefresh() {
+  const b = el('cv-list'); if (b) b.innerHTML = custVisRowsHtml();
+  const c = el('cv-count'); if (c) c.innerHTML = custVisCountHtml();
+}
+function custVisSearch(v) { filters.custVisSearch = v; custVisRefresh(); }
+async function custVisToggle(id) {
+  const i = (state.inventory || []).find(x => x.id === id); if (!i) return;
+  const next = !custHidden(i);
+  try { await Store.update('inventory', id, { custHide: next }); }
+  catch (e) { toast('실패: ' + ((e && e.message) || e)); return; }
+  toast((i.name || '품목') + ' — 고객 화면에 ' + (next ? '안 보임' : '보임'));
+  setTimeout(custVisRefresh, 250);
+}
+function openCustVisibility() {
+  if (isRestrictedRole()) { toast('권한이 없습니다'); return; }
+  filters.custVisSearch = '';
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-eye-cog"></i>고객 노출 품목</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:12px;color:var(--t3);margin-bottom:8px;line-height:1.55">고객(거래처) 계정의 <b>재고 조회</b> 화면에 어떤 품목을 보여줄지 정합니다. <b>숨김</b>으로 두면 그 품목은 고객에게 아예 안 보입니다 — 직원 화면과 재고·출고에는 아무 영향 없습니다.</div>
+    <div id="cv-count" style="font-size:12px;margin-bottom:9px">${custVisCountHtml()}</div>
+    <div class="search-box" style="margin-bottom:8px"><i class="ti ti-search"></i><input placeholder="자재명·규격 검색" oninput="custVisSearch(this.value)" autocomplete="off" lang="ko"></div>
+    <div data-keepscroll id="cv-list" style="max-height:52vh;overflow:auto">${custVisRowsHtml()}</div>`);
+}
 function custStockBody(list) {
   if (!list.length) return `<div class="empty"><i class="ti ti-search-off"></i>해당하는 자재가 없습니다</div>`;
   const showPrice = !!(me && me.custPriceBase);
@@ -3614,6 +3665,7 @@ function renderStock() {
     <div style="display:flex;gap:9px;margin-bottom:12px">
       <button class="btn" style="flex:2" onclick="bulkInOpen()"><i class="ti ti-file-spreadsheet"></i>엑셀로 한꺼번에 입고</button>
       <button class="btn" style="flex:1" onclick="openDepotManage()"><i class="ti ti-building-warehouse"></i>창고 관리</button>
+      <button class="btn" style="flex:1" onclick="openCustVisibility()" title="고객 재고 조회에 보일 품목 고르기"><i class="ti ti-eye-cog"></i>고객 노출</button>
     </div>
     ${depotSummaryHtml()}
     <div class="search-box">
