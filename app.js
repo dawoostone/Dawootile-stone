@@ -924,7 +924,19 @@ function go(t) {
   if (t !== 'clients') { filters.clientDetail = ''; filters.ledger = false; filters.ledgerClient = ''; filters.ledgerFix = false; }   // 거래처 원장은 거래처 탭 것
   if (t !== 'settle') { filters.purSearch = ''; filters.purAll = false; }   // 매입 검색은 정산 화면을 떠나면 초기화
   tab = t;
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  /* ★★ 2026-09-30 — 메뉴를 눌렀는데 «하얀 화면»이 뜨던 문제
+     검색창에 글자 커서가 남아 있으면 render() 가 «글자 입력 중»으로 보고
+     화면 그리기를 계속 미룬다. 그런데 미룬 뒤 다시 확인해도 커서가 그대로라
+     영영 안 그려져서 새 화면이 비어 보였다. 메뉴를 누르는 순간 커서를 뗀다. */
+  try { const _a = document.activeElement; if (_a && _a !== document.body && _a.blur) _a.blur(); } catch (e) { }
+  /* ★★ 떠난 화면의 내용은 비워서 메모리를 돌려준다 (다시 들어오면 새로 그린다).
+     화면 12개를 다 열어 두면 안 보는 화면까지 합쳐 3만 칸 가까이 쌓여서
+     재고 화면 한 번 그리는 데 걸리는 시간이 2배가 됐다 (측정 550ms → 260ms).
+     휴대폰은 더 느리므로 체감 차이가 크다. */
+  document.querySelectorAll('.page').forEach(p => {
+    p.classList.remove('active');
+    if (p.id !== 'pg-' + t && p.innerHTML) p.innerHTML = '';
+  });
   document.querySelectorAll('.nav-i').forEach(n => n.classList.toggle('active', n.dataset.tab === t));
   document.querySelectorAll('.drawer-i[data-tab]').forEach(n => n.classList.toggle('active', n.dataset.tab === t));
   document.querySelectorAll('.side-i[data-tab]').forEach(n => n.classList.toggle('active', n.dataset.tab === t));
@@ -1255,7 +1267,10 @@ function render() {
   if (!me) return;
   // 입력 중(검색창·폼 포커스)에는 전체 재렌더를 미뤄 한글 입력·검색 끊김 방지
   const _ae = document.activeElement;
-  if (_ae && (_ae.tagName === 'INPUT' || _ae.tagName === 'TEXTAREA' || _ae.isContentEditable)) {
+  /* ★ 단, «아직 한 번도 안 그려진 화면»은 미루면 하얗게 남는다 — 그때는 바로 그린다. */
+  const _pgNow = el('pg-' + tab);
+  const _blankNow = !!(_pgNow && !_pgNow.firstElementChild);
+  if (!_blankNow && _ae && (_ae.tagName === 'INPUT' || _ae.tagName === 'TEXTAREA' || _ae.isContentEditable)) {
     if (!_renderTimer) _renderTimer = setTimeout(() => { _renderTimer = null; render(); }, 600);
     return;
   }
