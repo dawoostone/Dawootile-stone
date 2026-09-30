@@ -5526,6 +5526,23 @@ function quoteRecalc() {
   if (el('q-dcwrap')) { const w = el('q-dcwrap'); w.style.borderColor = _dcOn ? '#c0341d' : '#f0c8c2'; w.style.background = _dcOn ? '#fff0ee' : '#fff6f5'; }
   if (el('q-total')) el('q-total').textContent = fmtWon(total);
   if (el('q-total-foot')) el('q-total-foot').textContent = fmtWon(total) + '원';
+  /* ★ 과입금 차감 — 합계는 그대로 두고 «이번 청구액»만 보여 준다 */
+  const _ope = el('q-op');
+  if (_ope) {
+    const op = Math.max(0, Math.round(_numv(_ope.value)));
+    const on = op > 0;
+    if (el('q-opshow')) el('q-opshow').textContent = on ? ('− ' + fmtWon(op) + '원') : '0';
+    if (el('q-opdue')) el('q-opdue').textContent = fmtWon(Math.max(0, total - op)) + '원';
+    if (el('q-opbox')) el('q-opbox').style.display = on ? '' : 'none';
+    const w = el('q-opwrap'); if (w) { w.style.borderColor = on ? '#0F6E56' : '#bfe3d0'; w.style.background = on ? '#eef9f3' : '#f3fbf7'; }
+    const ex = clientExtraMoney(el('q-client') ? el('q-client').value : '');
+    const hint = el('q-ophint'), fill = el('q-opfill');
+    if (hint) hint.innerHTML = ex > 0
+      ? ('이 거래처에서 <b style="color:#0F6E56">아직 어느 견적에도 안 붙은 돈 ' + fmtWon(ex) + '원</b>이 있습니다'
+         + '<br><span style="color:#b45309">※ 앱에 안 올린 거래 대금이 섞여 있을 수 있으니 통장을 확인하고 적어 주세요</span>')
+      : '이미 받아 둔 돈이 있으면 적으세요 — 매출·세금계산서 금액은 그대로입니다';
+    if (fill) { if (ex > 0) { fill.style.display = ''; fill.textContent = fmtWon(ex) + '원 넣기'; } else fill.style.display = 'none'; }
+  }
   // 계약금 — 합계금액의 몇 %
   const dpe = el('q-dp'), dbox = el('q-dpbox');
   if (dpe && dbox) {
@@ -5573,7 +5590,21 @@ function quoteSaleNet(q) { return Math.max(0, (Math.round(+((q && q.supply) || 0
 function quotePrepaid(q) { return Math.max(0, Math.round(+((q && q.prepaid) || 0))); }
 function quoteIsBalance(q) { return quotePrepaid(q) > 0; }
 function quoteSuperseded(q) { return !!(q && q.supersededBy); }
-/* 잔금 견적서의 «이번 청구액» — 합계에서 기받은 계약금을 뺀 금액 */
+/* ══════════════════════════════════════════════════════════
+   ★★ 과입금 차감 (2026-09-30)
+   사용자: *"업체들 가끔 돈 과입 넣는 경우 있어서 견적서에서 차감 / 과입금액 직접 산정"*
+
+   ★ 매출·부가세·세금계산서 금액은 «그대로» 둔다 — 과입금은 깎아준 게 아니라
+     «이미 받은 돈»이기 때문이다. 줄어드는 건 «이번에 받을 돈» 뿐이다.
+   ★ 그래서 잔금 견적서(prepaid)와 똑같은 자리를 쓴다. 다만
+     잔금 견적서는 «원본 견적(prepaidFromId)»이 있고, 과입금 차감은 없다.
+     이 차이로 이름표만 갈라 쓴다.
+   ══════════════════════════════════════════════════════════ */
+function quotePrepaidLabel(q) { return (q && q.prepaidFromId) ? '기받은 계약금' : '과입금 차감'; }
+function quoteDueLabel(q) { return (q && q.prepaidFromId) ? '이번 청구액 (잔금)' : '이번 청구액'; }
+/* 이 거래처에서 «아직 어느 견적에도 안 붙은 돈» — 과입금 후보 금액 */
+function clientExtraMoney(client) { try { return Math.max(0, Math.round(clientMoneyOf(String(client || '').trim()).extra || 0)); } catch (e) { return 0; } }
+/* 잔금 견적서의 «이번 청구액» — 합계에서 기받은 돈을 뺀 금액 */
 function quoteBalanceDue(q) {
   const pre = quotePrepaid(q); if (!(pre > 0)) return null;
   const total = Math.round(+((q && q.total) || 0));
@@ -5695,6 +5726,13 @@ function openQuoteInline(id, copy) {
   filters.quoteEdit = id || 'new'; filters.quoteCopy = !!copy; filters.quoteCat = '';
   renderQuote(); if (el('pg-quote')) el('pg-quote').scrollIntoView({ block: 'start' });
 }
+/* 앱이 찾아 둔 «안 붙은 돈»을 과입금 칸에 넣는다 (넣고 나서 고쳐도 된다) */
+function quoteOpFill() {
+  const ex = clientExtraMoney(el('q-client') ? el('q-client').value : '');
+  if (!(ex > 0)) { toast('이 거래처에는 안 붙은 돈이 없습니다'); return; }
+  const e2 = el('q-op'); if (e2) { e2.value = ex; quoteRecalc(); }
+}
+function quoteOpClear() { const e2 = el('q-op'); if (e2) e2.value = ''; const n = el('q-opnote'); if (n) n.value = ''; quoteRecalc(); }
 function quoteCancel() { qDraftDrop(); filters.quoteEdit = ''; filters.quoteCopy = false; filters.quoteCat = ''; filters.quoteBalanceOf = ''; filters.quoteBalancePre = 0; renderQuote(); }
 /* ★ 계약금 받은 견적 → 수량 고쳐서 «잔금 견적서» 만들기 (2026-09-28)
    ★ 2026-09-28 고침 — 예전에는 «확정주문 + 앱이 자동으로 붙인 입금»이 있어야만 버튼이 떴다.
@@ -5954,6 +5992,25 @@ function renderQuoteForm() {
             </div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;font-size:17px;border-top:1px solid var(--bd2);padding-top:8px"><span style="font-weight:700">합계금액<span id="q-dctag" style="display:none;font-size:11px;font-weight:700;color:#c0341d;margin-left:6px;background:#ffecea;border:1px solid #f0c8c2;border-radius:7px;padding:1px 6px">할인 반영</span></span><b id="q-total" style="color:var(--gd)">0</b></div>
+          <!-- ★ 과입금 차감 (2026-09-30) — 합계·부가세는 그대로, «이번에 받을 돈»만 줄인다 -->
+          <div id="q-opwrap" style="border:1.5px solid #bfe3d0;background:#f3fbf7;border-radius:11px;padding:9px 11px;margin-top:9px">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+              <span style="font-size:13px;font-weight:800;color:#0F6E56;white-space:nowrap"><i class="ti ti-wallet"></i> ${editing && v.prepaidFromId ? '기받은 계약금' : '과입금 차감'}</span>
+              <span style="display:inline-flex;align-items:center;gap:5px">
+                <input id="q-op" inputmode="numeric" value="${esc(editing ? ((+v.prepaid || 0) > 0 ? v.prepaid : '') : '')}" oninput="quoteRecalc()" placeholder="0" style="width:132px;text-align:right;font-size:16px;padding:8px 10px;border:2px solid #a9d8c6;border-radius:9px;color:#0F6E56;font-weight:800;background:#fff">
+                <b style="color:#0F6E56;font-size:13px">원</b></span>
+            </div>
+            <div style="display:flex;gap:5px;align-items:center;margin-top:7px;flex-wrap:wrap">
+              <span id="q-ophint" style="font-size:11px;color:var(--t3);margin-right:auto;line-height:1.5">이미 받아 둔 돈이 있으면 적으세요 — 매출·세금계산서 금액은 그대로입니다</span>
+              <button type="button" id="q-opfill" class="btn btn-ghost btn-sm" style="display:none;padding:3px 9px;font-size:11.5px;color:#0F6E56;border-color:#a9d8c6" onclick="quoteOpFill()"></button>
+              <button type="button" class="btn btn-ghost btn-sm" style="padding:3px 9px;font-size:11.5px;color:var(--t3)" onclick="quoteOpClear()">해제</button>
+            </div>
+            <input id="q-opnote" lang="ko" value="${esc(editing ? (v.prepaidFrom || '') : '')}" oninput="quoteRecalc()" placeholder="사유 (예: 9/12 과입금) — 견적서에 같이 찍힙니다" autocomplete="off" style="width:100%;margin-top:7px;font-size:12.5px;padding:7px 9px;border:1.5px solid #cfe7db;border-radius:8px;background:#fff">
+            <div id="q-opbox" style="display:none;background:#fff;border:1.5px solid #bfe3d0;border-radius:9px;padding:8px 11px;margin-top:7px">
+              <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;color:#0F6E56;font-weight:700">과입금 차감</span><b id="q-opshow" style="font-size:15px;color:#0F6E56">0</b></div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-top:4px;border-top:1px dashed #bfe3d0"><span style="font-size:12.5px;color:var(--t1);font-weight:700">이번 청구액</span><b id="q-opdue" style="font-size:15px;color:var(--gd)">0원</b></div>
+            </div>
+          </div>
           <div style="border-top:1px dashed var(--bd2);margin-top:9px;padding-top:8px">
             <div style="display:flex;justify-content:space-between;align-items:center;font-size:13.5px;margin-bottom:6px">
               <span style="color:var(--t2)">계약금 <span style="font-size:10.5px;color:var(--t3)">(합계금액 기준)</span></span>
@@ -6240,6 +6297,13 @@ async function submitQuote(id) {
       data.depositPct = 0; data.depositAmt = 0;         // 잔금 견적서에는 새 계약금을 잡지 않는다
       data.ordered = true; data.orderedAt = (+_balQ.orderedAt || Date.now());
     }
+    /* ★ 과입금 차감 — 잔금 견적서로 만드는 중이 아닐 때만 폼의 값을 쓴다.
+       (잔금 견적서는 바로 위에서 원본의 계약금을 이미 실었다) */
+    if (!_balQ) {
+      const _op = Math.max(0, Math.round(_numv(el('q-op') ? el('q-op').value : 0)));
+      data.prepaid = _op;
+      data.prepaidFrom = _op > 0 ? ((el('q-opnote') && el('q-opnote').value || '').trim()) : '';
+    }
     let _newId = '';
     if (id) await Store.update('quotes', id, data); else _newId = await Store.add('quotes', data);
     if (_balQ && _newId) {
@@ -6252,7 +6316,9 @@ async function submitQuote(id) {
        «저장이 안 됐나?» 하고 다시 누르곤 했다. */
     qDraftDrop(id || 'new');
     filters.quoteEdit = ''; filters.quoteCopy = false;
-    toast(_balQ ? ('잔금 견적서 저장됨 · 기받은 계약금 ' + fmtWon(data.prepaid) + '원 차감') : '견적 저장됨');
+    toast(_balQ ? ('잔금 견적서 저장됨 · 기받은 계약금 ' + fmtWon(data.prepaid) + '원 차감')
+      : ((+data.prepaid || 0) > 0 ? ('견적 저장됨 · 과입금 ' + fmtWon(data.prepaid) + '원 차감') : '견적 저장됨'));
+    try { moneyBust(); } catch (e) { }
     renderQuote();
     /* ★ 거래처 «업체 구분» 을 견적에서 고른 값으로 맞춘다 — 바뀌면 말해 준다(예전엔 조용했다) */
     try {
@@ -10588,7 +10654,7 @@ function quoteCardHtml(q) {
   /* ★ 잔금 견적서 / 대체된 원본 */
   const _bal = quoteBalanceDue(q);
   const balBadge = _bal
-    ? `<span class="pill" style="background:#eef7f1;color:#0F6E56;border:1px solid #bfe3d0" title="기받은 계약금 ${fmtWon(_bal.pre)}원 차감"><i class="ti ti-receipt-2"></i> 잔금 견적 · ${fmtWon(_bal.due)}</span>`
+    ? `<span class="pill" style="background:#eef7f1;color:#0F6E56;border:1px solid #bfe3d0" title="${esc(quotePrepaidLabel(q))} ${fmtWon(_bal.pre)}원 차감"><i class="ti ti-receipt-2"></i> ${q.prepaidFromId ? '잔금 견적' : '과입금 차감'} · ${fmtWon(_bal.due)}</span>`
     : (quoteSuperseded(q) ? `<span class="pill" style="background:#f2f2f2;color:#666;border:1px solid #ddd" title="이 견적은 잔금 견적서로 대체되어 매출·미수에서 빠집니다"><i class="ti ti-arrow-right-bar"></i> 잔금 견적서로 대체됨</span>` : '');
   return `<div class="card" style="margin-bottom:10px;padding:12px 14px${_bundle && _selQ ? ';border:2px solid var(--gd);background:#f2fbf6' : ''}">
       ${_bundle ? `<label style="display:flex;align-items:center;gap:8px;margin-bottom:9px;cursor:pointer;font-size:12.5px;font-weight:700;color:${_selQ ? 'var(--gd)' : 'var(--t2)'}"><input type="checkbox" ${_selQ ? 'checked' : ''} onchange="toggleQSel('${q.id}')" style="width:17px;height:17px"> 청구 묶음에 포함</label>` : ''}
@@ -10673,8 +10739,8 @@ function openQuoteView(id) {
       ${sumRow('합계', fmtWon(_tt) + '원', true)}
       ${(() => { const d = quoteDeposit(q); return d ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;margin-top:4px;border-top:1px dashed var(--bd2)"><span style="font-size:12px;color:#1a56b8;font-weight:700">계약금 ${_pctTxt(d.pct)}%</span><span style="font-size:14px;font-weight:800;color:#1a56b8">${fmtWon(d.amt)}원</span></div>
       <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:12px;color:var(--t2);font-weight:500">잔금</span><span style="font-size:13px;font-weight:700">${fmtWon(d.rest)}원</span></div>` : ''; })()}
-      ${(() => { const b = quoteBalanceDue(q); return b ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;margin-top:4px;border-top:1px dashed var(--bd2)"><span style="font-size:12px;color:#0F6E56;font-weight:700">기받은 계약금${b.from ? ' <span style="font-weight:500;color:var(--t3)">' + esc(b.from) + '</span>' : ''}</span><span style="font-size:14px;font-weight:800;color:#0F6E56">- ${fmtWon(b.pre)}원</span></div>
-      <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:12.5px;color:var(--t1);font-weight:700">이번 청구액 (잔금)</span><span style="font-size:15px;font-weight:800;color:var(--gd)">${fmtWon(b.due)}원</span></div>` : ''; })()}
+      ${(() => { const b = quoteBalanceDue(q); return b ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;margin-top:4px;border-top:1px dashed var(--bd2)"><span style="font-size:12px;color:#0F6E56;font-weight:700">${esc(quotePrepaidLabel(q))}${b.from ? ' <span style="font-weight:500;color:var(--t3)">' + esc(b.from) + '</span>' : ''}</span><span style="font-size:14px;font-weight:800;color:#0F6E56">- ${fmtWon(b.pre)}원</span></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:12.5px;color:var(--t1);font-weight:700">${esc(quoteDueLabel(q))}</span><span style="font-size:15px;font-weight:800;color:var(--gd)">${fmtWon(b.due)}원</span></div>` : ''; })()}
       ${_pa > 0 ? sumRow('입금', fmtWon(_pa) + '원') : ''}
       ${_rem > 0 ? `<div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:12px;color:var(--t2);font-weight:500">미수</span><span style="font-size:14px;font-weight:800;color:var(--red-t)">${fmtWon(_rem)}원</span></div>` : ''}
       ${_cRem > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0 0;margin-top:5px;border-top:1px dashed var(--bd2)"><span style="font-size:11.5px;color:var(--t3)">이 거래처 총 미수 <span style="color:var(--t2)">(원장 기준)</span></span><span style="display:flex;gap:6px;align-items:center"><span style="font-size:14px;font-weight:800;color:var(--red-t)">${fmtWon(_cRem)}원</span>${canLedger() ? `<button class="btn btn-sm" style="padding:2px 7px;font-size:11px" onclick="openLedgerFor(${JSON.stringify(q.client || '').replace(/"/g, '&quot;')})"><i class="ti ti-book"></i>원장</button>` : ''}</span></div>` : ''}
@@ -13674,8 +13740,8 @@ function quoteDocHtml(q) {
       <tr class="tot"><td>합계금액</td><td style="text-align:right">${(+q.discount || 0) > 0 ? `<span class="was">할인 전 <s>${fmtWon((+q.supply || 0) + (+q.vat || 0))} 원</s></span>` : ''}${fmtWon(q.total)} 원</td></tr>
       ${(() => { const d = quoteDeposit(q); return d ? `<tr class="dep"><td class="k">계약금 (${_pctTxt(d.pct)}%)</td><td class="v">${fmtWon(d.amt)} 원</td></tr>
       <tr><td class="k">잔금</td><td class="v">${fmtWon(d.rest)} 원</td></tr>` : ''; })()}
-      ${(() => { const b = quoteBalanceDue(q); return b ? `<tr class="dep"><td class="k">기받은 계약금${b.from ? ' (' + e(b.from) + ')' : ''}</td><td class="v">- ${fmtWon(b.pre)} 원</td></tr>
-      <tr class="tot"><td>이번 청구액 (잔금)</td><td style="text-align:right">${fmtWon(b.due)} 원</td></tr>` : ''; })()}
+      ${(() => { const b = quoteBalanceDue(q); return b ? `<tr class="dep"><td class="k">${e(quotePrepaidLabel(q))}${b.from ? ' (' + e(b.from) + ')' : ''}</td><td class="v">- ${fmtWon(b.pre)} 원</td></tr>
+      <tr class="tot"><td>${e(quoteDueLabel(q))}</td><td style="text-align:right">${fmtWon(b.due)} 원</td></tr>` : ''; })()}
     </table>
   </div>
   ${hasBasinItems(items) ? `<div class="notice"><div class="nh">⚠ 세면대 주문제작 특이사항 (필독)</div><ul>${basinNoticeList().map(l => `<li>${e(l)}</li>`).join('')}</ul></div>` : ''}
@@ -14581,7 +14647,7 @@ function _quoteSheetXml(q) {
   if ((+q.discount || 0) > 0) { span(rr, 0, 4, 10, '할인 (D/C)', 's'); put(rr, 5, 11, -Math.round(+q.discount || 0), 'n'); rr++; }
   span(rr, 0, 4, 12, '합계금액', 's'); put(rr, 5, 13, Math.round(+q.total || 0), 'n'); rowH[rr] = 26; rr++;
   { const d = quoteDeposit(q); if (d) { span(rr, 0, 4, 10, '계약금 (' + _pctTxt(d.pct) + '%)', 's'); put(rr, 5, 11, d.amt, 'n'); rr++; span(rr, 0, 4, 10, '잔금', 's'); put(rr, 5, 11, d.rest, 'n'); rr++; } }
-  { const b = quoteBalanceDue(q); if (b) { span(rr, 0, 4, 10, '기받은 계약금' + (b.from ? ' (' + b.from + ')' : ''), 's'); put(rr, 5, 11, -b.pre, 'n'); rr++; span(rr, 0, 4, 12, '이번 청구액 (잔금)', 's'); put(rr, 5, 13, b.due, 'n'); rowH[rr] = 26; rr++; } }
+  { const b = quoteBalanceDue(q); if (b) { span(rr, 0, 4, 10, quotePrepaidLabel(q) + (b.from ? ' (' + b.from + ')' : ''), 's'); put(rr, 5, 11, -b.pre, 'n'); rr++; span(rr, 0, 4, 12, quoteDueLabel(q), 's'); put(rr, 5, 13, b.due, 'n'); rowH[rr] = 26; rr++; } }
   rr++;
   if (q.memo) { span(rr, 0, 5, 14, '비고 : ' + q.memo, 's'); rowH[rr] = 44; rr++; }
   if (hasBasinItems(items)) { span(rr, 0, 5, 15, '⚠ 세면대 주문제작 특이사항 (필독)', 's'); rowH[rr] = 22; rr++; (typeof basinNoticeList === 'function' ? basinNoticeList() : []).forEach(l => { span(rr, 0, 5, 16, '· ' + l, 's'); rr++; }); }
