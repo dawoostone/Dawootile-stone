@@ -964,21 +964,64 @@ function clientStats(name) {
   const noTax = qs.filter(q => !taxSettled(q)).length;   // ★ 현금영수증 건은 할 일이 아니다
   return { count: qs.length, total: total, sale: M.sale, unpaid: M.rem, paidSum: M.applied, extra: M.extra, noTax: noTax };
 }
+/* ══════════════════════════════════════════════════════════
+   거래처 원장 엑셀 (2026-09-30 고침)
+   사용자: *"합계 수식 잘못되어 있음 / 현장에 현장 주소가 나와야 하고 /
+            담당자는 수신인 담당자가 나와야 함"*
+
+   ★ 고친 것 세 가지
+     ① 합계 — 예전엔 «미확정 견적»까지 매출·미수에 넣어서 원장 화면과 달랐다.
+        (신성그룹: 엑셀 미수 55,711,942 vs 원장 화면 38,174,334 — 미확정 5건 1,753만 차이)
+        또 미수 합계를 «덜 낸 견적의 합계금액 전부»로 더해서, 일부만 낸 건이 있으면
+        줄별 미수를 더한 값과 맞지 않았다.
+        이제 원장 화면과 «똑같은 계산»(clientMoneyOf)을 쓴다.
+     ② 현장 — 현장 주소(siteAddr)를 쓴다. 예전엔 siteName 을 먼저 썼는데
+        거기엔 「배영준 대리님 양주시 …」처럼 담당자 이름이 섞여 있었다.
+     ③ 담당자 — 견적서 «수신»(attn) 담당자를 따로 한 칸 뺀다.
+   ══════════════════════════════════════════════════════════ */
+/* 견적 한 건의 현장 주소 · 수신 담당자 */
+function quoteSiteText(q) { return String((q && (q.siteAddr || q.siteName)) || '').trim(); }
+function quoteAttnText(q) { return String((q && q.attn) || '').trim(); }
 function downloadClientLedger(id) {
   const c = (state.clients || []).find(x => x.id === id); if (!c) return;
   if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후 다시'); return; }
-  const qs = (state.quotes || []).filter(x => _normName(x.client) === _normName(c.value)).sort((a, b) => (+a.createdAt || 0) - (+b.createdAt || 0));
-  const head = ['날짜', '견적번호', '품목', '공급가액', '부가세', '합계', '입금액', '미수', '결제', '결제일', '세금계산서', '승인번호'];
-  const rows = qs.map(q => { const names = (q.items || []).map(it => it.name).filter(Boolean).slice(0, 3).join(', ') + ((q.items || []).length > 3 ? (' 외 ' + ((q.items || []).length - 3)) : ''); const _t = +q.total || 0; const _p = quotePaid(q); return [qDate(q), q.docNo || '', names, +q.supply || 0, +q.vat || 0, _t, _p, Math.max(0, _t - _p), (_t > 0 && _p >= _t) ? '완료' : (_p > 0 ? '일부' : '미결제'), q.paidDate || '', q.taxInvoice ? '발행' : (isCashRcpt(q) ? '현금영수증' : '미발행'), q.ntsConfirmNum || '']; });
-  const supplySum = qs.reduce((a, b) => a + (+b.supply || 0), 0); const vatSum = qs.reduce((a, b) => a + (+b.vat || 0), 0); const total = qs.reduce((a, b) => a + (+b.total || 0), 0); const unpaid = qs.filter(q => !quoteIsPaid(q)).reduce((a, b) => a + (+b.total || 0), 0);
+  const all = (state.quotes || []).filter(x => _normName(x.client) === _normName(c.value));
+  /* ★ 원장 화면과 같은 기준 — 확정 주문만, 잔금 견적서로 대체된 원본은 뺀다 */
+  const qs = all.filter(q => !!q.ordered && !q.supersededBy).sort((a, b) => (qDate(a) || '').localeCompare(qDate(b) || '') || (+a.createdAt || 0) - (+b.createdAt || 0));
+  const skipped = all.length - qs.length;
+  const head = ['날짜', '견적번호', '현장', '담당자', '품목', '공급가액', '부가세', '합계', '입금액', '미수', '결제', '결제일', '세금계산서', '승인번호'];
+  const rows = [];
+  /* 이월 잔액(앱 이전의 남은 미수)도 원장 화면처럼 맨 위 한 줄로 */
+  const M = clientMoneyOf((c.value || '').trim());
+  const ob = clientOpening(c.value);
+  const obPaid = Math.round(+M.openingPaid || 0);
+  if (ob) rows.push([ob.date || '', '이월', '', '', ob.memo || '앱 이전 잔액', '', '', ob.amt, obPaid, Math.max(0, ob.amt - obPaid), obPaid >= ob.amt ? '완료' : (obPaid > 0 ? '일부' : '미결제'), '', '', '']);
+  qs.forEach(q => {
+    const its = (q.items || []).map(it => it.name).filter(Boolean);
+    const names = its.slice(0, 3).join(', ') + (its.length > 3 ? (' 외 ' + (its.length - 3)) : '');
+    const _t = Math.round(+q.total || 0), _p = Math.round(quotePaid(q));
+    rows.push([qDate(q), q.docNo || '', quoteSiteText(q), quoteAttnText(q), names,
+      Math.round(+q.supply || 0), Math.round(+q.vat || 0), _t, _p, Math.max(0, _t - _p),
+      (_t > 0 && _p >= _t) ? '완료' : (_p > 0 ? '일부' : '미결제'), q.paidDate || '',
+      q.taxInvoice ? '발행' : (isCashRcpt(q) ? '현금영수증' : '미발행'), q.ntsConfirmNum || '']);
+  });
+  const supplySum = qs.reduce((a, b) => a + Math.round(+b.supply || 0), 0);
+  const vatSum = qs.reduce((a, b) => a + Math.round(+b.vat || 0), 0);
+  const totalSum = qs.reduce((a, b) => a + Math.round(+b.total || 0), 0) + (ob ? ob.amt : 0);
+  /* ★ 입금·미수는 원장 화면과 같은 값을 쓴다 (줄별 미수를 더한 것과 맞는다) */
+  const paidSum = Math.round(+M.applied || 0), unpaid = Math.round(+M.rem || 0);
   const ti = c.taxInfo || {};
-  const aoa = [['거래처 원장 · ' + c.value], ['출력일 ' + todayStr() + (ti.bizNo ? (' · 사업자 ' + ti.bizNo) : '') + (c.ctype ? (' · 유형 ' + c.ctype) : '')], [], head].concat(rows);
-  const paidSum = qs.reduce((a, b) => a + quotePaid(b), 0);
-  aoa.push([]); aoa.push(['', '', '합계', supplySum, vatSum, total, paidSum, unpaid, '', '', '', '']);
-  const ws = XLSX.utils.aoa_to_sheet(aoa); ws['!cols'] = [{ wch: 12 }, { wch: 16 }, { wch: 32 }, { wch: 12 }, { wch: 11 }, { wch: 13 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 11 }, { wch: 22 }];
+  const aoa = [['거래처 원장 · ' + c.value],
+    ['출력일 ' + todayStr() + (ti.bizNo ? (' · 사업자 ' + ti.bizNo) : '') + (c.ctype ? (' · 유형 ' + c.ctype) : '')
+      + ' · 확정 주문 ' + qs.length + '건' + (skipped > 0 ? ('  ※ 미확정·대체된 견적 ' + skipped + '건은 빠져 있습니다') : '')],
+    [], head].concat(rows);
+  aoa.push([]);
+  aoa.push(['', '', '', '', '합계', supplySum, vatSum, totalSum, paidSum, unpaid, '', '', '', '']);
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 12 }, { wch: 15 }, { wch: 30 }, { wch: 14 }, { wch: 30 }, { wch: 13 }, { wch: 12 }, { wch: 14 }, { wch: 13 }, { wch: 13 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 22 }];
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '원장');
   XLSX.writeFile(wb, '거래처원장_' + (c.value || '').replace(/\s/g, '') + '_' + todayStr() + '.xlsx');
-  toast('원장 엑셀 다운로드');
+  toast('원장 엑셀 다운로드 · 확정 ' + qs.length + '건');
 }
 function openClientDetail(id) { filters.clientDetail = id; renderClients(); if (el('pg-clients')) el('pg-clients').scrollIntoView({ block: 'start' }); }
 function clientsBack() { filters.clientDetail = ''; renderClients(); }
@@ -8329,7 +8372,7 @@ function ledgerRows(client, cat) {
       amt = mine.tot;
       taxA = tot ? Math.round(taxA * (mine.tot / tot)) : taxA;
     }
-    rows.push({ d: q.date || '', k: 'sale', amt: amt, full: tot, part: mixed, docNo: q.docNo || '', site: (q.siteName || q.siteAddr || q.attn || '').trim(), id: q.id });
+    rows.push({ d: q.date || '', k: 'sale', amt: amt, full: tot, part: mixed, docNo: q.docNo || '', site: quoteSiteText(q), attn: quoteAttnText(q), id: q.id });
     if (q.taxInvoice) rows.push({ d: q.taxDate || q.date || '', k: 'tax', amt: taxA, part: mixed, docNo: q.docNo || '', id: q.id, nts: q.ntsConfirmNum || '', mgt: q.taxMgtKey || '' });
   });
   if (CAT) { rows.sort((a, b) => (a.d || '').localeCompare(b.d || '') || ((a.k === 'sale' ? 0 : 1) - (b.k === 'sale' ? 0 : 1)) || (a.docNo || '').localeCompare(b.docNo || '')); return rows; }
@@ -8685,7 +8728,7 @@ function ledgerDetailHtml(client) {
     if (r.k === 'sale') return `<tr>
       <td style="white-space:nowrap;color:var(--t3)">${esc((r.d || '').slice(2))}</td>
       <td><span class="pill p-gray">매출</span></td>
-      <td style="cursor:pointer" onclick="openQuoteView('${r.id}')"><b>${esc(r.docNo)}</b>${r.site ? ` <span style="color:var(--t3)">· ${esc(r.site)}</span>` : ''}</td>
+      <td style="cursor:pointer" onclick="openQuoteView('${r.id}')"><b>${esc(r.docNo)}</b>${r.site ? ` <span style="color:var(--t3)">· ${esc(r.site)}</span>` : ''}${r.attn ? `<div style="font-size:11px;color:var(--t3);margin-top:1px"><i class="ti ti-user"></i> ${esc(r.attn)}</div>` : ''}</td>
       ${money(r.amt)}${money(0)}
       <td style="text-align:right;white-space:nowrap;font-weight:700">${fmtWon(r.bal)}</td></tr>`;
     if (r.k === 'tax') return `<tr style="background:#fbfaf7">
