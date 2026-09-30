@@ -13273,7 +13273,7 @@ function renderQuote() {
       </div>
       ${_selQs.length ? `<div style="margin-top:7px;border-top:1px dashed var(--bd);padding-top:6px;font-size:11.5px;color:var(--t2);line-height:1.7">
         ${_selQs.slice().sort((a, b) => (qDate(a) || '').localeCompare(qDate(b) || '')).map(q => `<div style="display:flex;justify-content:space-between;gap:8px">
-          <span style="min-width:0"><b style="color:var(--tx)">${esc(billSiteOf(q) || '현장 미지정')}</b>${q.by ? ` <span style="color:var(--t3)">· 담당 ${esc(q.by)}</span>` : ''}</span>
+          <span style="min-width:0"><b style="color:var(--tx)">${esc(billSiteOf(q) || '현장 미지정')}</b>${quoteAttnText(q) ? ` <span style="color:var(--t3)">· 담당 ${esc(quoteAttnText(q))}</span>` : ''}</span>
           <span style="white-space:nowrap;color:var(--t3)">${fmtWon(q.total)}</span></div>`).join('')}
       </div>` : ''}</div>` : '';
   const toggle = `<div style="display:flex;gap:6px;margin-bottom:10px">
@@ -13989,7 +13989,7 @@ function renderBillEdit() {
     const onN = mine.filter(x => x.on).length;
     return `<div class="card" style="padding:0;margin-bottom:10px;overflow:hidden">
       <div style="background:var(--soft);padding:9px 12px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
-        <div style="font-size:12.5px"><b>${esc(billSiteOf(q) || '현장 미지정')}</b>${q.by ? ` <span style="color:var(--t3)">· 담당 ${esc(q.by)}</span>` : ''}
+        <div style="font-size:12.5px"><b>${esc(billSiteOf(q) || '현장 미지정')}</b>${quoteAttnText(q) ? ` <span style="color:var(--t3)">· 담당 ${esc(quoteAttnText(q))}</span>` : ''}
           <span style="color:var(--t3)"> · ${esc(q.docNo || '')} · ${esc(qDate(q))}</span></div>
         <div style="font-size:11.5px;color:${onN ? 'var(--gd)' : 'var(--t3)'}">${onN}/${mine.length} 선택</div></div>
       <div class="tbl-wrap"><table class="tbl">
@@ -14348,7 +14348,9 @@ function billXlsxSheet() {
     const fullSup = all.reduce((s, x) => s + supOf(x), 0);
     const _d = Math.round((+q.discount || 0) * (fullSup > 0 ? Math.min(1, _sup / fullSup) : 1));
     const site = billSiteOf(q) || '현장 미지정';
-    const who = (q.by || '').trim();
+    /* ★ 2026-09-30 사용자: "담당자 여전히 우리로 나오는데"
+       → 청구서의 «담당»은 우리 직원(q.by)이 아니라 «견적서 수신 담당자»(q.attn)다. */
+    const who = quoteAttnText(q);
     const dt = qDate(q);
     // 현장 머리줄 (한 줄 전체를 연한 초록 띠로)
     const bd = blankRow(S.band);
@@ -14433,11 +14435,11 @@ function billEditPrint() {
   w.document.close(); w.focus(); setTimeout(() => { try { w.print(); } catch (e) { } }, 500);
 }
 /* 청구서에 쓸 현장 이름 — 현장명 > 현장주소 > 수신·참조 순으로 있는 것을 쓴다 */
-function billSiteOf(q) {
-  if (!q) return '';
-  const cands = [q.siteName, q.siteAddr, q.attn].map(v => String(v == null ? '' : v).trim()).filter(Boolean);
-  return cands[0] || '';
-}
+/* ★ 2026-09-30 — 청구서의 «현장»은 현장 주소를 쓴다.
+   예전엔 현장명(siteName)을 먼저 썼는데 거기에 「신성그룹 김형준 주임님」처럼
+   거래처 담당자 이름이 섞여 있어서 현장인지 사람인지 알 수 없었다.
+   담당자는 아래 «수신 담당자» 칸으로 따로 빠진다. */
+function billSiteOf(q) { return quoteSiteText(q); }
 function combinedBillDocHtml(qs, picked, extraDc) {
   const e = s => esc(s == null ? '' : String(s));
   qs = qs.slice().sort((a, b) => (qDate(a) || '').localeCompare(qDate(b) || ''));
@@ -14465,7 +14467,7 @@ function combinedBillDocHtml(qs, picked, extraDc) {
     const _subTotal = _sup + _tax - _d;
     supply += _sup; vat += _tax; disc += _d; total += _subTotal;
     const _partial = picked && its.length < all.length;
-    const _site = billSiteOf(q), _who = (q.by || '').trim(), _when = qDate(q);
+    const _site = billSiteOf(q), _who = quoteAttnText(q), _when = qDate(q);   // ★ 담당 = 견적서 수신 담당자
     its.forEach((it, i) => {
       rows += `<tr>
         <td class="c dt">${e(_when.slice(2))}</td>
