@@ -14382,7 +14382,10 @@ function billXlsxSheet() {
     st[0] = T('', S.stL); st[1] = T('소  계', S.stL);
     st[6] = F('SUM(G' + firstN + ':G' + lastN + ')', _sup, S.stN);
     st[7] = F('SUM(H' + firstN + ':H' + lastN + ')', _tax, S.stN);
-    st[8] = _d > 0 ? N(-_d, S.stR) : T('', S.stN);
+    /* ★ 2026-09-30 — 할인이 없어도 «빈 글자»가 아니라 «숫자 0»을 넣는다.
+       아래 소계 수식이 =G+H+I 라서, I 칸이 빈 «글자»면 엑셀이 #VALUE! 오류를 낸다.
+       (빈칸처럼 보여도 글자 칸이면 더하기가 안 된다) */
+    st[8] = _d > 0 ? N(-_d, S.stR) : N(0, S.stN);
     st[9] = F('G' + sn + '+H' + sn + '+I' + sn, _sup + _tax - _d, S.stN);
     st[10] = T(_d > 0 ? ('견적 할인 -' + fmtWon(_d)) : '', S.stL);
     rows.push(st); mrg(rows.length - 1, 1, 5); rowH[rows.length - 1] = { hpt: 21 };
