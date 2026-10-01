@@ -7945,14 +7945,93 @@ function _bkupId(it, seq) {
   return ('X' + a + '_' + d + '_' + tail + (seq ? '_' + seq : '')).slice(0, 120);
 }
 
-/* 엑셀/CSV 한 장 → 우리가 쓸 줄 목록 */
-function bkupParse(rows) {
-  let hi = -1, map = {};
-  for (let r = 0; r < Math.min(rows.length, 20); r++) {
-    const m = bkupMapCols(rows[r]);
-    if (bkupMapOk(m)) { hi = r; map = m; break; }
+/* ★★ 2026-10-01 — 머리글(칸 이름) 줄이 아예 없는 파일도 읽는다.
+   은행에서 바로 내려받은 파일은 첫 줄부터 자료인 경우가 많다.
+   그래서 «칸 생김새»만 보고 무슨 칸인지 알아낸다.
+     · 날짜처럼 생긴 칸 → 거래일시
+     · 숫자 칸 중 거의 모든 줄에 값이 있고 금액이 가장 큰 칸 → 잔액(읽고 버림)
+     · 남은 숫자 칸 둘 → 앞뒤 줄 «잔액 차이»를 맞춰 보고 출금/입금을 가린다
+     · 글자 칸 중 종류가 몇 가지뿐이면 거래매체, 은행 이름이 섞였으면 은행,
+       나머지 중 채워진 줄이 많은 것부터 적요 · 상대방
+   ※ 틀리면 올리기 화면에서 칸을 직접 바꿀 수 있다. */
+function bkupGuessCols(rows) {
+  const n = rows.length; if (n < 3) return null;
+  let N = 0; rows.forEach(r => { N = Math.max(N, (r || []).length); });
+  const S = v => String(v == null ? '' : v).trim();
+  const stat = [];
+  for (let c = 0; c < N; c++) {
+    let fill = 0, date = 0, money = 0, nz = 0, longdig = 0, bank = 0, maxAbs = 0;
+    const uniq = new Set();
+    for (let r = 0; r < n; r++) {
+      const v = (rows[r] || [])[c], t = S(v);
+      if (!t) continue;
+      fill++; uniq.add(t);
+      if (v instanceof Date || /^(19|20)\d{2}[-./]\d{1,2}[-./]\d{1,2}/.test(t) || /^(19|20)\d{6}/.test(t)) date++;
+      const dg = t.replace(/[^0-9]/g, '');
+      if (dg.length >= 11 && /^[0-9\-]+$/.test(t)) longdig++;
+      if ((typeof v === 'number') || (/^-?[\d,]+(\.\d+)?$/.test(t) && dg.length <= 12)) {
+        money++; const x = Math.abs(typeof v === 'number' ? v : +t.replace(/,/g, ''));
+        if (x !== 0) nz++; if (x > maxAbs) maxAbs = x;
+      }
+      if (/은행|뱅크|bank|축협|신협|새마을|우체국|증권|토스/i.test(t)) bank++;
+    }
+    stat.push({ c: c, fill: fill, date: date, money: money, nz: nz, longdig: longdig, bank: bank, uniq: uniq.size, maxAbs: maxAbs });
   }
-  if (hi < 0) return { ok: false, map: {}, items: [], head: [] };
+  const used = {}, map = {};
+  const take = (k, c) => { if (c == null || c < 0 || used[c]) return; map[k] = c; used[c] = 1; };
+  const dc = stat.filter(x => x.date >= n * 0.6).sort((a, b) => b.date - a.date)[0];
+  if (!dc) return null;
+  take('date', dc.c);
+  const moneyCols = stat.filter(x => !used[x.c] && x.money >= n * 0.6 && x.longdig < n * 0.3 && x.nz > 0);
+  if (!moneyCols.length) return null;
+  const balC = moneyCols.filter(x => x.nz >= n * 0.9).sort((a, b) => b.maxAbs - a.maxAbs)[0];
+  if (balC && moneyCols.length >= 3) take('bal', balC.c);
+  const rest = moneyCols.filter(x => !used[x.c]);
+  if (!rest.length) return null;
+  if (rest.length === 1) take('out', rest[0].c);
+  else {
+    const a = rest[0].c, b = rest[1].c;
+    let sAB = 0, sBA = 0;
+    if (map.bal != null) {
+      const num = v => { if (typeof v === 'number') return v; const t = S(v).replace(/[^0-9.\-]/g, ''); return t ? +t : 0; };
+      for (let r = 0; r + 1 < n; r++) {
+        const b0 = num((rows[r] || [])[map.bal]), b1 = num((rows[r + 1] || [])[map.bal]);
+        if (!b0 || !b1) continue;
+        const va = num((rows[r] || [])[a]), vb = num((rows[r] || [])[b]);
+        if (Math.abs(b0 - (b1 - va + vb)) < 1) sAB++;
+        if (Math.abs(b0 - (b1 - vb + va)) < 1) sBA++;
+        if (Math.abs(b1 - (b0 - va + vb)) < 1) sAB++;
+        if (Math.abs(b1 - (b0 - vb + va)) < 1) sBA++;
+      }
+    }
+    if (sBA > sAB) { take('in', a); take('out', b); } else { take('out', a); take('in', b); }
+  }
+  const texts = stat.filter(x => !used[x.c] && x.fill >= Math.max(3, n * 0.08) && x.uniq >= 2);
+  const bankC = texts.filter(x => x.bank >= x.fill * 0.5).sort((a, b) => b.bank - a.bank)[0];
+  if (bankC) take('bank', bankC.c);
+  const wayC = texts.filter(x => !used[x.c] && x.uniq >= 2 && x.uniq <= 15 && x.fill >= n * 0.5).sort((a, b) => a.uniq - b.uniq)[0];
+  if (wayC) take('way', wayC.c);
+  const nm = texts.filter(x => !used[x.c] && x.longdig < x.fill * 0.5 && x.uniq > 3).sort((a, b) => b.fill - a.fill);
+  if (nm[0]) take('payer', nm[0].c);
+  if (nm[1]) take('memo', nm[1].c);
+  return map;
+}
+/* 엑셀/CSV 한 장 → 우리가 쓸 줄 목록
+   fix 를 주면 그 칸 배치를 그대로 쓴다 (사람이 고쳤거나 통장별로 기억해 둔 것) */
+function bkupParse(rows, fix) {
+  let hi = -1, map = {}, guessed = false;
+  if (fix && Object.keys(fix).length) {
+    map = Object.assign({}, fix);
+    hi = (map.__head != null) ? map.__head : -1; delete map.__head;
+    guessed = hi < 0;
+  } else {
+    for (let r = 0; r < Math.min(rows.length, 20); r++) {
+      const m = bkupMapCols(rows[r]);
+      if (bkupMapOk(m)) { hi = r; map = m; break; }
+    }
+    if (hi < 0) { const gmap = bkupGuessCols(rows); if (gmap && bkupMapOk(gmap)) { map = gmap; guessed = true; } }
+  }
+  if (!bkupMapOk(map)) return { ok: false, map: {}, items: [], head: [], guessed: false };
   const g = (cells, k) => (map[k] == null ? '' : cells[map[k]]);
   const gs = (cells, k) => String(g(cells, k) == null ? '' : g(cells, k)).trim();
   const items = [], bad = [];
@@ -7987,7 +8066,7 @@ function bkupParse(rows) {
     it.id = n ? _bkupId(it, n) : base;
     items.push(it);
   }
-  return { ok: true, map: map, head: rows[hi] || [], headRow: hi + 1, items: items, bad: bad };
+  return { ok: true, map: map, head: rows[hi] || [], headRow: hi + 1, guessed: guessed, items: items, bad: bad };
 }
 
 /* ★ 이미 앱에 있는 건과 대조 — 두 겹으로 막는다 */
@@ -8079,7 +8158,7 @@ function bkupPick(input) {
          «같은 날·같은 금액·같은 내용» 줄이 서로 덮어쓴다 */
       parsed.items.forEach(it => { it.accName0 = it.accName || ''; });
       const hasAcc = parsed.items.some(it => (it.accName || '').trim());
-      _bkup = { name: f.name, parsed: parsed, rev: bkupReview(parsed.items), pick: { fresh: true, maybe: false }, accName: '', needAcc: !hasAcc };
+      _bkup = { name: f.name, rows: rows, parsed: parsed, rev: bkupReview(parsed.items), pick: { fresh: true, maybe: false }, accName: '', needAcc: !hasAcc };
       bkupRender();
     } catch (err) {
       if (body) body.innerHTML = `<div class="banner warn" style="margin-bottom:12px"><i class="ti ti-alert-triangle"></i><span style="flex:1">파일을 읽지 못했습니다 — ${esc((err && err.message) || '')}</span></div>` + bkupPickHtml();
@@ -8095,11 +8174,79 @@ function bkupAccNames() {
   (state.banktx || []).forEach(t => { const v = String(t.accName || '').trim(); if (v) m[v] = 1; });
   return Object.keys(m).sort((a, b) => a.localeCompare(b, 'ko'));
 }
+/* ★★ 2026-10-01 — 칸을 사람이 직접 바꿀 수 있게 (앱이 잘못 알아봤을 때)
+   그리고 통장 이름마다 «그 통장은 이런 칸 배치» 를 기억해 둔다 → 다음 달엔 그대로 올리면 끝. */
+const BKUP_ROLES = [['', '안 씀'], ['date', '거래일시'], ['out', '출금'], ['in', '입금'], ['bal', '잔액(버림)'],
+  ['payer', '적요·내용'], ['memo', '상대방'], ['acc', '통장명'], ['bank', '은행'], ['way', '거래매체'],
+  ['client', '거래처'], ['acct', '계정과목'], ['slip', '전표번호'], ['time', '시각']];
+function bkupMapStore() { const m = (state.appmeta || []).find(x => x.key === 'bkupMaps'); return (m && m.map) || {}; }
+async function saveBkupMap(name, map) {
+  if (!name) return;
+  const all = Object.assign({}, bkupMapStore()); all[name] = map;
+  const m = (state.appmeta || []).find(x => x.key === 'bkupMaps');
+  try { if (m) await Store.update('appmeta', m.id, { map: all }); else await Store.add('appmeta', { key: 'bkupMaps', map: all }); } catch (e) { }
+}
+/* 지금 쓰고 있는 칸 배치 (다시 읽을 때·기억할 때 쓴다) */
+function bkupCurMap() {
+  if (!_bkup) return {};
+  const m = Object.assign({}, _bkup.parsed.map);
+  m.__head = _bkup.parsed.guessed ? -1 : ((+_bkup.parsed.headRow || 0) - 1);
+  return m;
+}
+function bkupSetCol(c, role) {
+  if (!_bkup) return;
+  const m = bkupCurMap();
+  Object.keys(m).forEach(k => { if (k !== '__head' && m[k] === +c) delete m[k]; });
+  if (role) m[role] = +c;
+  const p = bkupParse(_bkup.rows, m);
+  if (!p.ok || !p.items.length) { toast('그 칸 배치로는 못 읽습니다 — 거래일시와 출금(또는 입금)이 있어야 합니다'); bkupRender(); return; }
+  p.items.forEach(it => { it.accName0 = it.accName || ''; });
+  _bkup.parsed = p;
+  _bkup.needAcc = !p.items.some(it => (it.accName || '').trim());
+  bkupSetAcc(_bkup.accName || '');
+}
+/* 칸 바꾸기 상자 */
+function bkupColBoxHtml() {
+  if (!_bkup) return '';
+  const P = _bkup.parsed, rows = _bkup.rows || [];
+  let N = 0; rows.forEach(r => { N = Math.max(N, (r || []).length); });
+  if (!N) return '';
+  const d0 = Math.max(0, +P.headRow || 0);
+  const samp = rows[d0] || rows[0] || [];
+  const roleOf = c => { let k = ''; Object.keys(P.map).forEach(x => { if (P.map[x] === c) k = x; }); return k; };
+  const cells = [];
+  for (let c = 0; c < N; c++) {
+    const cur = roleOf(c);
+    const ex = String(samp[c] == null ? '' : samp[c]).trim();
+    cells.push(`<div style="min-width:0">
+      <select onchange="bkupSetCol(${c},this.value)" style="width:100%;font-size:11.5px;padding:4px 5px;border:1.5px solid ${cur ? 'var(--bd2)' : '#e3e3e3'};border-radius:7px;background:${cur ? '#fff' : 'var(--soft)'};color:${cur ? 'var(--t1)' : 'var(--t3)'}">
+        ${BKUP_ROLES.map(r => `<option value="${r[0]}" ${r[0] === cur ? 'selected' : ''}>${esc(r[1])}</option>`).join('')}</select>
+      <div style="font-size:10px;color:var(--t3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(ex)}">${c + 1}. ${esc(ex || '(빈칸)')}</div></div>`);
+  }
+  return `<details ${P.guessed ? 'open' : ''} style="margin-bottom:11px;border:1.5px solid ${P.guessed ? '#d9a441' : 'var(--bd2)'};border-radius:11px;padding:9px 11px;background:${P.guessed ? '#fffaf0' : 'transparent'}">
+    <summary style="cursor:pointer;font-size:12.5px;font-weight:800;color:${P.guessed ? '#b45309' : 'var(--t2)'}">
+      <i class="ti ti-columns"></i> 칸 맞추기 ${P.guessed ? '— 머리글이 없어 앱이 «짐작»했습니다. 아래 미리보기가 맞는지 봐주세요' : '(필요하면 바꾸세요)'}</summary>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:7px;margin-top:9px">${cells.join('')}</div>
+    <div style="font-size:11px;color:var(--t3);margin-top:8px;line-height:1.6">한 번 맞춰 두면 <b>통장 이름으로 기억</b>해서 다음에 같은 파일을 올릴 땐 그대로 읽습니다.</div>
+  </details>`;
+}
 /* 계좌 이름을 정하면 줄마다 다시 이름표를 붙인다 (계좌가 다르면 문서이름도 달라진다) */
 function bkupSetAcc(v) {
   if (!_bkup) return;
   const nm = String(v == null ? '' : v).trim();
   _bkup.accName = nm;
+  /* ★ 이 통장으로 전에 올린 적이 있으면 그때 맞춰 둔 칸 배치를 그대로 쓴다 */
+  if (nm && !_bkup.mapFixed) {
+    const saved = bkupMapStore()[nm];
+    if (saved && Object.keys(saved).length) {
+      const p = bkupParse(_bkup.rows, Object.assign({}, saved));
+      if (p.ok && p.items.length) {
+        p.items.forEach(it => { it.accName0 = it.accName || ''; });
+        _bkup.parsed = p; _bkup.mapFixed = true;
+        _bkup.needAcc = !p.items.some(it => (it.accName || '').trim());
+      }
+    }
+  }
   const seen = new Map();
   _bkup.parsed.items.forEach(it => {
     it.accName = nm || it.accName0 || '';
@@ -8152,6 +8299,7 @@ function bkupRender() {
       <b style="font-size:14px"><i class="ti ti-file-spreadsheet"></i> ${esc(_bkup.name)}</b>
       <span style="font-size:11.5px;color:var(--t3)">${P.headRow}번째 줄이 머리글 · ${P.items.length}줄을 읽었습니다</span></div>
     ${accBox}
+    ${bkupColBoxHtml()}
 
     <div style="font-size:11.5px;color:var(--t3);background:var(--soft);border-radius:9px;padding:8px 11px;margin-bottom:11px;line-height:1.7">
       알아본 칸: ${found.map(k => `<b style="color:${k === 'bal' ? 'var(--t3)' : 'var(--t1)'}">${lbl[k]}${k === 'bal' ? '(버림)' : ''}</b>`).join(' · ')}
@@ -8221,6 +8369,7 @@ async function bkupSave() {
     catch (e) { fail++; }
     if (n % 25 === 0) setSt('저장 중… ' + n + ' / ' + list.length);
   }
+  try { await saveBkupMap(String(_bkup.accName || '').trim(), bkupCurMap()); } catch (e) { }   // ★ 이 통장의 칸 배치를 기억
   moneyBust();
   toast(n + '건 넣었습니다' + (fail ? (' · 실패 ' + fail + '건') : ''));
   closeModal();
@@ -11494,7 +11643,7 @@ async function downloadCostLedger() {
    ★ 계정은 저장하지 않아도 된다. 적요를 보고 규칙으로 «추정»하고,
      사람이 고친 것만 저장한다(그 상대방은 별칭으로 기억 → 다음 달부터 자동).
    ══════════════════════════════════════════════════════════ */
-const ACCT_DEFAULT = ['매입/자재비', '외주가공비', '외주시공비', '운반비', '통관비', '급여', '상여금', '복리후생비', '공과금', '접대비', '소모품비', '수선비', '임차료', '지급수수료', '세금', '기타'];
+const ACCT_DEFAULT = ['매입/자재비', '외주가공비', '외주시공비', '운반비', '여비교통비', '통관비', '급여', '상여금', '복리후생비', '공과금', '접대비', '소모품비', '수선비', '임차료', '지급수수료', '세금', '기타'];
 function acctCats() {
   const m = (state.appmeta || []).find(x => x.key === 'acctCats');
   const it = (m && Array.isArray(m.items) && m.items.length) ? m.items : ACCT_DEFAULT;
@@ -11516,22 +11665,28 @@ async function saveAcctAlias(map) {
   if (m) await Store.update('appmeta', m.id, { map }); else await Store.add('appmeta', { key: 'acctAlias', map });
 }
 /* 적요 글자로 계정을 추정하는 규칙 — 위에서부터 먼저 걸리는 것 */
+/* ★★ 2026-10-01 — 은행 파일을 그대로 올려 «자동 분개»하기 위해 규칙을 넓혔다.
+   체크카드 가맹점 이름이 적요에 그대로 찍히기 때문에(쿠팡·배민·카카오T…) 그 이름들을 넣었다.
+   실측: 법인 출금통장 338건에 돌려서 27% → 73% 가 자동으로 잡혔다.
+   ★ 나머지는 «한 번 고치면 같은 이름은 다음부터 자동»(별칭 학습)으로 메운다.
+   ★ 위에 있는 줄이 먼저 이긴다 — 「쿠팡이츠」(복리후생)가 「쿠팡」(소모품)보다 위에 있어야 한다. */
 const ACCT_RULES = [
-  ['통관비', /통관|관세|포워딩|선사|해운|운임|s\/?c|d\/?o|shuttle|적출|보관료/i],
-  ['운반비', /운송|운반|용차|화물|택배|퀵|배송|물류|기사/],
-  ['외주시공비', /시공|설치|현장|인건|시멘트|타일공|미장/],
-  ['외주가공비', /가공|재단|절단|연마|폴리싱|워터젯|후가공|하가공/],
+  ['통관비', /통관|관세|포워딩|선사|해운|운임|s\/?c|d\/?o|shuttle|적출|보관료|티엔씨|컨테이너|하역/i],
+  ['운반비', /운송|운반|용차|화물|택배|퀵|배송|물류|기사|용달|cj대한통운|로젠|한진택배|경동택배/i],
+  ['여비교통비', /택시|카카오\s?t|카카오모빌|타다|우버|주차|하이패스|도로공사|고속도로|코레일|ktx|srt|시외버스|고속버스|항공|대한항공|아시아나|제주항공|주유|gs칼텍스|s-?oil|현대오일|sk에너지|ev충전|충전소/i],
+  ['외주시공비', /시공|설치|현장|인건|시멘트|타일공|미장|실측/],
+  ['외주가공비', /가공|재단|절단|연마|폴리싱|워터젯|후가공|하가공|코너|타공/],
   ['급여', /급여|월급|임금|주급|일당/],
   ['상여금', /상여|성과급|보너스/],
-  ['복리후생비', /복리|식대|식비|경조|회식비|건강보험|국민연금|고용보험|산재|사대보험|4대보험/],
-  ['공과금', /전기요금|전기료|수도요금|수도료|도시가스|가스요금|한전|통신비|인터넷요금|전화요금|관리비|kt\s|skt\s|lg유플/i],
-  ['임차료', /임차|월세|임대|보증금|렌트|리스|주차/],
-  ['세금', /부가세|법인세|소득세|원천|국세|지방세|세무|세금/],
-  ['지급수수료', /수수료|이자|카드|증지|법무|회계|보험료|용역/],
-  ['소모품비', /소모품|비품|공구|사무|자재구입|철물/],
-  ['수선비', /수선|수리|정비|as|a\/s|점검/i],
+  ['복리후생비', /복리|식대|식비|경조|회식|건강보험|국민연금|고용보험|산재|사대보험|4대보험|배달의민족|우아한형제들|요기요|쿠팡이츠|배달|씨유|cu\(|gs25|세븐일레븐|이마트24|편의점|식당|분식|국밥|순대|정육|곱창|치킨|피자|버거|맥도날드|롯데리아|카페|cafe|커피|스타벅스|투썸|빽다방|이디야|메가커피|김밥|칼국수|냉면|중국집|마라|쌀국수|초밥|횟집|고기|구이|백반|한식|일식|중식|장룡|청국장|육개|쌍용각|호텔|숙박|생수|샘물|정수기|해장국|뚝배기|솥뚜껑|김치찌개|찌개|샤브|수산|밥집|식육|족발|보쌈|부대찌개|돈까스|우동|라멘|쌈밥|뷔페|삼겹|갈비|막국수|제과|베이커리|떡집/i],
+  ['공과금', /전기요금|전기료|전력|한국전력|한전|수도요금|수도료|도시가스|가스요금|상하수도|통신비|인터넷요금|전화요금|관리비|skt|lgu\+?|lg유플|유플러스|sk브로드|통신/i],
+  ['임차료', /임차|월세|임대|보증금|렌트|리스|관리사무소/],
+  ['세금', /부가세|법인세|소득세|원천|국세|지방세|세무|세금|결산|지방소득|주민세|자동차세/],
+  ['지급수수료', /수수료|이자|증지|법무|회계|보험료|용역|카페24|나이스정보통신|링크허브|anthropic|claude|openai|chatgpt|google|facebk|facebook|adobe|microsoft|aws|네이버클라우드|호스팅|도메인|가비아|솔루션|소프트웨어|라이선스|구독/i],
+  ['소모품비', /소모품|비품|공구|사무|철물|쿠팡|네이버파이낸셜|네이버페이|11번가|지마켓|옥션|알리|테무|오늘의집|다이소|문구|마트|하이마트|전자랜드|콘센트|레일봉|진열장|장보기|컬리|쇼핑/i],
+  ['수선비', /수선|수리|정비|a\/?s|점검|보수/i],
   ['접대비', /접대|선물|경조사|화환/],
-  ['매입/자재비', /매입|자재|슬라브|슬랩|원석|타일|수입|무역|대전송금|송금/]
+  ['매입/자재비', /매입|자재|슬라브|슬랩|원석|타일|수입|무역|대전송금|송금|스톤|석재|세라믹|대리석|도기|수전|부속/]
 ];
 /* 이 출금 한 건의 계정 → { cat, sure }
    sure=true : 사람이 정했거나(t.acct) 같은 상대방을 전에 정해 둔 것(별칭)
@@ -11579,6 +11734,31 @@ function acctTotals(ym) {
   });
   return { byCat: m, noneSum, noneN };
 }
+/* ★★ 2026-10-01 — 미분류를 «같은 이름끼리 묶어» 한 번에 정리한다.
+   한 묶음을 지정하면 그 이름은 앞으로도 자동으로 그 계정에 들어간다(별칭 학습). */
+let _acctGroups = [];
+function acctNoneGroups(list) {
+  const m = {};
+  list.forEach(t => {
+    const k = _acctKey(t.payer || t.memo || '');
+    if (!k) return;
+    if (!m[k]) m[k] = { key: k, name: (t.payer || t.memo || ''), n: 0, sum: 0 };
+    m[k].n++; m[k].sum += txMoney(t);
+  });
+  return Object.keys(m).map(k => m[k]).sort((a, b) => b.sum - a.sum);
+}
+async function acctPickGroup(ix, cat) {
+  if (!isAdmin()) { toast('관리자만 가능합니다'); return; }
+  const g = _acctGroups[+ix]; if (!g) return;
+  try {
+    const m = Object.assign({}, acctAliasMap());
+    if (cat) m[g.key] = cat; else delete m[g.key];
+    await saveAcctAlias(m);
+    toast(cat ? (g.name + ' → ' + cat + ' (' + g.n + '건 한꺼번에)') : '되돌림');
+    setTimeout(renderSettle, 400);
+  } catch (e) { toast('실패: ' + ((e && e.message) || e)); }
+}
+function acctSetGroup(v) { filters.acctGroup = (v === '1'); renderSettle(); }
 function acctListInner() {
   const ym = filters.settleMonth || todayStr().slice(0, 7);
   const pick = filters.acctCat || 'all';
@@ -11598,6 +11778,26 @@ function acctListInner() {
   }
   const sum = list.reduce((a, t) => a + txMoney(t), 0);
   if (!list.length) return `<div class="empty"><i class="ti ti-search-off"></i>해당하는 출금 내역이 없습니다</div>`;
+  /* ★ 미분류는 «같은 이름끼리 묶어» 한 번에 지정할 수 있게 (한 건씩 보기로 바꿀 수 있다) */
+  if (pick === 'none' && filters.acctGroup !== false) {
+    _acctGroups = acctNoneGroups(list);
+    const nNamed = _acctGroups.reduce((a, g) => a + g.n, 0);
+    const rest = list.length - nNamed;
+    const gopt = (ix) => `<select onchange="acctPickGroup(${ix},this.value)" style="font-size:12px;padding:4px 7px;border:1.5px solid var(--amber-t);border-radius:7px;background:#fff;max-width:140px">
+        <option value="" selected>— 고르기 —</option>${cats.map(c => `<option>${esc(c)}</option>`).join('')}</select>`;
+    return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <b style="font-size:12.5px;color:#b45309"><i class="ti ti-stack-2"></i> 같은 이름끼리 묶어서 ${_acctGroups.length}가지</b>
+        <span style="font-size:11.5px;color:var(--t3);margin-right:auto">한 번 고르면 <b>그 이름은 앞으로도 자동</b>으로 들어갑니다</span>
+        <button class="btn btn-sm" onclick="acctSetGroup('0')"><i class="ti ti-list"></i>한 건씩 보기</button></div>
+      <div class="tbl-wrap"><table class="tbl" style="font-size:12.5px">
+        <thead><tr><th>적요·상대방</th><th style="text-align:right;width:70px">건수</th><th style="text-align:right;width:120px">금액</th><th style="width:150px">계정과목</th></tr></thead>
+        <tbody>${_acctGroups.map((g, ix) => `<tr>
+          <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(g.name)}"><b>${esc(g.name)}</b></td>
+          <td style="text-align:right;white-space:nowrap">${g.n}건</td>
+          <td style="text-align:right;white-space:nowrap;font-weight:700;color:var(--red-t)">${fmtWon(g.sum)}</td>
+          <td>${gopt(ix)}</td></tr>`).join('')}</tbody></table></div>
+      ${rest > 0 ? `<div style="font-size:11.5px;color:var(--t3);margin-top:8px">적요가 비어 있는 <b>${rest}건</b>은 「한 건씩 보기」에서 지정하세요.</div>` : ''}`;
+  }
   const opt = (t, cur) => `<select onchange="acctPick('${t.id}',this.value)" style="font-size:11.5px;padding:3px 6px;border:1.5px solid ${cur ? 'var(--bd2)' : 'var(--amber-t)'};border-radius:7px;background:#fff;max-width:120px">
       <option value="" ${cur ? '' : 'selected'}>— 미분류 —</option>
       ${cats.map(c => `<option ${c === cur ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
