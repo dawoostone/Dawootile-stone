@@ -7982,30 +7982,56 @@ function bkupGuessCols(rows) {
   const dc = stat.filter(x => x.date >= n * 0.6).sort((a, b) => b.date - a.date)[0];
   if (!dc) return null;
   take('date', dc.c);
-  const moneyCols = stat.filter(x => !used[x.c] && x.money >= n * 0.6 && x.longdig < n * 0.3 && x.nz > 0);
-  if (!moneyCols.length) return null;
-  const balC = moneyCols.filter(x => x.nz >= n * 0.9).sort((a, b) => b.maxAbs - a.maxAbs)[0];
-  if (balC && moneyCols.length >= 3) take('bal', balC.c);
-  const rest = moneyCols.filter(x => !used[x.c]);
-  if (!rest.length) return null;
-  if (rest.length === 1) take('out', rest[0].c);
-  else {
-    const a = rest[0].c, b = rest[1].c;
-    let sAB = 0, sBA = 0;
-    if (map.bal != null) {
-      const num = v => { if (typeof v === 'number') return v; const t = S(v).replace(/[^0-9.\-]/g, ''); return t ? +t : 0; };
+  /* ★ 돈처럼 생긴 칸 — 값이 전부 0 인 칸도 일단 넣는다.
+     (한 달치 파일에 입금이 한 건도 없으면 입금 칸이 전부 0 이라, 빼 버리면 잔액을 입금으로 잘못 본다) */
+  const moneyAll = stat.filter(x => !used[x.c] && x.money >= n * 0.6 && x.longdig < n * 0.3);
+  if (!moneyAll.length) return null;
+  const num = v => { if (typeof v === 'number') return v; const t = S(v).replace(/[^0-9.\-]/g, ''); return t ? +t : 0; };
+  /* ★★ 잔액 칸 고르기 — «금액이 제일 큰 칸»으로 고르면 틀린다
+     (출금 한 건이 잔액보다 클 수 있다 — 실제로 2억 송금 건에서 뒤바뀌었다).
+     «앞줄 잔액 = 뒷줄 잔액 − 출금 + 입금» 이 맞아떨어지는 짝을 찾는다. */
+  if (moneyAll.length >= 3) {
+    let best = null;
+    for (let x = 0; x < moneyAll.length; x++) for (let y = 0; y < moneyAll.length; y++) for (let z = 0; z < moneyAll.length; z++) {
+      if (x === y || x === z || y === z) continue;
+      const B = moneyAll[x].c, O = moneyAll[y].c, I = moneyAll[z].c;
+      let sc = 0;
       for (let r = 0; r + 1 < n; r++) {
-        const b0 = num((rows[r] || [])[map.bal]), b1 = num((rows[r + 1] || [])[map.bal]);
+        const b0 = num((rows[r] || [])[B]), b1 = num((rows[r + 1] || [])[B]);
         if (!b0 || !b1) continue;
-        const va = num((rows[r] || [])[a]), vb = num((rows[r] || [])[b]);
-        if (Math.abs(b0 - (b1 - va + vb)) < 1) sAB++;
-        if (Math.abs(b0 - (b1 - vb + va)) < 1) sBA++;
-        if (Math.abs(b1 - (b0 - va + vb)) < 1) sAB++;
-        if (Math.abs(b1 - (b0 - vb + va)) < 1) sBA++;
+        if (Math.abs(b0 - (b1 - num((rows[r] || [])[O]) + num((rows[r] || [])[I]))) < 1) sc++;            // 최신이 위
+        if (Math.abs(b1 - (b0 - num((rows[r + 1] || [])[O]) + num((rows[r + 1] || [])[I]))) < 1) sc++;    // 오래된 것이 위
       }
+      if (!best || sc > best.sc) best = { sc: sc, B: B, O: O, I: I };
     }
-    if (sBA > sAB) { take('in', a); take('out', b); } else { take('out', a); take('in', b); }
+    if (best && best.sc >= Math.max(3, (n - 1) * 0.5)) { take('bal', best.B); take('out', best.O); take('in', best.I); }
   }
+  if (map.out == null) {
+    /* 계산으로 못 가렸을 때 — 값이 전부 0 인 칸은 빼고,
+       거의 모든 줄에 값이 있는 «맨 뒤» 칸을 잔액으로 본다
+       (국내 은행은 거의 다 «출금 · 입금 · 잔액» 순서로 내려 준다) */
+    const live = moneyAll.filter(x => !used[x.c] && x.nz > 0);
+    if (live.length >= 3) { const cand = live.filter(x => x.nz >= n * 0.9).sort((a, b) => b.c - a.c)[0]; if (cand) take('bal', cand.c); }
+    const rest = moneyAll.filter(x => !used[x.c] && x.nz > 0);
+    if (rest.length === 1) take('out', rest[0].c);
+    else if (rest.length >= 2) {
+      const a = rest[0].c, b = rest[1].c;
+      let sAB = 0, sBA = 0;
+      if (map.bal != null) {
+        for (let r = 0; r + 1 < n; r++) {
+          const b0 = num((rows[r] || [])[map.bal]), b1 = num((rows[r + 1] || [])[map.bal]);
+          if (!b0 || !b1) continue;
+          const va = num((rows[r] || [])[a]), vb = num((rows[r] || [])[b]);
+          if (Math.abs(b0 - (b1 - va + vb)) < 1) sAB++;
+          if (Math.abs(b0 - (b1 - vb + va)) < 1) sBA++;
+          if (Math.abs(b1 - (b0 - va + vb)) < 1) sAB++;
+          if (Math.abs(b1 - (b0 - vb + va)) < 1) sBA++;
+        }
+      }
+      if (sBA > sAB) { take('in', a); take('out', b); } else { take('out', a); take('in', b); }
+    }
+  }
+  if (map.out == null && map.in == null) return null;
   const texts = stat.filter(x => !used[x.c] && x.fill >= Math.max(3, n * 0.08) && x.uniq >= 2);
   const bankC = texts.filter(x => x.bank >= x.fill * 0.5).sort((a, b) => b.bank - a.bank)[0];
   if (bankC) take('bank', bankC.c);
@@ -11678,7 +11704,7 @@ const ACCT_RULES = [
   ['외주가공비', /가공|재단|절단|연마|폴리싱|워터젯|후가공|하가공|코너|타공/],
   ['급여', /급여|월급|임금|주급|일당/],
   ['상여금', /상여|성과급|보너스/],
-  ['복리후생비', /복리|식대|식비|경조|회식|건강보험|국민연금|고용보험|산재|사대보험|4대보험|배달의민족|우아한형제들|요기요|쿠팡이츠|배달|씨유|cu\(|gs25|세븐일레븐|이마트24|편의점|식당|분식|국밥|순대|정육|곱창|치킨|피자|버거|맥도날드|롯데리아|카페|cafe|커피|스타벅스|투썸|빽다방|이디야|메가커피|김밥|칼국수|냉면|중국집|마라|쌀국수|초밥|횟집|고기|구이|백반|한식|일식|중식|장룡|청국장|육개|쌍용각|호텔|숙박|생수|샘물|정수기|해장국|뚝배기|솥뚜껑|김치찌개|찌개|샤브|수산|밥집|식육|족발|보쌈|부대찌개|돈까스|우동|라멘|쌈밥|뷔페|삼겹|갈비|막국수|제과|베이커리|떡집/i],
+  ['복리후생비', /복리|식대|식비|경조|회식|건강보험|국민연금|고용보험|산재|사대보험|4대보험|배달의민족|우아한형제들|요기요|쿠팡이츠|배달|씨유|cu\(|gs25|세븐일레븐|이마트24|편의점|식당|분식|국밥|순대|정육|곱창|치킨|피자|버거|맥도날드|롯데리아|카페(?!\s?24)|cafe|커피|스타벅스|투썸|빽다방|이디야|메가커피|김밥|칼국수|냉면|중국집|마라|쌀국수|초밥|횟집|고기|구이|백반|한식|일식|중식|장룡|청국장|육개|쌍용각|호텔|숙박|생수|샘물|정수기|해장국|뚝배기|솥뚜껑|김치찌개|찌개|샤브|수산|밥집|식육|족발|보쌈|부대찌개|돈까스|우동|라멘|쌈밥|뷔페|삼겹|갈비|막국수|제과|베이커리|떡집/i],
   ['공과금', /전기요금|전기료|전력|한국전력|한전|수도요금|수도료|도시가스|가스요금|상하수도|통신비|인터넷요금|전화요금|관리비|skt|lgu\+?|lg유플|유플러스|sk브로드|통신/i],
   ['임차료', /임차|월세|임대|보증금|렌트|리스|관리사무소/],
   ['세금', /부가세|법인세|소득세|원천|국세|지방세|세무|세금|결산|지방소득|주민세|자동차세/],
