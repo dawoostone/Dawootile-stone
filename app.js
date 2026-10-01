@@ -7866,7 +7866,14 @@ const BKUP_ALIAS = {
   in: ['입금금액', '입금액', '맡기신금액', '입금', '받은금액'],
   out: ['출금금액', '출금액', '찾으신금액', '지급금액', '출금', '보낸금액'],
   bal: ['거래후잔액', '거래후 잔액', '잔액'],          // ★ 읽기만 하고 버린다
-  payer: ['의뢰인명', '의뢰인', '입금자', '보낸분', '기재내용', '거래내용', '내용', '적요'],
+  /* ★ 2026-10-01 — 상대방 «이름» 칸을 먼저 집는다.
+     국민은행 파일에는 「적요」(전자금융)와 「보내신분/받으신분」(신성그룹)이 같이 있는데
+     예전에는 적요를 집어서 거래처를 못 찾았다. 적요는 아래 memo 로 따로 담는다. */
+  payer: ['의뢰인명', '의뢰인', '입금자',
+    '보내신분/받으신분', '받으신분/보내신분', '보낸분/받는분', '받는분/보낸분',
+    '보내신분', '받으신분', '보낸분', '받는분', '거래상대', '상대방', '예금주',
+    '기재내용', '거래기록사항', '거래내용', '내용', '적요'],
+  memo: ['적요', '거래내용', '내용', '비고', '기재내용'],
   acc: ['계좌명', '계좌구분', '계좌번호', '계좌'],
   bank: ['취급점', '취급기관', '상대은행', '거래점', '은행'],
   way: ['거래매체', '거래구분', '매체'],
@@ -7874,7 +7881,7 @@ const BKUP_ALIAS = {
   acct: ['계정과목', '계정', '과목'],
   slip: ['전표번호', '전표']
 };
-const BKUP_KEYS = ['date', 'in', 'out', 'bal', 'payer', 'acc', 'bank', 'way', 'client', 'acct', 'slip', 'time'];
+const BKUP_KEYS = ['date', 'in', 'out', 'bal', 'payer', 'memo', 'acc', 'bank', 'way', 'client', 'acct', 'slip', 'time'];
 function _bkupNorm(s) { return String(s == null ? '' : s).replace(/[\s()（）\[\]·.\-_/]/g, '').toLowerCase(); }
 
 /* 머리글 한 줄 → 어느 칸이 무엇인지 */
@@ -7966,6 +7973,7 @@ function bkupParse(rows) {
       time: map.time != null ? _bkupTime(g(cells, 'time')) : _bkupTime(g(cells, 'date')),
       amount: inv, out: outv,
       payer: gs(cells, 'payer'),
+      memo: gs(cells, 'memo'),
       accName: gs(cells, 'acc'),
       bankNm: gs(cells, 'bank'),
       way: gs(cells, 'way'),
@@ -8067,7 +8075,11 @@ function bkupPick(input) {
         if (body) body.innerHTML = `<div class="banner warn" style="margin-bottom:12px"><i class="ti ti-alert-triangle"></i><span style="flex:1">읽을 줄이 없습니다.</span></div>` + bkupPickHtml();
         input.value = ''; return;
       }
-      _bkup = { name: f.name, parsed: parsed, rev: bkupReview(parsed.items), pick: { fresh: true, maybe: false } };
+      /* ★ 파일에 계좌명 칸이 없으면 사람이 적어 준다 — 안 적으면 계좌가 둘 이상일 때
+         «같은 날·같은 금액·같은 내용» 줄이 서로 덮어쓴다 */
+      parsed.items.forEach(it => { it.accName0 = it.accName || ''; });
+      const hasAcc = parsed.items.some(it => (it.accName || '').trim());
+      _bkup = { name: f.name, parsed: parsed, rev: bkupReview(parsed.items), pick: { fresh: true, maybe: false }, accName: '', needAcc: !hasAcc };
       bkupRender();
     } catch (err) {
       if (body) body.innerHTML = `<div class="banner warn" style="margin-bottom:12px"><i class="ti ti-alert-triangle"></i><span style="flex:1">파일을 읽지 못했습니다 — ${esc((err && err.message) || '')}</span></div>` + bkupPickHtml();
@@ -8077,6 +8089,28 @@ function bkupPick(input) {
   rd.readAsArrayBuffer(f);
 }
 function bkupToggle(k) { if (!_bkup) return; _bkup.pick[k] = !_bkup.pick[k]; bkupRender(); }
+/* 앱에 이미 있는 계좌 이름들 (고를 수 있게) */
+function bkupAccNames() {
+  const m = {};
+  (state.banktx || []).forEach(t => { const v = String(t.accName || '').trim(); if (v) m[v] = 1; });
+  return Object.keys(m).sort((a, b) => a.localeCompare(b, 'ko'));
+}
+/* 계좌 이름을 정하면 줄마다 다시 이름표를 붙인다 (계좌가 다르면 문서이름도 달라진다) */
+function bkupSetAcc(v) {
+  if (!_bkup) return;
+  const nm = String(v == null ? '' : v).trim();
+  _bkup.accName = nm;
+  const seen = new Map();
+  _bkup.parsed.items.forEach(it => {
+    it.accName = nm || it.accName0 || '';
+    const base = _bkupId(it, 0);
+    const n = seen.get(base) || 0; seen.set(base, n + 1);
+    it.id = n ? _bkupId(it, n) : base;
+  });
+  _bkup.rev = bkupReview(_bkup.parsed.items);
+  bkupRender();
+  const e2 = el('bkup-acc'); if (e2) { e2.focus(); try { e2.setSelectionRange(e2.value.length, e2.value.length); } catch (x) { } }
+}
 function bkupCount() {
   if (!_bkup) return 0;
   return (_bkup.pick.fresh ? _bkup.rev.fresh.length : 0) + (_bkup.pick.maybe ? _bkup.rev.maybe.length : 0);
@@ -8087,12 +8121,24 @@ function bkupRender() {
   const accs = bkupByAcc(P.items);
   const won = v => fmtWon(v) + '원';
   const found = BKUP_KEYS.filter(k => P.map[k] != null);
-  const lbl = { date: '거래일자', time: '시각', in: '입금', out: '출금', bal: '잔액', payer: '의뢰인·적요', acc: '계좌명', bank: '취급점', way: '거래매체', client: '거래처', acct: '계정과목', slip: '전표번호' };
+  const lbl = { date: '거래일자', time: '시각', in: '입금', out: '출금', bal: '잔액', payer: '보낸분·받는분', memo: '적요', acc: '계좌명', bank: '취급점', way: '거래매체', client: '거래처', acct: '계정과목', slip: '전표번호' };
   const box = (on, k, n, title, desc, col) => `<label style="display:flex;gap:10px;align-items:flex-start;cursor:${n ? 'pointer' : 'default'};padding:10px 12px;border:1.5px solid ${on && n ? col : 'var(--bd2)'};background:${on && n ? col + '12' : 'transparent'};border-radius:11px;margin-bottom:7px;opacity:${n ? 1 : .5}">
       <input type="checkbox" ${on ? 'checked' : ''} ${n ? '' : 'disabled'} onchange="bkupToggle('${k}')" style="width:18px;height:18px;margin-top:1px;flex:none">
       <span style="flex:1;min-width:0"><b style="font-size:13.5px;color:${col}">${title} ${n}건</b>
         <div style="font-size:11.5px;color:var(--t3);margin-top:2px;line-height:1.55">${desc}</div></span></label>`;
   const pickN = bkupCount();
+  const accNeed = !!_bkup.needAcc && !String(_bkup.accName || '').trim();      // 계좌 이름을 아직 안 적었다
+  const accList = bkupAccNames();
+  const accBox = _bkup.needAcc ? `
+    <div style="border:2px solid ${accNeed ? '#d9a441' : '#a9d8c6'};background:${accNeed ? '#fffaf0' : '#f3fbf7'};border-radius:11px;padding:10px 12px;margin-bottom:11px">
+      <div style="font-size:13px;font-weight:800;color:${accNeed ? '#b45309' : '#0F6E56'};margin-bottom:5px"><i class="ti ti-building-bank"></i> 이 파일은 어느 통장인가요?</div>
+      <div style="font-size:11.5px;color:var(--t3);line-height:1.6;margin-bottom:7px">파일에 계좌 칸이 없습니다. 통장 이름을 적어 주세요 —
+        <b>통장마다 따로 적어야</b> 같은 날·같은 금액이 서로 덮어쓰지 않습니다. (예: 농협 이체통장, 기업 출금계좌)</div>
+      <input id="bkup-acc" list="bkup-acclist" lang="ko" autocomplete="off" value="${esc(_bkup.accName || '')}"
+        onchange="bkupSetAcc(this.value)" placeholder="통장 이름 (예: 농협 이체통장)"
+        style="width:100%;font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:9px">
+      <datalist id="bkup-acclist">${accList.map(n => `<option value="${esc(n)}"></option>`).join('')}</datalist>
+    </div>` : '';
   const accRows = Object.keys(accs).map(k => {
     const o = accs[k];
     return `<tr><td style="white-space:nowrap"><b>${esc(k)}</b><div style="font-size:10.5px;color:var(--t3)">${esc(o.d0)} ~ ${esc(o.d1)}</div></td>
@@ -8105,6 +8151,7 @@ function bkupRender() {
     <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:10px">
       <b style="font-size:14px"><i class="ti ti-file-spreadsheet"></i> ${esc(_bkup.name)}</b>
       <span style="font-size:11.5px;color:var(--t3)">${P.headRow}번째 줄이 머리글 · ${P.items.length}줄을 읽었습니다</span></div>
+    ${accBox}
 
     <div style="font-size:11.5px;color:var(--t3);background:var(--soft);border-radius:9px;padding:8px 11px;margin-bottom:11px;line-height:1.7">
       알아본 칸: ${found.map(k => `<b style="color:${k === 'bal' ? 'var(--t3)' : 'var(--t1)'}">${lbl[k]}${k === 'bal' ? '(버림)' : ''}</b>`).join(' · ')}
@@ -8141,7 +8188,7 @@ function bkupRender() {
     <div id="bkup-st" style="font-size:12px;color:var(--t3);min-height:18px;margin-bottom:6px"></div>
     <div class="frm-foot">
       <button class="btn" style="flex:1" onclick="closeModal()">취소</button>
-      <button class="btn btn-pri" style="flex:1.6" ${pickN ? '' : 'disabled'} onclick="bkupSave()"><i class="ti ti-database-import"></i>${pickN ? pickN + '건 장부에 넣기' : '넣을 건이 없습니다'}</button></div>`;
+      <button class="btn btn-pri" style="flex:1.6" ${pickN && !accNeed ? '' : 'disabled'} onclick="bkupSave()"><i class="ti ti-database-import"></i>${accNeed ? '통장 이름을 적어주세요' : (pickN ? pickN + '건 장부에 넣기' : '넣을 건이 없습니다')}</button></div>`;
 }
 
 /* ★ 실제 저장 — 여기서만 쓴다 */
@@ -8162,7 +8209,7 @@ async function bkupSave() {
   for (const it of list) {
     /* ★ 거래후잔액은 담지 않는다 */
     const row = {
-      date: it.date, dt: it.dt, payer: it.payer, pkey: _bankKey(it.payer),
+      date: it.date, dt: it.dt, payer: it.payer, memo: it.memo || '', pkey: _bankKey(it.payer),
       amount: Math.round(it.amount || 0), out: Math.round(it.out || 0),
       bankNm: it.bankNm || '', way: it.way || '',
       accName: it.accName || '', slip: it.slip || '',
@@ -11498,7 +11545,10 @@ function acctOf(t) {
   if (al) return { cat: al, sure: true };
   /* ★ 적요(상대방 이름)만 본다. 이체 수단(way)에는 '인터넷'·'펌뱅킹'이 들어 있어서
      같이 보면 인터넷뱅킹 이체가 전부 공과금으로 잡힌다 (실측 45건 7.3억 오분류). */
-  const hay = String((t && t.payer) || '');
+  /* ★ 2026-10-01 — 은행 파일은 이름 칸과 적요 칸이 따로다.
+     「김홍수 / 9월 운반비」처럼 적요에 쓸모 있는 말이 있으면 같이 본다.
+     (거래매체(way)는 여전히 안 본다 — 인터넷뱅킹이 전부 공과금으로 잡혔던 적이 있다) */
+  const hay = String((t && t.payer) || '') + ' ' + String((t && t.memo) || '');
   for (const [cat, re] of ACCT_RULES) { if (re.test(hay)) return { cat: cats.indexOf(cat) >= 0 ? cat : '기타', sure: false }; }
   return { cat: '', sure: false };     // 미분류 — 화면에서 따로 모아 보여준다
 }
@@ -11540,7 +11590,7 @@ function acctListInner() {
   if (qy) {
     const amtP = quoteAmtPred(filters.acctSearch);
     list = list.filter(t => {
-      const hay = [t.payer, t.bankNm, t.way, t.date, acctCatOf(t)].join(' ').toLowerCase();
+      const hay = [t.payer, t.memo, t.accName, t.bankNm, t.way, t.date, acctCatOf(t)].join(' ').toLowerCase();
       if (hay.indexOf(qy) >= 0) return true;
       const v = txMoney(t);
       return !!(amtP && amtP.test({ total: v, supply: v }));
@@ -11555,7 +11605,7 @@ function acctListInner() {
     const a = acctOf(t);
     return `<tr>
       <td style="white-space:nowrap;color:var(--t3)">${esc(String(t.dt || t.date || '').slice(2))}</td>
-      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(t.payer || '')}"><b>${esc(t.payer || '(적요 없음)')}</b>${t.bankNm ? ` <span style="color:var(--t3);font-size:11.5px">${esc(t.bankNm)}</span>` : ''}</td>
+      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc([t.payer, t.memo, t.accName].filter(Boolean).join(' · '))}"><b>${esc(t.payer || t.memo || '(적요 없음)')}</b>${t.bankNm ? ` <span style="color:var(--t3);font-size:11.5px">${esc(t.bankNm)}</span>` : ''}${(t.memo && t.memo !== t.payer) || t.accName ? `<div style="font-size:10.5px;color:var(--t3)">${esc([t.memo && t.memo !== t.payer ? t.memo : '', t.accName].filter(Boolean).join('  ·  '))}</div>` : ''}</td>
       <td style="text-align:right;white-space:nowrap;font-weight:700;color:var(--red-t)">${fmtWon(txMoney(t))}</td>
       <td style="white-space:nowrap">${opt(t, a.cat)}${a.cat && !a.sure ? ' <span class="pill" style="background:#fff7e6;color:#b45309;border:1px solid #f0d9a8;font-size:10px" title="적요를 보고 앱이 추정한 것 — 맞으면 그냥 두세요">추정</span>' : ''}</td>
     </tr>`;
