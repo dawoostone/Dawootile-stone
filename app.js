@@ -152,7 +152,7 @@ function quoteFormCat(v) {
   if (set.indexOf('세면대') >= 0 && set.indexOf('세라믹') < 0) return '세면대';
   return QCATS.indexOf(c) >= 0 ? c : '세라믹';
 }
-async function saveItemCat(name, cat) { const pl = (state.priceList || []).find(p => _normName(p.itemName) === _normName(name)); if (pl) await Store.update('priceList', pl.id, { cat: cat }); else await Store.add('priceList', { itemName: name, cat: cat, dist: 0, agency: 0, interior: 0, consumer: 0 }); }
+async function saveItemCat(name, cat) { await plSave(name, { cat: cat }, 'hand'); }
 
 // 로컬(미리보기) 모드용 - 같은 기기의 다른 탭끼리 실시간 반영
 const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('dws') : null;
@@ -10556,21 +10556,57 @@ function plRowHints(row, name) {
     if (!(g('qsp-sin') > 0)) { const d = row.querySelector('.qsp-m2[data-for="qsp-sin"]'); if (d) d.textContent = plM2Text(hint, a); }
   }
 }
+/* ══════════════════════════════════════════════════════════
+   ★★ 단가 저장 — 2026-10-02
+   사용자: "단가가 계속 바뀌는 것 같은데 기준단가가 바뀌면 안됨"
+   예전에는 한 칸만 고쳐도 «그 줄의 모든 칸»을 한꺼번에 덮어써서,
+   다른 사람이(또는 다른 기기에서) 방금 고친 값이 내 화면의 옛 값으로
+   되돌아갔다. 이제는 «내가 고친 칸 하나»만 저장한다.
+   그리고 누가·언제·어떻게 고쳤는지를 같이 남겨 화면에 보여준다.
+   ══════════════════════════════════════════════════════════ */
+const PL_CELL = { agency: 'qsp-agy', dist: 'qsp-dist', interior: 'qsp-int', consumer: 'qsp-con', sinsung: 'qsp-sin', hyundai: 'qsp-hyu', special: 'qsp-spc', cost: 'qsp-cost' };
+const _plNewId = {};   // 방금 만든 줄의 id — 목록이 새로 내려오기 전에 또 만들지 않게 (줄 중복 방지)
+async function plSave(itemName, patch, how) {
+  const nm = String(itemName == null ? '' : itemName).trim();
+  if (!nm || !patch || !Object.keys(patch).length) return null;
+  patch.updatedAt = Date.now();
+  patch.updatedBy = String((typeof me !== 'undefined' && me && me.name) || '');
+  patch.updatedHow = how || '';
+  const key = _normName(nm);
+  const pl = (state.priceList || []).find(p => _normName(p.itemName) === key);
+  const id = (pl && pl.id) || _plNewId[key];
+  if (id) { await Store.update('priceList', id, patch); return id; }
+  const nid = await Store.add('priceList', Object.assign({ itemName: nm, dist: 0, agency: 0, interior: 0, consumer: 0, sinsung: 0, hyundai: 0 }, patch));
+  if (nid) _plNewId[key] = nid;
+  return nid;
+}
+function plStampText(pl) {
+  const t = +((pl || {}).updatedAt) || 0; if (!t) return '';
+  const d = new Date(t);
+  const who = String((pl || {}).updatedBy || '').trim();
+  const how = String((pl || {}).updatedHow || '').trim();
+  return '고침 ' + (d.getMonth() + 1) + '/' + d.getDate() + (who ? ' ' + who : '') + (how === 'excel' ? ' (엑셀)' : '');
+}
 async function savePriceRow(itemName, changed) {
   const row = document.querySelector(`.qs-prow[data-nm="${CSS.escape(itemName)}"]`); if (!row) return;
-  /* ★ 12T — 인테리어 단가를 고치면 «인테리어 − 헤베당 20,000» 을 유통 칸에 넣는다 */
+  const patch = {};
+  const put = f => {
+    if (f === 'cost' && !isAdmin()) return;                       // 원가는 관리자만 저장
+    const e = row.querySelector('.' + PL_CELL[f]); if (!e) return;
+    patch[f] = _numv(e.value);
+  };
+  if (changed && PL_CELL[changed]) put(changed);                   // ★ 고친 칸 하나만
+  else Object.keys(PL_CELL).forEach(put);                          // 칸 이름이 안 넘어온 옛 호출은 예전처럼
+  /* ★ 12T 유통단가 — «유통 칸이 비어 있을 때만» 채운다.
+     이미 적어 둔 유통 단가(기준단가)는 절대 덮어쓰지 않는다. */
   if (changed === 'interior') {
-    const _d = plDistFrom12T(itemName, _numv(row.querySelector('.qsp-int').value));
     const _de = row.querySelector('.qsp-dist');
-    if (_d > 0 && _de) _de.value = _d;
+    if (_de && !(_numv(_de.value) > 0)) {
+      const _d = plDistFrom12T(itemName, _numv(row.querySelector('.qsp-int').value));
+      if (_d > 0) { _de.value = _d; patch.dist = _d; }
+    }
   }
-  const patch = { dist: _numv(row.querySelector('.qsp-dist').value), agency: _numv(row.querySelector('.qsp-agy').value), interior: _numv(row.querySelector('.qsp-int').value), consumer: _numv(row.querySelector('.qsp-con').value) };
-  const sinEl = row.querySelector('.qsp-sin'); if (sinEl) patch.sinsung = _numv(sinEl.value);
-  const hyuEl = row.querySelector('.qsp-hyu'); if (hyuEl) patch.hyundai = _numv(hyuEl.value);
-  const spcEl = row.querySelector('.qsp-spc'); if (spcEl) patch.special = _numv(spcEl.value);
-  const costEl = row.querySelector('.qsp-cost'); if (costEl && isAdmin()) patch.cost = _numv(costEl.value);   // 원가는 관리자만 저장
-  const pl = (state.priceList || []).find(p => _normName(p.itemName) === _normName(itemName));
-  if (pl) await Store.update('priceList', pl.id, patch); else await Store.add('priceList', Object.assign({ itemName, dist: 0, agency: 0, interior: 0, consumer: 0, sinsung: 0, hyundai: 0 }, patch));
+  await plSave(itemName, patch, 'hand');
   plRowHints(row, itemName);
   const ok = row.querySelector('.qsp-ok'); if (ok) { ok.style.opacity = 1; setTimeout(() => { ok.style.opacity = 0; }, 1200); }
 }
@@ -10619,8 +10655,7 @@ function priceListImport(input) {
         if (map.cost != null && adm) { const cv = _numv(cells[map.cost]); if (cv > 0) patch.cost = cv; }   // 원가는 관리자만
         if (map.spec != null) { const sp = String(cells[map.spec] == null ? '' : cells[map.spec]).trim(); if (sp) patch.spec = sp; }
         if (!Object.keys(patch).length) continue;
-        const pl = (state.priceList || []).find(p => _normName(p.itemName) === _normName(name));
-        if (pl) await Store.update('priceList', pl.id, patch); else await Store.add('priceList', Object.assign({ itemName: name, dist: 0, agency: 0, interior: 0, consumer: 0 }, patch));
+        await plSave(name, patch, 'excel');     // ★ 엑셀로 고친 것도 «누가 언제»를 남긴다
         n++;
       }
       toast(n ? (n + '개 자재 단가 반영됨') : '반영된 행이 없습니다 (열 이름 확인)'); input.value = ''; setTimeout(() => { if (filters.quoteSettings) renderQuoteSettings(); }, 400);
@@ -10655,19 +10690,24 @@ function _qsPriceRowsHtml() {
   const inp = 'width:100%;font-size:13px;padding:7px 4px;border:1.5px solid var(--bd2);border-radius:8px;text-align:right';
   const m2s = 'font-size:10px;color:var(--t3);text-align:right;margin-top:2px;min-height:12px;white-space:nowrap';
   const cols = adm ? 9 : 8;   // 자재 + 대리점·유통·인테리어·소비자·신성그룹·현대엘앤씨 (+원가) + 버튼
-  return mats.slice(0, 150).map(i => { const pl = (state.priceList || []).find(p => _normName(p.itemName) === _normName(i.name)) || {}; const nm = esc(i.name).replace(/'/g, "\\'");
+  /* ★ 2026-10-02 — 예전에는 150개만 그려서 재고 품목 63개가 목록에 안 보였다.
+     사용자: "지금 재고 있는 제품 전부 견적서 설정에서 단가 설정할 수 있게 되어있는 거 맞는지?"
+     → 전부 그린다. */
+  return mats.map(i => { const pl = (state.priceList || []).find(p => _normName(p.itemName) === _normName(i.name)) || {}; const nm = esc(i.name).replace(/'/g, "\\'");
     const _a = itemAreaM2(i.name);
     const _sin = plSinHint(i.name, pl);
     /* 한 칸 = 숫자 입력 + 그 밑에 헤베당 금액 (보기 전용) */
+    /* tag = 그 칸의 이름 — 저장할 때 «이 칸만» 고치려고 넘긴다 */
     const cel = (cls, val, sty, tag) => `<td><input class="${cls}" inputmode="numeric" value="${esc(val || '')}" onchange="savePriceRow('${nm}'${tag ? ",'" + tag + "'" : ''})" style="${inp}${sty || ''}"><div class="qsp-m2" data-for="${cls}" style="${m2s}">${plM2Text(val, _a)}</div></td>`;
-    const _cat = itemCategory(i.name); return `<tr class="qs-prow" data-nm="${esc(i.name)}"><td style="text-align:left"><b>${esc(i.name)}</b>${i.spec ? `<div style="font-size:10.5px;color:var(--t3)">${esc(i.spec)}</div>` : ''}${_a > 0 ? `<div style="font-size:10px;color:var(--t3)">한 장 ${_a.toFixed(2)}㎡</div>` : ''}<select onchange="saveItemCat('${nm}',this.value)" style="margin-top:3px;font-size:10.5px;padding:2px 4px;border:1px solid var(--bd2);border-radius:6px;color:var(--t2)">${LCATS.map(cc => `<option ${_cat === cc ? 'selected' : ''}>${cc}</option>`).join('')}</select></td>
-      ${cel('qsp-agy', pl.agency)}
-      ${cel('qsp-dist', pl.dist)}
+    const _stamp = plStampText(pl);
+    const _cat = itemCategory(i.name); return `<tr class="qs-prow" data-nm="${esc(i.name)}"><td style="text-align:left"><b>${esc(i.name)}</b>${i.spec ? `<div style="font-size:10.5px;color:var(--t3)">${esc(i.spec)}</div>` : ''}${_a > 0 ? `<div style="font-size:10px;color:var(--t3)">한 장 ${_a.toFixed(2)}㎡</div>` : ''}${_stamp ? `<div style="font-size:10px;color:var(--t3)" title="단가를 마지막으로 고친 사람·날짜">${esc(_stamp)}</div>` : ''}<select onchange="saveItemCat('${nm}',this.value)" style="margin-top:3px;font-size:10.5px;padding:2px 4px;border:1px solid var(--bd2);border-radius:6px;color:var(--t2)">${LCATS.map(cc => `<option ${_cat === cc ? 'selected' : ''}>${cc}</option>`).join('')}</select></td>
+      ${cel('qsp-agy', pl.agency, '', 'agency')}
+      ${cel('qsp-dist', pl.dist, '', 'dist')}
       ${cel('qsp-int', pl.interior, '', 'interior')}
-      ${cel('qsp-con', pl.consumer)}
-      <td><input class="qsp-sin" inputmode="numeric" value="${esc(pl.sinsung || '')}" placeholder="${_sin > 0 ? fmtWon(_sin) : ''}" onchange="savePriceRow('${nm}')" style="${inp};background:#f7f5ff;border-color:#cdc4f0"><div class="qsp-m2" data-for="qsp-sin" style="${m2s}">${plM2Text((+pl.sinsung || 0) || _sin, _a)}</div></td>
-      ${cel('qsp-hyu', pl.hyundai, ';background:#f7f5ff;border-color:#cdc4f0')}
-      ${adm ? cel('qsp-cost', pl.cost, ';background:#fff6f6;border-color:#e6b0b0') : ''}
+      ${cel('qsp-con', pl.consumer, '', 'consumer')}
+      <td><input class="qsp-sin" inputmode="numeric" value="${esc(pl.sinsung || '')}" placeholder="${_sin > 0 ? fmtWon(_sin) : ''}" onchange="savePriceRow('${nm}','sinsung')" style="${inp};background:#f7f5ff;border-color:#cdc4f0"><div class="qsp-m2" data-for="qsp-sin" style="${m2s}">${plM2Text((+pl.sinsung || 0) || _sin, _a)}</div></td>
+      ${cel('qsp-hyu', pl.hyundai, ';background:#f7f5ff;border-color:#cdc4f0', 'hyundai')}
+      ${adm ? cel('qsp-cost', pl.cost, ';background:#fff6f6;border-color:#e6b0b0', 'cost') : ''}
       <td style="width:46px;white-space:nowrap;text-align:center;vertical-align:top;padding-top:11px"><i class="ti ti-check qsp-ok" style="color:var(--gd);opacity:0;transition:opacity .2s"></i>${pl.id ? `<i class="ti ti-trash" onclick="deletePriceRow('${pl.id}','${nm}')" title="단가 삭제" style="color:#c0341d;cursor:pointer;margin-left:8px;font-size:16px"></i>` : ''}</td></tr>`; }).join('') || `<tr><td colspan="${cols}"><div class="empty" style="padding:14px">자재가 없습니다</div></td></tr>`;
 }
 function qsFilterClients(v) { filters.qsClientSearch = v; const c = el('qs-clients'); if (c) c.innerHTML = _qsClientRowsHtml(); }
@@ -10735,7 +10775,7 @@ function renderQuoteSettings() {
           <b style="color:#5847b8">신성그룹·현대엘앤씨</b> 칸을 <b>비워 두면</b> 신성그룹은 <b>유통가 기준</b>(−7,000원/㎡ 규칙), 현대엘앤씨는 <b>대리점가</b>로 나갑니다. PDF는 자동 인식이 안 되니 엑셀/CSV로 올려주세요.</div>
         <div style="font-size:11px;color:#8a5a00;background:#fff8ec;border:1px solid #f0dcb8;border-radius:8px;padding:7px 9px;margin-bottom:8px;line-height:1.55">
           숫자는 <b>한 장 값</b>입니다. 칸 아래 작은 글씨가 <b>헤베(㎡)당 금액</b>이에요. <b>12T 한 장 5.12㎡ · 6T 한 장 3.24㎡</b><br>
-          · <b>12T 유통단가</b> — 인테리어 단가를 고치면 <b>인테리어 − 헤베당 20,000원</b>으로 유통 칸이 자동으로 채워집니다.<br>
+          · <b>12T 유통단가</b> — 유통 칸이 <b>비어 있을 때만</b> <b>인테리어 − 헤베당 20,000원</b>으로 채워집니다. <b>이미 적어 둔 유통 단가는 바뀌지 않습니다.</b><br>
           · <b>신성그룹</b> — 비워 두면 <b>유통 − 헤베당 7,000원</b>으로 나갑니다. 칸에 흐리게 보이는 숫자가 그 금액입니다.</div>
         <div class="search-box" style="margin-bottom:8px"><i class="ti ti-search"></i><input placeholder="자재명·규격 검색" value="${esc(filters.qsMatSearch || '')}" oninput="qsFilterPrices(this.value)" autocomplete="off" lang="ko"></div>
         <div data-keepscroll id="qs-prices" style="max-height:52vh;overflow:auto">
@@ -10743,7 +10783,7 @@ function renderQuoteSettings() {
             /* ★ 표제 줄은 스크롤을 내려도 맨 위에 붙어 있는다 (2026-09-28)
                사용자: "자재별 유형단가에서 맨위에 표제 … 스크롤 내려도 따라다니게 해줘" */
             const _st = 'position:sticky;top:0;z-index:3;background:var(--card,#fff);border-bottom:1.5px solid var(--bd)';
-            const _h = [['자재', 'text-align:left'], ['대리점', ''], ['유통', '', '12T는 인테리어 − 헤베당 20,000원'],
+            const _h = [['자재', 'text-align:left'], ['대리점', ''], ['유통', '', '12T는 비어 있을 때만 「인테리어 − 헤베당 20,000원」으로 채워집니다 (이미 적힌 값은 안 바뀜)'],
               ['인테리어', ''], ['소비자', ''],
               ['신성그룹', 'color:#5847b8;white-space:nowrap', '비워 두면 유통가 기준(−7,000원/㎡ 규칙)으로 나갑니다'],
               ['현대엘앤씨', 'color:#5847b8;white-space:nowrap', '비워 두면 대리점가로 나갑니다']];
@@ -10752,7 +10792,13 @@ function renderQuoteSettings() {
             return _h.map(x => `<th style="${_st};${x[1] || ''}"${x[2] ? ` title="${esc(x[2])}"` : ''}>${x[0]}</th>`).join('');
           })()}</tr></thead><tbody>${_qsPriceRowsHtml()}</tbody></table>
         </div>
-        <div style="font-size:11px;color:var(--t3);margin-top:6px">단가는 칸을 벗어나면(Tab/클릭) 자동 저장됩니다. 상위 120개 표시 — 검색으로 좁혀주세요.</div>
+        <div style="font-size:11px;color:var(--t3);margin-top:6px">${(() => {
+          /* ★ 재고·단가표에 있는 품목이 몇 개이고, 그중 단가가 비어 있는 게 몇 개인지 알려준다 */
+          const _all = quotePriceItems().filter(i => !isCustomBasin(i.name));
+          const _emp = _all.filter(i => { const p = (state.priceList || []).find(x => _normName(x.itemName) === _normName(i.name)) || {}; return !((+p.dist || 0) || (+p.agency || 0) || (+p.interior || 0) || (+p.consumer || 0)); }).length;
+          return '단가는 칸을 벗어나면(Tab/클릭) <b>고친 칸만</b> 저장됩니다 — 다른 사람이 같이 고쳐도 서로 지워지지 않습니다.<br>재고·단가표 품목 <b>' + _all.length + '개 전부</b> 표시 중'
+            + (_emp ? ' · 그중 <b style="color:#c0341d">' + _emp + '개는 단가가 아직 비어 있습니다</b>' : ' · 모두 단가가 들어 있습니다') + '.';
+        })()}</div>
       </div>
     </div>`;
 }
