@@ -15928,10 +15928,12 @@ function bdTapPosText(d) {
   const p = (d && d.tapPos) || 'back';
   const n = bdTapN(d), DT = bdTapDirText(d);
   /* ★ 간격은 따로 한 줄로 적는다 — 여기에 다 넣으면 사양 칸 글씨가 겹친다 */
-  if (p === 'left') return n > 1 ? ['볼 왼쪽 옆 · ' + n + '개 (' + DT[0] + ')', '盆左侧 · ' + n + '孔（' + DT[1] + '）'] : ['볼 왼쪽 옆', '盆左侧'];
-  if (p === 'right') return n > 1 ? ['볼 오른쪽 옆 · ' + n + '개 (' + DT[0] + ')', '盆右侧 · ' + n + '孔（' + DT[1] + '）'] : ['볼 오른쪽 옆', '盆右侧'];
-  if (p === 'side') return n > 1 ? ['볼 양옆 · 한쪽 ' + n + '개 (' + DT[0] + ')', '盆左右两侧 · 每侧' + n + '孔（' + DT[1] + '）'] : ['볼 양옆 (좌·우)', '盆左右两侧'];
-  return n > 1 ? ['볼 뒤쪽 · ' + n + '개 (좌우)', '盆后 · ' + n + '孔（左右）']
+  /* ★ 글귀의 앞부분은 늘 «출수구 자리», 뒤에 손잡이 개수를 붙인다 */
+  const H = n - 1;
+  if (p === 'left') return n > 1 ? ['볼 왼쪽 옆 + 손잡이 ' + H + '개', '盆左侧 + 把手' + H + '孔'] : ['볼 왼쪽 옆', '盆左侧'];
+  if (p === 'right') return n > 1 ? ['볼 오른쪽 옆 + 손잡이 ' + H + '개', '盆右侧 + 把手' + H + '孔'] : ['볼 오른쪽 옆', '盆右侧'];
+  if (p === 'side') return n > 1 ? ['볼 양옆 · 쪽마다 손잡이 ' + H + '개', '盆左右两侧 · 每侧把手' + H + '孔'] : ['볼 양옆 (좌·우)', '盆左右两侧'];
+  return n > 1 ? ['볼 뒤쪽 가운데 + 손잡이 ' + H + '개', '盆后居中 + 把手' + H + '孔']
     : ['볼 뒤쪽 가운데', '盆后中央'];
 }
 /* 사양 칸에 적을 «Ø35 × 2개» / «Ø35 × 1 + Ø25 × 1» */
@@ -15948,7 +15950,24 @@ function bdTapGap(d) {
   const v = Math.round(+((d && d.tapGap) || 0)) || 150;
   return Math.max(dia + 10, v);
 }
-/* 가운데를 기준으로 n개를 간격 gap 으로 줄 세운 좌표들 */
+/* ══════════════════════════════════════════════════════════
+   ★★ 2026-10-02 (3차) — «수전 출수구는 세면대 한가운데에 하나»
+   사용자: "수전 출수구가 세면대의 센터로 하나가 와야된다고 기본적으로"
+   예전에는 구멍 2개를 센터 양쪽으로 갈라 놓아서 «출수구가 센터에 없었다».
+   ★ 이제 센터(0)에 출수구가 반드시 하나 오고, 손잡이가 그 옆에 붙는다.
+       1개 → 　　　◉          (출수구만)
+       2개 → 　　　◉ ○        (출수구 + 오른쪽 손잡이)
+       3개 → 　○　◉ ○        (출수구 + 좌·우 손잡이 — 3홀 수전)
+       4개 → 　○　◉ ○ ○
+   돌아오는 숫자는 «센터에서 몇 칸 떨어졌는지»다 (0 = 센터 = 출수구).
+   ══════════════════════════════════════════════════════════ */
+function bdTapOffsets(n) {
+  if (n <= 1) return [0];
+  if (n === 2) return [0, 1];
+  if (n === 3) return [-1, 0, 1];
+  return [-1, 0, 1, 2];
+}
+/* 가운데를 기준으로 n개를 간격 gap 으로 줄 세운 좌표들 (옛 호환 — 지금은 안 씀) */
 function bdTapLine(center, n, gap) {
   const out = []; const st = center - gap * (n - 1) / 2;
   for (let i = 0; i < n; i++) out.push(st + gap * i);
@@ -15967,11 +15986,11 @@ function bdTapSpots(d, A, bx0) {
     const put = (dir, sd) => {
       const edge = dir < 0 ? bx0 : bx0 + (+A.bl || 0);            // 볼 왼쪽 / 오른쪽 모서리
       if (lr) {
-        /* ★ 좌우로 줄 — 수전이 볼에서 away, 손잡이는 거기서 «바깥쪽»으로 간격만큼 */
-        for (let i = 0; i < n; i++) out.push({ x: edge + dir * (away + gap * i), y: cy, side: sd, dia: i === 0 ? d1 : d2 });
+        /* ★ 좌우로 줄 — 출수구가 볼에서 away(앞뒤 한가운데), 손잡이는 거기서 «바깥쪽»으로 간격만큼 */
+        for (let i = 0; i < n; i++) out.push({ x: edge + dir * (away + gap * i), y: cy, side: sd, dia: i === 0 ? d1 : d2, main: i === 0 });
       } else {
-        /* 앞뒤로 줄 — 볼 한가운데 높이를 가운데로 두고 위아래로 벌린다 */
-        bdTapLine(cy, n, gap).forEach((y, i) => out.push({ x: edge + dir * away, y: y, side: sd, dia: i === 0 ? d1 : d2 }));
+        /* 앞뒤로 줄 — 출수구가 볼 한가운데 높이, 손잡이가 그 앞뒤로 */
+        bdTapOffsets(n).forEach(k => out.push({ x: edge + dir * away, y: cy + k * gap, side: sd, dia: k === 0 ? d1 : d2, main: k === 0 }));
       }
     };
     if (p !== 'right') put(-1, 'L');
@@ -15981,8 +16000,8 @@ function bdTapSpots(d, A, bx0) {
   /* ★ 뒤쪽 타공 높이는 예전 규칙을 그대로 쓴다 —
      옛 도면은 «뒤 모서리에서 N»(tapFromBack)으로 저장돼 있어서, 그걸 지켜야 그림이 안 바뀐다 */
   const y = Math.max(0, bdTapPos(d, A).fromBack);
-  const cx = bx0 + (+A.bl || 0) / 2;
-  return bdTapLine(cx, n, gap).map((x, i) => ({ x: x, y: y, side: 'B', dia: i === 0 ? d1 : d2 }));
+  const cx = bx0 + (+A.bl || 0) / 2;                 // ★ 볼 좌우 한가운데 = 수전 출수구 자리
+  return bdTapOffsets(n).map(k => ({ x: cx + k * gap, y: y, side: 'B', dia: k === 0 ? d1 : d2, main: k === 0 }));
 }
 /* 타공이 판 안에 들어가나 — 안 들어가면 화면에서 알려 준다 */
 function bdTapFits(d, A) {
@@ -16279,7 +16298,12 @@ function basinDrawSvg(d, lang) {
     }
     if (d.tap) {
       const _spA = bdTapSpots(d, A, bx0);
-      const _d2i = _spA.findIndex(z => (+z.dia || 0) !== (+_spA[0].dia || 0));   // 지름이 다른 첫 구멍
+      const _mi = Math.max(0, _spA.findIndex(z => z.main));                      // 출수구(수전)
+      /* ★ 손잡이 Ø 글씨는 «가장 바깥쪽» 손잡이에서 뽑는다 — 가운데서 뽑으면 치수·구멍과 겹친다 */
+      let _d2i = -1;
+      for (let _k = _spA.length - 1; _k >= 0; _k--) {
+        if (!_spA[_k].main && (+_spA[_k].dia || 0) !== (+(_spA[_mi] || {}).dia || 0)) { _d2i = _k; break; }
+      }
       _spA.forEach((sp, si) => {
         const fr = Math.max(4, (+sp.dia || 35) / 2 * sc);
         const tx = px + sp.x * sc, ty2 = py + sp.y * sc;
@@ -16289,9 +16313,9 @@ function basinDrawSvg(d, lang) {
         /* ★ 2026-10-02 — 뒤 여백이 좁으면 Ø 글씨를 «옆»으로 뺀다.
            위로 빼면 판 위쪽 기장 치수선(435·800·435)과 글씨가 겹친다. */
         const _tight = (sp.side === 'B') && (ty2 - py < 56);
-        if (bi === 0 && si === 0) s += _bdLead(tx, ty2, fr, -80, _tight ? 0 : -30, 'Ø' + (+sp.dia || 35), { fs: 12.5 });
+        if (bi === 0 && si === _mi) s += _bdLead(tx, ty2, fr, -80, _tight ? 0 : -30, 'Ø' + (+sp.dia || 35), { fs: 12.5 });
         /* ★ 손잡이 구멍 Ø 글씨는 «바깥쪽»으로 뺀다 — 안쪽으로 빼면 볼 선·치수와 겹친다 */
-        else if (bi === 0 && si === _d2i) s += _bdLead(tx, ty2, fr, sp.side === 'L' ? -62 : 62, sp.side === 'B' ? (_tight ? 0 : -30) : -54, 'Ø' + (+sp.dia || 35), { fs: 12.5 });
+        else if (bi === 0 && si === _d2i) s += _bdLead(tx, ty2, fr, sp.side === 'L' ? -62 : (sp.side === 'B' ? 96 : 62), sp.side === 'B' ? (_tight ? 0 : -30) : -54, 'Ø' + (+sp.dia || 35), { fs: 12.5 });
       });
     }
   });
@@ -16329,7 +16353,7 @@ function basinDrawSvg(d, lang) {
       const bowlL = px + A.xs[0] * sc, bowlR = px + (A.xs[0] + A.bl) * sc;
       ['L', 'R'].forEach(sd => {
         const ps = _sp.filter(z => z.side === sd); if (!ps.length) return;
-        const p0 = ps[0];                                     // 볼에서 가장 가까운 구멍 = 수전
+        const p0 = ps.filter(z => z.main)[0] || ps[0];         // 볼에서 가장 가까운 구멍 = 출수구
         const tx = px + p0.x * sc, ty = py + p0.y * sc;
         if (sd === 'L') s += _bdDimH(tx, bowlL, ty + 52, String(Math.round(A.xs[0] - p0.x)), { from: ty, fs: 13.5 });
         else s += _bdDimH(bowlR, tx, ty + 52, String(Math.round(p0.x - (A.xs[0] + A.bl))), { from: ty, fs: 13.5 });
@@ -16778,6 +16802,7 @@ function basinDrawPreview() {
         + ` · <b>${esc(bdTapPosText(d)[0])}</b> · 모두 <b>볼 1개당 ${nT}개</b>`
         + (nT > 1 ? ` · <b>${bdTapDirText(d)[0]}</b>로 줄 섭니다 · 간격 <b>${Math.round(bdTapGap(d))}</b>` : '')
         + (bdTapSide(d) ? ` · 구멍은 모두 <b>볼 앞뒤 한가운데</b> 높이` : '')
+        + `<div style="margin-top:2px;color:#0F6E56">출수구(수전)는 <b>${bdTapSide(d) ? '볼 앞뒤 한가운데' : '세면대 좌우 한가운데'}</b>에 <b>하나</b>` + (nT > 1 ? `, 손잡이 <b>${nT - 1}개</b>가 그 옆에 붙습니다` : '') + `</div>`
         + (bdTapDia2(d) !== bdTapDia1(d) ? ` · 손잡이 구멍 <b>Ø${bdTapDia2(d)}</b>` : '')
         + (F.ok ? '' : `<div style="margin-top:3px;color:#b42318;font-weight:700">— ${esc(F.why)}</div>`);
     }
