@@ -9814,15 +9814,24 @@ function _packOrderG(order, Ws, Hs, kerf, mode) {
     _gMerge(sh.free, kerf);
     return true;
   }
+  /* ★★ 2026-10-02 — 판재에 «안 들어가는» 부재 처리 (사용자: 커팅플랜 오류 제보)
+     예전에는 안 들어가는 부재를 판재 크기로 «잘라서» (0,0) 에 억지로 올려 놓았다.
+     그런데 그 조각은 빈자리 목록(free)을 전혀 차지하지 않아서, **같은 자리에 다른 조각이
+     또 놓였다.** 실제로 660×1823(결방향·회전금지) 가 3200×1600 판재에 들어가지 않자
+     660×1600 으로 잘려 (0,0) 에 놓이고, 그 위에 400×1395 가 겹쳐 놓였다.
+     화면에는 분홍 상자 하나만 보이고 조각수·판재수·남는 부분이 전부 틀렸다.
+     ★ 이제는 올리지 않고 «못 들어간 부재» 목록으로 빼서 빨간 경고로 알린다. */
+  const noFit = [];
   for (const pc of order) {
     let ok = false;
     for (const sh of sheets) { if (place(sh, pc)) { ok = true; break; } }
     if (!ok) {
       const sh = { placed: [], cuts: [], free: [{ x: 0, y: 0, w: Ws, h: Hs }] };
       sheets.push(sh);
-      if (!place(sh, pc)) sh.placed.push({ x: 0, y: 0, l: Math.min(pc.l, Ws), w: Math.min(pc.w, Hs), idx: pc.idx, subs: pc.subs, rot: pc.rot !== false, over: true, realL: pc.l, realW: pc.w });
+      if (!place(sh, pc)) { sheets.pop(); noFit.push(pc); }     // 빈 판재는 도로 치운다
     }
   }
+  sheets.noFit = noFit;
   return sheets;
 }
 function _packPieces(Ws, Hs, pieces, kerf) {
@@ -9839,7 +9848,9 @@ function _packPieces(Ws, Hs, pieces, kerf) {
     for (const mode of ['auto', 'H', 'V']) {          // 자르는 방향까지 바꿔가며 가장 잘 나오는 걸 고른다
       const sheets = _packOrderG(order, Ws, Hs, kerf, mode);
       let freeArea = 0; sheets.forEach(sh => sh.free.forEach(f => freeArea += f.w * f.h));
-      if (!best || sheets.length < best.n || (sheets.length === best.n && freeArea < best.fa)) best = { n: sheets.length, fa: freeArea, sheets };
+      const nf = (sheets.noFit || []).length;                  // ★ 못 들어간 부재가 적은 배치를 가장 먼저 친다
+      if (!best || nf < best.nf
+        || (nf === best.nf && (sheets.length < best.n || (sheets.length === best.n && freeArea < best.fa)))) best = { nf: nf, n: sheets.length, fa: freeArea, sheets: sheets };
     }
   }
   return best.sheets;
@@ -10013,6 +10024,36 @@ function _cutDown(e) {
 /* ★★ 2026-09-28 — 커팅플랜 총 조각수 (사용자: *"커팅플랜에 총 조각수도 확인할 수 있게 해줘"*)
    ★ 무늬연결 블록은 «한 덩어리»로 놓이지만 실제로 자르는 조각은 그 안에 여러 장이다.
      그래서 블록 안의 장수(subs)를 풀어서 센다 — 공장에서 자를 «진짜 조각 수»가 나온다. */
+/* ══════════════════════════════════════════════════════════
+   ★★ 커팅플랜 자가 검사 (2026-10-02)
+   공장에 그대로 나가는 그림이라 «조용히 틀리는 것»이 가장 위험하다.
+   그릴 때마다 아래 세 가지를 직접 재 본다.
+     ① 조각이 판재 밖으로 나가지 않는가
+     ② 조각끼리 겹치지 않는가 (톱날 두께는 배치 때 이미 띄웠다)
+     ③ «남는 부분»이 조각과 겹치지 않는가 (로스 계산이 틀어진다)
+   하나라도 걸리면 화면 맨 위에 빨간 경고를 띄운다.
+   ══════════════════════════════════════════════════════════ */
+function cutPlanAudit(sheets, Ws, Hs) {
+  const out = [];
+  const ov = (a, b) => a.x < b.x + b.l - 0.01 && b.x < a.x + a.l - 0.01 && a.y < b.y + b.w - 0.01 && b.y < a.y + a.w - 0.01;
+  (sheets || []).forEach((sh, si) => {
+    const n = si + 1;
+    const Pp = (sh.placed || []).filter(p => !p.over);
+    Pp.forEach(p => {
+      if (p.x < -0.01 || p.y < -0.01 || p.x + p.l > Ws + 0.01 || p.y + p.w > Hs + 0.01)
+        out.push('판재 ' + n + ' — 조각 #' + (p.idx || '?') + ' (' + Math.round(p.l) + '×' + Math.round(p.w) + ') 이 판재 밖으로 나갑니다');
+    });
+    for (let i = 0; i < Pp.length; i++) for (let j = i + 1; j < Pp.length; j++) {
+      if (ov(Pp[i], Pp[j])) out.push('판재 ' + n + ' — 조각 #' + (Pp[i].idx || '?') + ' 와 #' + (Pp[j].idx || '?') + ' 가 서로 겹칩니다');
+    }
+    (sh.free || []).forEach(f => Pp.forEach(p => {
+      if (ov({ x: f.x, y: f.y, l: f.w, w: f.h }, p)) out.push('판재 ' + n + ' — 남는 부분(' + Math.round(f.w) + '×' + Math.round(f.h) + ')이 조각 #' + (p.idx || '?') + ' 와 겹칩니다');
+    }));
+  });
+  const uniq = [];
+  out.forEach(x => { if (uniq.indexOf(x) < 0) uniq.push(x); });
+  return uniq;
+}
 function cutPieceCount(sheets) {
   let pcs = 0, blocks = 0, blockPcs = 0;
   (sheets || []).forEach(sh => (sh.placed || []).forEach(p => {
@@ -10064,6 +10105,25 @@ function cutRenderResult() {
       ${sc('사용 판재', used + ' 장', c.Ws + '×' + c.Hs)}
       ${sc('자투리(로스)', m2(Math.max(0, sheetArea - c.partArea)) + ' ㎡')}
     </div>
+    ${(() => {
+      /* ★ 판재에 못 들어간 부재 — 연결블록은 아래 전용 안내가 따로 있으므로 뺀다 */
+      const nf = (c.noFit || []).filter(x => !(x.subs && x.subs.length));
+      if (!nf.length) return '';
+      return `<div class="banner" style="margin-bottom:9px;font-size:12.5px;background:#fdecea;border-left:4px solid #c0341d;border-radius:0 10px 10px 0;padding:11px 13px;color:#8a2b1a"><span style="flex:1;min-width:0">
+        <b style="font-size:13.5px"><i class="ti ti-alert-triangle"></i> 판재(${c.Ws}×${c.Hs})에 들어가지 않는 부재가 ${nf.length}장 있습니다 — 이 커팅플랜은 그대로 쓰면 안 됩니다</b><br>
+        ${nf.map(x => `· <b>#${x.idx || '?'}</b> ${Math.round(x.l)}×${Math.round(x.w)}${x.rot === false ? ' <span style="color:#a8341f">(결방향 — 돌려서 넣을 수 없음)</span>' : ''}`).join('<br>')}<br>
+        <span style="font-size:11.5px">판재 규격을 키우거나, 부재를 나누거나, 결방향 회전을 허용해 보세요.
+        <b>이 부재는 아래 그림에 들어 있지 않습니다</b> — 판재 장수·로스도 그만큼 모자랍니다.</span></span></div>`;
+    })()}
+    ${(() => {
+      /* ★ 자가 검사 — 그린 결과가 물리적으로 맞는지 매번 확인한다 */
+      const er = cutPlanAudit(_cutSheets, c.Ws, c.Hs);
+      if (!er.length) return '';
+      return `<div class="banner" style="margin-bottom:9px;font-size:12.5px;background:#fdecea;border-left:4px solid #c0341d;border-radius:0 10px 10px 0;padding:11px 13px;color:#8a2b1a"><span style="flex:1;min-width:0">
+        <b style="font-size:13.5px"><i class="ti ti-bug"></i> 배치가 맞지 않습니다 — 공장에 보내지 마세요</b><br>
+        ${er.slice(0, 6).map(x => '· ' + esc(x)).join('<br>')}${er.length > 6 ? `<br>· 외 ${er.length - 6}건` : ''}<br>
+        <span style="font-size:11.5px">부재 치수를 확인하고 다시 돌려 주세요. 계속 뜨면 알려 주세요.</span></span></div>`;
+    })()}
     ${c.over ? '<div style="color:#c0341d;font-size:12px;margin-bottom:8px"><i class="ti ti-alert-triangle"></i> 판재보다 큰 부재가 있습니다 — 치수를 확인하세요</div>' : ''}
     ${c.gOver.length ? `<div class="banner" style="margin-bottom:9px;font-size:12.5px;background:#fdecea;border-left:4px solid #c0341d;border-radius:0 10px 10px 0;padding:10px 13px;color:#8a2b1a"><span style="flex:1;min-width:0">
       <b><i class="ti ti-alert-triangle"></i> 무늬연결 ${c.gOver.length}개가 판재(${c.Ws}×${c.Hs})에 들어가지 않습니다</b><br>
@@ -10187,7 +10247,7 @@ function runCutSim() {
   parts.forEach(p => { partArea += p.l * p.w * p.q; edgeLen += 2 * (p.l + p.w) * p.q; const big = Math.max(p.l, p.w), small = Math.min(p.l, p.w); if (big > Math.max(Ws, Hs) + 0.001 || small > Math.min(Ws, Hs) + 0.001) over = true; });
   /* ★ 배치를 기억해 둔다 — 손으로 옮길 수 있게 (cutRenderResult 가 그린다) */
   _cutSheets = sheets; _cutTouched = false; _cutSel = null;
-  _cutCtx = { Ws: Ws, Hs: Hs, kerf: kerf, partArea: partArea, edgeLen: edgeLen, over: over, gOver: gOver };
+  _cutCtx = { Ws: Ws, Hs: Hs, kerf: kerf, partArea: partArea, edgeLen: edgeLen, over: over, gOver: gOver, noFit: (sheets.noFit || []).slice() };
   cutRenderResult();
   cutPlanAutoSave(sheets.length, partArea);   // ★ 돌릴 때마다 '최근 커팅플랜'에 자동 저장
 }
