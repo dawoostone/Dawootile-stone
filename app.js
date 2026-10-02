@@ -4482,13 +4482,56 @@ function shipSlipGroups() {
   groups.sort((a, b) => b.ts - a.ts);   // 최근 출고가 맨 위로
   return groups;
 }
-/* 출고증 인쇄 목록: 검색 없으면 최근 10건, 검색하면 업체명·자재명으로 전체에서 찾기 */
+/* ══════════════════════════════════════════════════════════
+   ★★ 2026-10-02 — 출고 탭에서 «출고관리 요청서»까지 같이 찾는다
+   사용자: "세면대가 출고 탭에서는 검색이 안되고 출고 관리에서 봐야할 것 같은데
+            하나하나 찾기 불편하니 출고 탭에서 검색할 수 있어야 함"
+   세면대처럼 재고를 거치지 않고 나가는 건은 «재고 출고(출고증)»가 아예 없어서
+   출고 탭 검색에 걸리지 않았다. 출고관리 요청서에만 남아 있어서, 거기 달력을
+   날짜별로 하나하나 열어 봐야 찾을 수 있었다.
+   ★ 이제 검색어를 넣으면 출고관리 요청서도 같이 찾아 아래에 따로 묶어 보여준다.
+     (검색어가 없을 땐 예전 그대로 최근 10건만 — 화면이 복잡해지지 않게)
+   ══════════════════════════════════════════════════════════ */
+function shipReqSearchHtml(q, shownKeys) {
+  const hay = r => [r.client, r.docNo, r.dispatchDest, r.destOrig, r.driver, r.memo, r.sender, r.handler,
+    (r.items || []).map(i => (i.name || '') + ' ' + (i.spec || '') + ' ' + (i.lot || '') + ' ' + (i.pattern || '')).join(' ')].join(' ').toLowerCase();
+  const hit = (state.chulgoReqs || [])
+    .filter(r => (r.reqType || '출고') !== '입고')                       // 입고 요청은 출고 탭에 안 보인다
+    .filter(r => !(r.sourceShipId && shownKeys.has(r.sourceShipId)))     // 위 출고증에 이미 나온 건은 빼고
+    .filter(r => hay(r).indexOf(q) >= 0)
+    .sort((a, b) => (+b.createdAt || 0) - (+a.createdAt || 0));
+  if (!hit.length) return '';
+  const MAX = 30;
+  const dayOf = r => (r.schedDate || '').trim() || (r.doneAt ? new Date(+r.doneAt).toISOString().slice(0, 10) : '') || (r.createdAt ? new Date(+r.createdAt).toISOString().slice(0, 10) : '');
+  const stCol = { '완료': '#0F6E56', '지시': '#8a5a00', '확인': '#1b4fb0', '대기열': 'var(--t3)' };
+  const cards = hit.slice(0, MAX).map(r => {
+    const dest = (r.dispatchDest || r.destOrig || '').trim();
+    const st = r.status || '';
+    return `<div class="card" style="margin-bottom:10px;padding:11px 13px;border-left:3px solid #7c6ce0">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div style="min-width:0"><div style="font-weight:700;font-size:14px"><i class="ti ti-clipboard-list" style="color:#7c6ce0;font-size:14px"></i> ${esc(r.client || '-')}</div>
+          <div style="font-size:12px;color:var(--t3);margin-top:2px">${esc(dayOf(r))}${r.docNo ? ' · ' + esc(r.docNo) : ''}${dest ? ' · → ' + esc(dest) : ''}${r.driver ? ' · ' + esc(r.driver) : ''}</div></div>
+        <span style="flex:none;font-size:11px;font-weight:700;color:${stCol[st] || 'var(--t3)'}">${esc(st)}</span></div>
+      <div style="margin-top:7px;font-size:13px">${(r.items || []).map(i => `<div style="color:var(--t2)">· ${esc(i.name || '')} <b style="color:var(--t1)">${+i.qty || 0}${esc(i.unit || '')}</b>${i.spec ? ' · ' + esc(i.spec) : ''}${i.lot ? ' · 롯트 ' + esc(i.lot) : ''}</div>`).join('') || '<div style="color:var(--t3)">품목 없음</div>'}</div>
+      <div style="margin-top:9px;text-align:right"><button class="btn btn-sm" onclick="chulgoPrint('${r.id}')"><i class="ti ti-file-text"></i>요청서 열기</button></div>
+    </div>`;
+  }).join('');
+  return `<div style="display:flex;align-items:center;gap:7px;margin:16px 2px 9px">
+      <div style="height:1px;background:var(--bd);flex:1"></div>
+      <span style="font-size:11.5px;font-weight:700;color:#6b5fd0;white-space:nowrap"><i class="ti ti-clipboard-list"></i> 출고관리 요청서 ${hit.length}건</span>
+      <div style="height:1px;background:var(--bd);flex:1"></div></div>
+    <div style="font-size:11px;color:var(--t3);margin:0 2px 9px;line-height:1.5">세면대처럼 재고를 거치지 않고 나가는 건은 출고증이 없어서 여기에 나옵니다.</div>
+    ${cards}${hit.length > MAX ? `<div style="font-size:11.5px;color:var(--t3);text-align:center;padding:6px">· 외 ${hit.length - MAX}건 — 검색어를 더 자세히 넣어 주세요</div>` : ''}`;
+}
+/* 출고증 인쇄 목록: 검색 없으면 최근 10건, 검색하면 업체명·자재명으로 전체에서 찾기
+   + 검색할 땐 출고관리 요청서까지 (shipReqSearchHtml) */
 function shipSlipListHtml() {
   const q = (filters.slipSearch || '').trim().toLowerCase();
   let groups = shipSlipGroups();
   if (q) groups = groups.filter(g => (g.targetName || '').toLowerCase().includes(q) || (g.dest || '').toLowerCase().includes(q) || g.items.some(t => (t.itemName || '').toLowerCase().includes(q)));
   const list = q ? groups : groups.slice(0, 10);
-  if (!list.length) return `<div class="empty"><i class="ti ti-inbox"></i>${q ? '검색 결과가 없습니다' : '출고 내역 없음'}</div>`;
+  const reqHtml = q ? shipReqSearchHtml(q, new Set(list.map(g => g.key))) : '';
+  if (!list.length) return reqHtml || `<div class="empty"><i class="ti ti-inbox"></i>${q ? '검색 결과가 없습니다' : '출고 내역 없음'}</div>`;
   return list.map(g => {
     const totJang = g.items.reduce((a, b) => a + (+b.jang || 0), 0), totHebe = g.items.reduce((a, b) => a + (+b.hebe || 0), 0);
     return `<div class="card" style="margin-bottom:10px;padding:11px 13px">
@@ -4501,7 +4544,7 @@ function shipSlipListHtml() {
       ${g.items.length > 1 ? `<div style="font-size:11.5px;color:var(--t3);margin-top:6px;text-align:right">합계 ${totJang}장 · ${totHebe.toFixed(1)}㎡</div>` : ''}
       <div style="margin-top:9px;text-align:right"><button class="btn btn-sm" onclick="printShipSlip('${g.key}')"><i class="ti ti-printer"></i>출고증 인쇄</button></div>
     </div>`;
-  }).join('');
+  }).join('') + reqHtml;
 }
 /* 검색어 입력 시 목록만 교체 (한글 입력 끊김 방지) */
 function filterShipSlips() {
@@ -4635,7 +4678,7 @@ function renderShip() {
       <div class="card-h"><h3><i class="ti ti-printer"></i>출고증 인쇄</h3></div>
       <div class="search-box" style="margin-bottom:10px">
         <i class="ti ti-search"></i>
-        <input id="slip-search" placeholder="업체명·자재명 검색" value="${esc(filters.slipSearch || '')}" oninput="filterShipSlips()" autocomplete="off" lang="ko">
+        <input id="slip-search" placeholder="업체명·자재명 검색 (세면대 등 출고관리 건도 함께)" value="${esc(filters.slipSearch || '')}" oninput="filterShipSlips()" autocomplete="off" lang="ko">
         <button class="search-x" id="slip-search-x" style="${(filters.slipSearch || '').trim() ? '' : 'display:none'}" onclick="el('slip-search').value='';filterShipSlips()"><i class="ti ti-x"></i></button>
       </div>
       <div id="slip-list">${shipSlipListHtml()}</div>
@@ -18517,6 +18560,13 @@ function chulgoDispatchCard(g, forWarehouse) {
 function _chulgoDoneTs(g) { return (g.reqs.find(r => r.doneAt) || {}).doneAt || g.dispatchedAt || 0; }
 function _chulgoDoneDay(g) { const ts = _chulgoDoneTs(g); if (!ts) return '(날짜미상)'; const d = new Date(+ts); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
 let _chulgoCalYM = '', _chulgoCalDay = '';
+/* ★★ 2026-10-02 — 출고관리 «완료 내역» 이 누를 때마다 닫히던 문제
+   사용자: "출고 완료내역에서 누를 때마다 자꾸 닫히는데 수정해줘"
+   달력의 날짜·월을 누르면 renderChulgo() 가 화면을 통째로 다시 그린다.
+   그런데 «완료 내역»은 <details> 라서 다시 그려지면 접힌 상태로 돌아갔다.
+   → 열려 있었는지를 기억해 두고, 다시 그릴 때 그대로 열어 둔다. */
+let _chulgoDoneOpen = false;
+function chulgoDoneToggle(d) { _chulgoDoneOpen = !!(d && d.open); }
 function chulgoCalNav(delta) { const [y, m] = (_chulgoCalYM || todayStr().slice(0, 7)).split('-').map(Number); const d = new Date(y, m - 1 + delta, 1); _chulgoCalYM = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); _chulgoCalDay = ''; renderChulgo(); }
 function chulgoCalPick(key) { _chulgoCalDay = (_chulgoCalDay === key ? '' : key); renderChulgo(); }
 function chulgoCompletedSection() {
@@ -18552,9 +18602,9 @@ function chulgoCompletedSection() {
   const dowRow = `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:3px">${wd.map((w, i) => `<div style="text-align:center;font-size:10.5px;font-weight:700;color:${i === 0 ? '#c0341d' : (i === 6 ? '#1b4fb0' : 'var(--t3)')}">${w}</div>`).join('')}</div>`;
   const grid = `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px">${cells}</div>`;
   const selList = (_chulgoCalDay && byDay[_chulgoCalDay])
-    ? `<div style="margin-top:10px"><div style="font-size:12.5px;font-weight:700;margin:0 2px 6px"><i class="ti ti-calendar-event" style="font-size:13px"></i> ${dayLbl(_chulgoCalDay)} · ${byDay[_chulgoCalDay].length}건</div><div data-keepscroll style="max-height:40vh;overflow:auto">${byDay[_chulgoCalDay].sort((a, b) => _chulgoDoneTs(b) - _chulgoDoneTs(a)).map(chulgoCompletedRow).join('')}</div></div>`
+    ? `<div style="margin-top:10px"><div style="font-size:12.5px;font-weight:700;margin:0 2px 6px"><i class="ti ti-calendar-event" style="font-size:13px"></i> ${dayLbl(_chulgoCalDay)} · ${byDay[_chulgoCalDay].length}건</div><div data-keepscroll id="chulgo-done-list" style="max-height:40vh;overflow:auto">${byDay[_chulgoCalDay].sort((a, b) => _chulgoDoneTs(b) - _chulgoDoneTs(a)).map(chulgoCompletedRow).join('')}</div></div>`
     : `<div style="font-size:12px;color:var(--t3);text-align:center;padding:12px 6px">파란 숫자 배지가 있는 날짜를 누르면 그날 완료된 출고가 나옵니다.</div>`;
-  return `<details style="margin-top:14px"><summary style="font-size:13px;color:var(--t2);cursor:pointer;padding:6px 2px;font-weight:600"><i class="ti ti-calendar-check"></i> 완료 내역 <span style="color:var(--t3);font-weight:400">(달력 · ${done.length}건 · 재인쇄/되돌리기)</span></summary>
+  return `<details id="chulgo-done" ${_chulgoDoneOpen ? 'open' : ''} ontoggle="chulgoDoneToggle(this)" style="margin-top:14px"><summary style="font-size:13px;color:var(--t2);cursor:pointer;padding:6px 2px;font-weight:600"><i class="ti ti-calendar-check"></i> 완료 내역 <span style="color:var(--t3);font-weight:400">(달력 · ${done.length}건 · 재인쇄/되돌리기)</span></summary>
     <div style="margin-top:8px;border:0.5px solid var(--bd);border-radius:12px;padding:10px 11px;background:#fff">${head}${dowRow}${grid}${selList}</div></details>`;
 }
 function chulgoCompletedRow(g) {
@@ -18884,6 +18934,7 @@ async function submitWhAlert() {
 }
 function renderChulgo() {
   keepScrolls();
+  const _sy = window.scrollY;                     // ★ 다시 그려도 보던 자리 그대로 (달력 누를 때 위로 튀던 것)
   const side = chulgoSide();
   const newN = (state.chulgoReqs || []).filter(r => (r.status || '') === '지시').length;
   el('pg-chulgo').innerHTML = `
@@ -18894,6 +18945,7 @@ function renderChulgo() {
     </div>
     <button class="btn btn-sm btn-block" style="margin-bottom:10px;${chulgoPushEnabled() ? 'background:var(--gl2);border-color:var(--gbd);color:var(--gd)' : ''}" onclick="toggleChulgoPush()"><i class="ti ti-device-mobile"></i> 📱 휴대폰 출고 지시 알림 <b>${chulgoPushEnabled() ? '켜짐' : '꺼짐'}</b> · 눌러서 ${chulgoPushEnabled() ? '끄기' : '켜기'} <span style="font-weight:500;color:var(--t3)">(원하는 사람만 · 앱 꺼져도 수신)</span></button>
     ${side === 'office' ? chulgoOfficeSection() : chulgoWarehouseSection()}`;
+  requestAnimationFrame(() => window.scrollTo(0, _sy));   // ★ 보던 자리로 되돌림
   dspDateHint();   // 출고예정일이 미래면 안내 한 줄
 }
 /* 배차 폼의 출고예정일 기본값 — 대기열에 이미 잡힌 예정일 중 가장 이른 미래일, 없으면 오늘 */
