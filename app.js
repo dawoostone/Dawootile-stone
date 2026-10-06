@@ -7859,6 +7859,13 @@ function bankListHtml() {
       <span style="flex:1;min-width:0">통장에 찍힌 그대로 저장한 <b>입금</b> 내역입니다. <b>통장 잔액은 저장하지 않습니다.</b>
       ${seeOut ? '<b>출금</b>은 <b>정산 › 출금</b>에서 계정과목별로 봅니다.' : '출금 내역은 관리자만 볼 수 있습니다.'}</span></div>
 
+    <!-- ★ 2026-10-06 — 사용자: "통장내역에 지웠어도 거래처 원장에 남아있어서 자꾸 과입으로 잡힘" -->
+    <div class="banner" style="margin-bottom:10px;font-size:12px;background:#fffaf0;border:1px solid #f0d090;color:#8a5a00;align-items:flex-start">
+      <i class="ti ti-alert-triangle" style="margin-top:2px"></i><span style="flex:1;min-width:0">
+      <b>앱에 견적이 없는 거래의 대금</b>은 <b>지우지 말고 「<i class="ti ti-eye-off"></i> 무시」</b>를 누르세요 — 미수·과입 계산에서 빠집니다.<br>
+      <span style="font-size:11.5px">은행에서 받아온 내역은 <b>지울 수 없습니다</b> (지워도 다시 가져오면 같은 건이 되살아납니다).
+      <b>되돌리기</b>는 «파일로 올린» 내역에만 됩니다. 무시한 건은 위 <b>「무시함」</b> 칸에서 언제든 되돌립니다.</span></span></div>
+
     <div class="search-box" style="margin-bottom:9px"><i class="ti ti-search"></i>
       <input id="bk-search" placeholder="입금자·거래처·견적번호·금액 검색 (예: 신성, 220만, 1000만~3000만)" value="${esc(filters.bankSearch || '')}"
         oninput="filters.bankSearch=this.value;bankListFilter()" autocomplete="off" lang="ko"></div>
@@ -8645,9 +8652,13 @@ function ledgerRows(client, cat) {
   if (CAT) { rows.sort((a, b) => (a.d || '').localeCompare(b.d || '') || ((a.k === 'sale' ? 0 : 1) - (b.k === 'sale' ? 0 : 1)) || (a.docNo || '').localeCompare(b.docNo || '')); return rows; }
   /* ★ 입금 줄 = 이 거래처로 들어온 통장 입금 전부.
      견적 한 장 한 장에 붙이는 작업이 없어져서, 통장에 찍힌 그대로 내려온다. */
+  /* ★ 2026-10-06 — «무시»한 입금도 흐리게 들고 온다.
+     사용자: *"통장내역에 지웠어도 거래처 원장에 남아있어서 자꾸 금액이 과입으로 잡힘"*
+     예전엔 무시한 줄을 원장에서 아예 빼 버려서, 원장만 보고는 되돌릴 수가 없었다.
+     이제 흐리게 보여주고 «되돌리기»를 붙인다. 잔액·합계·미수에는 안 들어간다. */
   (state.banktx || []).forEach(t => {
-    if (!txIsIn(t) || txSkip(t) || txClientOf(t) !== client) return;
-    rows.push({ d: t.date || '', k: 'pay', amt: txMoney(t), src: t.manual ? 'manual' : 'bank', payer: t.payer || '', bankNm: t.bankNm || '', tid: t.id });
+    if (!txIsIn(t) || txClientOf(t) !== client) return;
+    rows.push({ d: t.date || '', k: 'pay', amt: txMoney(t), src: t.manual ? 'manual' : 'bank', payer: t.payer || '', bankNm: t.bankNm || '', tid: t.id, skip: txSkip(t) });
   });
   const ord = { open: -1, sale: 0, tax: 1, pay: 2, reset: 3 };
   rows.sort((a, b) => (a.d || '').localeCompare(b.d || '') || (ord[a.k] - ord[b.k]) || (a.docNo || '').localeCompare(b.docNo || ''));
@@ -8659,7 +8670,7 @@ function ledgerRows(client, cat) {
   }
   let bal = 0;
   rows.forEach(r => {
-    if (r.old) { r.bal = null; return; }                       // 정산 끝난 줄은 잔액 칸을 비운다
+    if (r.old || r.skip) { r.bal = null; return; }             // 정산 끝났거나 무시한 줄은 잔액 칸을 비운다
     if (r.k === 'reset') { bal = r.amt; r.bal = bal; return; }
     if (r.k === 'sale' || r.k === 'open') bal += r.amt; else if (r.k === 'pay') bal -= r.amt;
     r.bal = bal;
@@ -9186,11 +9197,21 @@ function ledgerDetailHtml(client) {
       <td style="color:var(--t2)">${esc(r.docNo)} 발행${r.nts ? ` <span style="color:var(--t3)">· 승인 ${esc(r.nts)}</span>` : ''}${r.mgt ? ` <button class="btn btn-sm btn-ghost" style="padding:1px 5px" onclick="taxOpenDoc('${esc(r.mgt)}')"><i class="ti ti-external-link"></i></button>` : ''}</td>
       <td style="text-align:right;white-space:nowrap;color:var(--t3)">(${fmtWon(r.amt)})</td>${money(0)}
       <td style="text-align:right;white-space:nowrap;color:var(--t3)">${fmtWon(r.bal)}</td></tr>`;
+    /* ★ 무시한 입금 — 흐리게 + 되돌리기 (미수·잔액에는 안 들어간다) */
+    if (r.skip) return `<tr style="background:#f6f6f6;opacity:.6">
+      <td style="white-space:nowrap;color:var(--t3)">${esc((r.d || '').slice(2))}</td>
+      <td><span class="pill p-gray"><i class="ti ti-eye-off"></i> 무시</span></td>
+      <td style="color:var(--t3)"><b style="text-decoration:line-through">${esc(r.payer || '(이름 없음)')}</b>
+        <span style="font-size:11px">· 견적과 무관한 돈으로 빼 둠</span>
+        <button class="btn btn-sm btn-ghost" style="padding:1px 6px;margin-left:4px;font-size:11px" title="다시 미수 계산에 넣기" onclick="txSkipSet('${r.tid}',false)"><i class="ti ti-arrow-back-up"></i>되돌리기</button></td>
+      ${money(0)}<td style="text-align:right;white-space:nowrap;color:var(--t3);text-decoration:line-through">${fmtWon(r.amt)}</td>
+      <td style="text-align:right;color:var(--bd2)">·</td></tr>`;
     return `<tr style="background:var(--gl2,#f4fbf8)">
       <td style="white-space:nowrap;color:var(--t3)">${esc((r.d || '').slice(2))}</td>
       <td>${r.src === 'manual' ? '<span class="pill p-prog">직접</span>' : '<span class="pill p-done">입금</span>'}</td>
       <td><b>${esc(r.payer || '(이름 없음)')}</b>${r.bankNm ? ` <span style="color:var(--t3)">· ${esc(r.bankNm)}</span>` : ''}
-        <button class="btn btn-sm btn-ghost" style="padding:1px 5px;margin-left:4px" title="거래처 바꾸기" onclick="txReassign('${r.tid}')"><i class="ti ti-switch-horizontal"></i></button></td>
+        <button class="btn btn-sm btn-ghost" style="padding:1px 5px;margin-left:4px" title="거래처 바꾸기" onclick="txReassign('${r.tid}')"><i class="ti ti-switch-horizontal"></i></button>
+        <button class="btn btn-sm btn-ghost" style="padding:1px 5px;margin-left:2px" title="앱에 없는 견적의 대금 — 미수 계산에서 빼기" onclick="txSkipSet('${r.tid}',true)"><i class="ti ti-eye-off"></i></button></td>
       ${money(0)}<td style="text-align:right;white-space:nowrap;font-weight:700;color:var(--gd)">${fmtWon(r.amt)}</td>
       <td style="text-align:right;white-space:nowrap;font-weight:700">${fmtWon(r.bal)}</td></tr>`;
   };
@@ -9229,9 +9250,11 @@ function ledgerDetailHtml(client) {
       <div class="stat"><div class="ic r"><i class="ti ti-cash-off"></i></div><div class="v" style="font-size:18px;color:${rem > 0 ? 'var(--red-t)' : 'var(--gd)'}">${fmtWon(rem)}</div><div class="l">${rem > 0 ? '미수금' : '완납'}</div></div>
       <div class="stat"><div class="ic b"><i class="ti ti-file-invoice"></i></div><div class="v" style="font-size:18px">${fmtWon(taxAmt)}</div><div class="l">계산서 발행</div><div class="s">${noTaxAmt ? '미발행 ' + fmtWon(noTaxAmt) : '전부 발행'}</div></div>
     </div>
-    ${extra > 0 ? `<div class="banner info" style="margin-bottom:10px;font-size:12px"><i class="ti ti-info-circle"></i><span style="flex:1;min-width:0">
-      매출보다 <b>${fmtWon(extra)}원</b>이 더 들어왔습니다. 앱에 견적을 안 올린 거래의 대금이거나 선입금입니다 —
-      <b>미수를 마이너스로 만들지 않고 따로 둡니다.</b></span></div>` : ''}
+    ${extra > 0 ? `<div class="banner" style="margin-bottom:10px;font-size:12px;background:#fffaf0;border:1px solid #f0d090;color:#8a5a00;align-items:flex-start"><i class="ti ti-alert-triangle" style="margin-top:2px"></i><span style="flex:1;min-width:0">
+      매출보다 <b>${fmtWon(extra)}원</b>이 더 들어왔습니다 (<b>과입</b>). 앱에 견적을 안 올린 거래의 대금이거나 선입금입니다 — 미수를 마이너스로 만들지 않고 따로 둡니다.
+      <div style="margin-top:4px;font-size:11.5px">앱에 없는 견적의 대금이면 <b>그 입금을 «무시»</b>하면 과입에서 빠집니다.
+      <b style="color:#b42318">통장 내역에서 지우는 것으로는 빠지지 않습니다</b> — 은행에서 다시 받아오면 되살아나기 때문입니다.</div>
+      <div style="margin-top:7px"><button class="btn btn-sm" style="background:#fff" onclick="openExtraFix(${JSON.stringify(client).replace(/"/g, '&quot;')})"><i class="ti ti-eye-off"></i> 과입 정리하기</button></div></span></div>` : ''}
     ${catChips}
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:9px">${catChips ? '<span style="font-size:11px;color:var(--t3);width:38px;flex:none">기간</span>' : ''}${rc('all', '전체')}${rc('3m', '최근 3개월')}${rc('tm', '이번 달')}${rc('lm', '지난 달')}</div>
     ${rsNote}${obNote}${catNote}
@@ -9262,12 +9285,93 @@ function ledgerDetailHtml(client) {
         })()}
         <tr style="background:var(--soft);font-weight:800"><td colspan="3">합계</td>
           <td style="text-align:right">${fmtWon(shown.filter(r => !r.old && r.k === 'sale').reduce((s, r) => s + r.amt, 0))}</td>
-          <td style="text-align:right;color:var(--gd)">${fmtWon(shown.filter(r => !r.old && r.k === 'pay').reduce((s, r) => s + r.amt, 0))}</td>
+          <td style="text-align:right;color:var(--gd)">${fmtWon(shown.filter(r => !r.old && !r.skip && r.k === 'pay').reduce((s, r) => s + r.amt, 0))}</td>
           <td style="text-align:right;color:${_lastBal > 0 ? 'var(--red-t)' : 'var(--gd)'}">${fmtWon(_lastBal)}</td></tr>
       </tbody>
     </table></div>
     <div style="font-size:11.5px;color:var(--t3);margin-top:7px">잔액 = 확정 매출 누계 − 입금 누계. 세금계산서 줄은 발행 사실만 표시하고 잔액에는 영향을 주지 않습니다.
       ${extra > 0 ? '<br>입금이 매출보다 많아 잔액이 마이너스로 내려가 있습니다 — 위 <b>미수금</b>은 0으로 보고, 넘는 돈은 <b>선입금</b>으로 따로 셉니다.' : ''}</div>`}`;
+}
+/* ══════════════════════════════════════════════════════════
+   ★★ 과입 정리 (2026-10-06)
+   사용자: *"7월달 프로그램에 없는 견적에 대한 입금 건이 통장내역에 지웠어도
+            거래처 원장에 남아있어서 자꾸 금액이 과입으로 잡힘"*
+
+   ★ 통장 내역은 «은행에서 받아온 그대로»다. 지워도 다시 받아오면 같은 번호로
+     되살아난다 (파일로 올린 것만 «되돌리기»로 지워진다).
+   ★ 그래서 앱에 견적이 없는 대금은 **지우는 게 아니라 «무시»** 해야 한다.
+     무시하면 통장 내역에는 남고 **미수·과입 계산에서만 빠진다.** 언제든 되돌린다.
+   이 화면은 그 거래처 입금을 날짜순으로 펼쳐 놓고 골라서 한 번에 무시한다.
+   ══════════════════════════════════════════════════════════ */
+function openExtraFix(client) {
+  if (!canLedger()) { toast('거래처 원장 권한이 없습니다'); return; }
+  const c = String(client || '').trim();
+  const M = clientMoneyOf(c);
+  const list = (state.banktx || []).filter(t => txIsIn(t) && txClientOf(t) === c)
+    .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  if (!list.length) { toast('이 거래처로 들어온 입금이 없습니다'); return; }
+  const line = t => {
+    const sk = txSkip(t);
+    return `<label style="display:flex;align-items:center;gap:9px;padding:8px 10px;border-bottom:1px solid var(--soft);cursor:pointer;${sk ? 'opacity:.5;background:#f6f6f6' : ''}">
+      <input type="checkbox" class="xf-chk" value="${esc(t.id)}" ${sk ? 'disabled' : ''} style="width:17px;height:17px;flex:none">
+      <span style="flex:1;min-width:0">
+        <b style="font-size:12.5px">${esc(t.payer || '(이름 없음)')}</b>
+        <span style="font-size:11px;color:var(--t3)"> · ${esc(t.date || '')}${t.bankNm ? ' · ' + esc(t.bankNm) : ''}</span>
+        ${sk ? '<span class="pill p-gray" style="font-size:10px;margin-left:5px">무시함</span>' : ''}</span>
+      <b style="flex:none;color:${sk ? 'var(--t3)' : 'var(--gd)'};${sk ? 'text-decoration:line-through' : ''}">${fmtWon(txMoney(t))}</b>
+      ${sk ? `<button class="btn btn-sm btn-ghost" style="flex:none;padding:1px 6px;font-size:11px" onclick="event.preventDefault();closeModal();txSkipSet('${t.id}',false)"><i class="ti ti-arrow-back-up"></i></button>` : ''}
+    </label>`;
+  };
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-eye-off"></i>과입 정리 · ${esc(c)}</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:12.5px;color:var(--t2);line-height:1.7;background:#fffaf0;border:1px solid #f0d090;border-radius:10px;padding:10px 12px;margin-bottom:11px;color:#8a5a00">
+      매출보다 <b>${fmtWon(M.extra)}원</b>이 더 들어와 있습니다.<br>
+      <b>앱에 견적을 안 올린 거래의 대금</b>이면 아래에서 골라 <b>무시</b>하세요 — 과입에서 빠집니다.<br>
+      <span style="font-size:11.5px">통장 내역에는 그대로 남고, 언제든 되돌릴 수 있습니다.
+      <b>통장 내역에서 지우는 방법은 안 됩니다</b> — 은행에서 다시 받아오면 되살아납니다.</span>
+    </div>
+    <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <button class="btn btn-sm" onclick="xfPick('all')">전체 선택</button>
+      <button class="btn btn-sm" onclick="xfPick('none')">선택 해제</button>
+      <span style="font-size:11.5px;color:var(--t3)">달:</span>
+      ${[...new Set(list.filter(t => !txSkip(t)).map(t => String(t.date || '').slice(0, 7)))].sort().map(ym => `<button class="btn btn-sm" onclick="xfPick('${ym}')">${esc(ym)}</button>`).join('')}
+    </div>
+    <div data-keepscroll id="xf-list" style="max-height:44vh;overflow:auto;border:1px solid var(--bd);border-radius:10px">${list.map(line).join('')}</div>
+    <div id="xf-sum" style="font-size:12.5px;color:var(--t2);margin-top:8px"></div>
+    <div class="frm-foot">
+      <button class="btn" onclick="closeModal()">닫기</button>
+      <button class="btn btn-pri" onclick="xfApply(${JSON.stringify(c).replace(/"/g, '&quot;')})"><i class="ti ti-eye-off"></i>선택한 건 무시</button>
+    </div>`);
+  document.querySelectorAll('.xf-chk').forEach(ch => ch.addEventListener('change', xfSum));
+  xfSum();
+}
+function xfPick(what) {
+  document.querySelectorAll('.xf-chk').forEach(ch => {
+    if (ch.disabled) return;
+    if (what === 'all') ch.checked = true;
+    else if (what === 'none') ch.checked = false;
+    else { const r = ch.closest('label'); ch.checked = !!(r && r.textContent.indexOf(what) >= 0); }
+  });
+  xfSum();
+}
+function xfSum() {
+  const box = el('xf-sum'); if (!box) return;
+  const ids = [...document.querySelectorAll('.xf-chk')].filter(ch => ch.checked).map(ch => ch.value);
+  const sum = (state.banktx || []).filter(t => ids.indexOf(t.id) >= 0).reduce((a, t) => a + txMoney(t), 0);
+  box.innerHTML = ids.length ? `선택 <b>${ids.length}건</b> · <b style="color:var(--gd)">${fmtWon(sum)}원</b> 을 미수 계산에서 뺍니다`
+    : '<span style="color:var(--t3)">무시할 입금을 고르세요</span>';
+}
+async function xfApply(client) {
+  const ids = [...document.querySelectorAll('.xf-chk')].filter(ch => ch.checked).map(ch => ch.value);
+  if (!ids.length) { toast('무시할 입금을 고르세요'); return; }
+  const sum = (state.banktx || []).filter(t => ids.indexOf(t.id) >= 0).reduce((a, t) => a + txMoney(t), 0);
+  if (!confirm('입금 ' + ids.length + '건 (' + fmtWon(sum) + '원)을\n앱에 없는 거래의 대금으로 보고 무시할까요?\n\n통장 내역에는 그대로 남고, 언제든 되돌릴 수 있습니다.')) return;
+  let n = 0;
+  for (const id of ids) {
+    try { await Store.update('banktx', id, { noQuote: true, noQuoteBy: (me && me.name) || '', noQuoteAt: Date.now() }); n++; } catch (e) { }
+  }
+  moneyBust(); closeModal();
+  toast(n + '건 무시함 · 과입에서 빠집니다');
+  setTimeout(() => { if (filters.bankList) renderQuote(); else renderLedger(); }, 350);
 }
 /* 입금 건의 계산서 발행 여부 표시 토글 */
 async function txToggleTax(id) {
