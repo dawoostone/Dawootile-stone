@@ -1256,6 +1256,7 @@ function renderClientDetail() {
       <div style="font-size:11px;color:var(--t3);margin-top:6px">견적서에서 <b>영업담당자로 표기</b>를 켜면 견적 담당자 대신 이 담당자의 이름·연락처가 표시됩니다.</div>
     </div>
     ${clientOpeningCardHtml(c)}
+    ${clientResetCardHtml(c)}
     <div class="card" style="margin-bottom:12px;padding:0;overflow:hidden">
       <div onclick="const _b=el('cb-body');_b.style.display=(_b.style.display==='none'?'block':'none')" style="cursor:pointer;padding:13px 16px;display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0;font-size:15px"><i class="ti ti-id-badge-2"></i> 사업자 정보 · 유형 확인</h3><i class="ti ti-chevron-down" style="color:var(--t3)"></i></div>
       <div id="cb-body" style="display:none;padding:0 16px 14px">
@@ -8625,7 +8626,8 @@ function ledgerRows(client, cat) {
   const qid = {}; qs.forEach(q => qid[q.id] = q);
   const rows = [];
   /* ★ 이월 잔액 — 앱 이전의 남은 미수를 원장 맨 위 한 줄로 (분류별 보기에서는 뺀다) */
-  const _ob = CAT ? null : clientOpening(client);
+  const _rs = CAT ? null : clientReset(client);                 // ★ 잔액 초기화 기준일
+  const _ob = (CAT || _rs) ? null : clientOpening(client);      // 초기화했으면 옛 이월 줄은 안 쓴다
   if (_ob) rows.push({ d: _ob.date || '2000-01-01', k: 'open', amt: _ob.amt, memo: _ob.memo });
   qs.forEach(q => {
     const tot = Math.round(+q.total || 0);
@@ -8647,10 +8649,21 @@ function ledgerRows(client, cat) {
     if (!txIsIn(t) || txSkip(t) || txClientOf(t) !== client) return;
     rows.push({ d: t.date || '', k: 'pay', amt: txMoney(t), src: t.manual ? 'manual' : 'bank', payer: t.payer || '', bankNm: t.bankNm || '', tid: t.id });
   });
-  const ord = { open: -1, sale: 0, tax: 1, pay: 2 };
+  const ord = { open: -1, sale: 0, tax: 1, pay: 2, reset: 3 };
   rows.sort((a, b) => (a.d || '').localeCompare(b.d || '') || (ord[a.k] - ord[b.k]) || (a.docNo || '').localeCompare(b.docNo || ''));
+  /* ★ 초기화 기준일까지는 «정산 완료»로 꼬리표를 달고, 잔액 쌓기에서 뺀다 (지우지는 않는다) */
+  if (_rs) {
+    rows.forEach(r => { if ((r.d || '') <= _rs.date) r.old = true; });
+    rows.push({ d: _rs.date, k: 'reset', amt: _rs.bal, memo: _rs.memo, by: _rs.by });
+    rows.sort((a, b) => (a.d || '').localeCompare(b.d || '') || (ord[a.k] - ord[b.k]) || (a.docNo || '').localeCompare(b.docNo || ''));
+  }
   let bal = 0;
-  rows.forEach(r => { if (r.k === 'sale' || r.k === 'open') bal += r.amt; else if (r.k === 'pay') bal -= r.amt; r.bal = bal; });
+  rows.forEach(r => {
+    if (r.old) { r.bal = null; return; }                       // 정산 끝난 줄은 잔액 칸을 비운다
+    if (r.k === 'reset') { bal = r.amt; r.bal = bal; return; }
+    if (r.k === 'sale' || r.k === 'open') bal += r.amt; else if (r.k === 'pay') bal -= r.amt;
+    r.bal = bal;
+  });
   return rows;
 }
 /* 이 거래처로 들어온 통장 입금 전부 (최신순) */
@@ -8769,6 +8782,143 @@ function clientOpeningCardHtml(c) {
     </div>` : ''}
   </div>`;
 }
+/* ══════════════════════════════════════════════════════════
+   ★★ 거래처 «잔액 초기화» (2026-10-06)
+   사용자: *"거래처 잔액 초기화 기능 넣어줘"*
+
+   오래 쓰다 보면 한 거래처의 미수가 실제와 어긋납니다.
+   앱에 안 올린 거래 대금이 통장에 섞여 들어오고(«과입금»), 옛 견적이
+   영영 미수로 남고, 수기로 맞춘 정산이 앱에는 안 들어와 있기 때문입니다.
+
+   ★ 초기화 = «기준일까지는 정산이 끝났다»고 선을 긋는 것.
+       clients.resetDate = '2026-09-30'   (이 날까지 정산 끝)
+       clients.resetBal  = 3174400        (그 날 기준 아직 받을 돈 · 0 가능)
+       clients.resetMemo / resetAt / resetBy
+
+     · 기준일 «이전»의 견적·입금은 미수 계산에서 통째로 빠집니다.
+     · 그 자리에 적어 넣은 잔액 한 줄만 남고, 기준일 «다음날»부터 다시 쌓입니다.
+     · 떠 있던 과입금(어디에도 안 붙은 돈)도 같이 정리됩니다.
+   ★ 견적서·통장 기록은 **하나도 안 지웁니다.** 원장에서 «정산 완료»로 접어 둘 뿐입니다.
+   ★ 매출 통계·부가세·계산서 집계는 이 기능과 무관합니다 (예전처럼 견적을 직접 셉니다).
+   ══════════════════════════════════════════════════════════ */
+function clientReset(client) {
+  const c = (state.clients || []).find(x => _normName(x.value) === _normName(client));
+  const d = String((c && c.resetDate) || '').trim();
+  if (!c || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  return { date: d, bal: Math.max(0, Math.round(+c.resetBal || 0)), memo: String(c.resetMemo || ''),
+    by: String(c.resetBy || ''), at: +c.resetAt || 0, id: c.id };
+}
+/* 초기화 화면 — 관리자만 */
+function openClientReset(cid) {
+  if (!isAdmin()) { toast('관리자만 할 수 있습니다'); return; }
+  const c = (state.clients || []).find(x => x.id === cid); if (!c) return;
+  const nm = (c.value || '').trim();
+  const M = clientMoneyOf(nm);
+  const R = clientReset(nm);
+  const inp = 'font-size:15px;padding:9px 11px;border:1.5px solid var(--bd2);border-radius:9px;width:100%';
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-refresh-dot"></i>잔액 초기화 · ${esc(nm)}</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:12.5px;color:var(--t2);line-height:1.7;background:var(--soft);border-radius:10px;padding:10px 12px;margin-bottom:12px">
+      <b>기준일까지는 «정산이 끝났다»</b>고 선을 긋습니다.<br>
+      · 기준일 <b>이전</b>의 견적·입금은 <b>미수 계산에서 빠지고</b>, 적어 넣은 잔액부터 다시 쌓입니다.<br>
+      · <b>견적서·통장 기록은 하나도 안 지웁니다</b> — 원장에서 «정산 완료»로 접어 둡니다.<br>
+      · 매출 통계·부가세·계산서 집계는 <b>그대로</b>입니다.
+    </div>
+    <div class="card" style="padding:11px 13px;margin-bottom:12px;font-size:13px;line-height:1.8">
+      <div style="color:var(--t3);font-size:11.5px;margin-bottom:3px">지금 이 거래처</div>
+      매출 <b>${fmtWon(M.sale)}</b> · 입금 <b style="color:var(--gd)">${fmtWon(M.paid)}</b>
+      · 미수 <b style="color:${M.rem > 0 ? 'var(--red-t)' : 'var(--gd)'}">${fmtWon(M.rem)}</b>
+      ${M.extra > 0 ? `<div style="color:var(--amber-t)">어디에도 안 붙은 돈 <b>${fmtWon(M.extra)}</b>원 — 초기화하면 같이 정리됩니다</div>` : ''}
+    </div>
+    <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:10px">
+      <div class="fld" style="flex:1;min-width:148px;margin:0"><label>기준일 <span style="color:var(--t3);font-weight:500">(이 날까지 정산 끝)</span></label>
+        <input type="date" id="cr-date" value="${esc(R ? R.date : todayStr())}" oninput="clientResetPreview('${c.id}')" style="${inp}"></div>
+      <div class="fld" style="flex:1.2;min-width:168px;margin:0"><label>그 날 기준 <b>받을 돈</b> (원)</label>
+        <input id="cr-bal" inputmode="numeric" value="${R ? R.bal : Math.round(+M.rem || 0)}" oninput="clientResetPreview('${c.id}')" style="${inp};text-align:right"></div>
+    </div>
+    <div class="fld full" style="margin-bottom:10px"><label>비고 <span style="color:var(--t3);font-weight:500">(선택)</span></label>
+      <input id="cr-memo" lang="ko" value="${esc(R ? R.memo : '')}" placeholder="예: 2026-09-30 사장님 엑셀 원장과 맞춤" style="${inp}"></div>
+    <div id="cr-prev" style="font-size:12.5px;line-height:1.8;background:#eef6ff;border:1px solid #c7ddf7;border-radius:10px;padding:10px 12px;margin-bottom:12px"></div>
+    ${R ? `<div class="banner" style="margin-bottom:11px;font-size:12px;background:#fff7e0;border:1px solid #f0d090;color:#8a5a00"><span style="flex:1;min-width:0">
+      이미 <b>${esc(R.date)}</b>로 초기화되어 있습니다${R.by ? ' · ' + esc(R.by) : ''}${R.at ? ' · ' + new Date(R.at).toLocaleDateString('ko-KR') : ''}.
+      다시 저장하면 <b>덮어씁니다.</b></span></div>` : ''}
+    <div class="frm-foot">
+      ${R ? `<button class="btn" style="color:var(--red-t)" onclick="clearClientReset('${c.id}')"><i class="ti ti-arrow-back-up"></i>초기화 되돌리기</button>` : ''}
+      <button class="btn" onclick="closeModal()">취소</button>
+      <button class="btn btn-pri" onclick="saveClientReset('${c.id}')"><i class="ti ti-check"></i>초기화</button>
+    </div>`);
+  clientResetPreview(cid);
+}
+/* 입력한 값으로 «초기화하면 어떻게 되는지» 미리 보여준다 */
+function clientResetPreview(cid) {
+  const box = el('cr-prev'); if (!box) return;
+  const c = (state.clients || []).find(x => x.id === cid); if (!c) return;
+  const nm = (c.value || '').trim();
+  const d = (el('cr-date') && el('cr-date').value || '').trim();
+  const bal = Math.max(0, Math.round(_numv(el('cr-bal') && el('cr-bal').value)));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) { box.innerHTML = '<span style="color:#b42318">기준일을 넣어 주세요.</span>'; return; }
+  /* 기준일 이후만 다시 센다 — 실제 계산과 똑같은 방식 */
+  let saleAfter = 0, qn = 0, payAfter = 0, pn = 0, oldQ = 0, oldP = 0;
+  (state.quotes || []).forEach(q => {
+    if (!q.ordered || q.supersededBy) return;
+    if ((q.client || '').trim() !== nm) return;
+    if ((q.date || '') <= d) { oldQ++; return; }
+    saleAfter += Math.round(+q.total || 0); qn++;
+  });
+  (state.banktx || []).forEach(t => {
+    if (!txIsIn(t) || txSkip(t) || txClientOf(t) !== nm) return;
+    if ((t.date || '') <= d) { oldP++; return; }
+    payAfter += txMoney(t); pn++;
+  });
+  const after = Math.max(0, bal + saleAfter - payAfter);
+  const M = clientMoneyOf(nm);
+  box.innerHTML = `<b>초기화하면</b><br>
+    기준잔액 <b>${fmtWon(bal)}</b> + ${esc(d)} 이후 매출 <b>${fmtWon(saleAfter)}</b> <span style="color:var(--t3)">(${qn}건)</span>
+    − 이후 입금 <b style="color:var(--gd)">${fmtWon(payAfter)}</b> <span style="color:var(--t3)">(${pn}건)</span>
+    = 미수 <b style="color:${after > 0 ? 'var(--red-t)' : 'var(--gd)'};font-size:14px">${fmtWon(after)}</b>
+    <span style="color:var(--t3)">(지금 ${fmtWon(M.rem)})</span><br>
+    <span style="color:var(--t3)">${esc(d)} 이전 매출 ${oldQ}건 · 입금 ${oldP}건은 «정산 완료»로 접힙니다 (안 지워집니다).</span>`;
+}
+async function saveClientReset(cid) {
+  if (!isAdmin()) { toast('관리자만 할 수 있습니다'); return; }
+  const c = (state.clients || []).find(x => x.id === cid); if (!c) return;
+  const d = (el('cr-date') && el('cr-date').value || '').trim();
+  const bal = Math.max(0, Math.round(_numv(el('cr-bal') && el('cr-bal').value)));
+  const memo = (el('cr-memo') && el('cr-memo').value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) { toast('기준일을 넣어 주세요'); return; }
+  if (!confirm((c.value || '') + '\n\n' + d + ' 까지를 «정산 끝»으로 하고\n잔액 ' + fmtWon(bal) + '원부터 다시 시작할까요?\n\n견적서·통장 기록은 지워지지 않습니다.')) return;
+  try {
+    await Store.update('clients', cid, { resetDate: d, resetBal: bal, resetMemo: memo, resetAt: Date.now(), resetBy: (me && me.name) || '' });
+    moneyBust(); closeModal();
+    toast(d + ' 기준으로 초기화됨 · 잔액 ' + fmtWon(bal) + '원');
+  } catch (e) { toast('실패: ' + ((e && e.message) || e)); }
+  setTimeout(renderClients, 300);
+}
+async function clearClientReset(cid) {
+  if (!isAdmin()) { toast('관리자만 할 수 있습니다'); return; }
+  const c = (state.clients || []).find(x => x.id === cid); if (!c) return;
+  if (!confirm((c.value || '') + ' 의 초기화를 되돌릴까요?\n\n기준일 이전 견적·입금이 다시 미수 계산에 들어옵니다.')) return;
+  try {
+    await Store.update('clients', cid, { resetDate: '', resetBal: 0, resetMemo: '', resetAt: 0, resetBy: '' });
+    moneyBust(); closeModal(); toast('초기화를 되돌렸습니다');
+  } catch (e) { toast('실패: ' + ((e && e.message) || e)); }
+  setTimeout(renderClients, 300);
+}
+/* 거래처 상세에 붙는 «잔액 초기화» 줄 */
+function clientResetCardHtml(c) {
+  const nm = (c.value || '').trim();
+  const R = clientReset(nm);
+  if (!isAdmin() && !R) return '';
+  return `<div class="card" style="margin-bottom:12px;padding:12px 16px;${R ? 'border-left:3px solid #2f6fed' : ''}">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <h3 style="margin:0;font-size:14px;white-space:nowrap"><i class="ti ti-refresh-dot"></i> 잔액 초기화</h3>
+      <span style="flex:1;min-width:140px;font-size:11.5px;color:var(--t3)">${R
+        ? `<b style="color:#1b4fb0">${esc(R.date)}</b> 까지 정산 완료 · 기준잔액 <b>${fmtWon(R.bal)}</b>원${R.memo ? ' · ' + esc(R.memo) : ''}`
+        : '미수가 실제와 어긋날 때, 기준일까지를 «정산 끝»으로 하고 새로 시작합니다'}</span>
+      ${isAdmin() ? `<button class="btn btn-sm ${R ? '' : 'btn-pri'}" style="flex:none" onclick="openClientReset('${c.id}')"><i class="ti ti-refresh-dot"></i>${R ? '다시 설정' : '초기화'}</button>` : ''}
+    </div>
+    ${R ? `<div style="font-size:11px;color:var(--t3);margin-top:6px">${esc(R.date)} 이전 견적·입금은 미수 계산에서 빠져 있습니다 (기록은 그대로 · 원장에서 접어서 볼 수 있습니다)${R.by ? ' · ' + esc(R.by) : ''}</div>` : ''}
+  </div>`;
+}
 let _cmCache = null, _qpCache = null, _cmAt = 0;
 /* 자료가 바뀌면 다시 계산 — 거래처 이름 목록·입금자 추정 결과도 같이 버린다 */
 function moneyBust() { _cmCache = null; _qpCache = null; _lcNames = null; _tcIx = null; }
@@ -8779,9 +8929,18 @@ function _moneyBuild() {
   const byC = {};
   /* ★ 이월 잔액 — 앱 이전의 남은 미수. sale 에 더하지 않고 opening 에 따로 담는다
      (매출 통계·부가세·계산서 집계를 흔들지 않기 위해서다). 미수 계산에만 쓴다. */
-  const OB = {}, PP = {};
+  const OB = {}, PP = {}, CUT = {};
   (state.clients || []).forEach(c => {
     const nm = (c.value || '').trim(); if (!nm) return;
+    /* ★ 잔액 초기화 — 기준일까지는 «정산 끝». 그 날 잔액 한 줄만 남기고 다시 쌓는다 */
+    const _rd = String(c.resetDate || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(_rd)) {
+      if (c.prepayOk) PP[nm] = 1;
+      CUT[nm] = _rd;
+      const _rv = Math.max(0, Math.round(+c.resetBal || 0));
+      if (_rv > 0) { OB[nm] = { amt: _rv, d: _rd }; get(nm).opening = _rv; }
+      return;                                  // 초기화한 거래처는 옛 «이월 잔액»을 쓰지 않는다
+    }
     /* ★ 선입금 인정 — 이 거래처는 «먼저 받고 나중에 파는» 경우가 있다.
        켜면 «견적일 이후 입금만» 규칙을 이 거래처에만 끈다.
        (동진엠에스처럼 8/12에 과입하고 8/13부터 산 경우, 안 켜면 과입금이 앞으로 못 넘어간다) */
@@ -8794,6 +8953,7 @@ function _moneyBuild() {
   (state.quotes || []).forEach(q => {
     /* ★ 잔금 견적서로 «대체된» 원본은 매출·미수에서 뺀다 — 같은 일감을 두 번 세지 않는다 */
     if (!q.ordered || q.supersededBy) return; const c = (q.client || '').trim(); if (!c) return;
+    if (CUT[c] && (q.date || '') <= CUT[c]) return;          // ★ 초기화 기준일까지는 정산 끝
     const o = get(c); o.sale += Math.round(+q.total || 0); o.qn++;
     (byC[c] || (byC[c] = [])).push(q);
   });
@@ -8801,6 +8961,7 @@ function _moneyBuild() {
   (state.banktx || []).forEach(t => {
     if (!txIsIn(t) || txSkip(t)) return;              // ★ 무시한 입금은 미수 계산에 아예 안 들어간다
     const c = txClientOf(t); if (!c) return;
+    if (CUT[c] && (t.date || '') <= CUT[c]) return;          // ★ 초기화 기준일까지는 정산 끝
     get(c).paid += txMoney(t);
     (insC[c] || (insC[c] = [])).push({ d: String(t.date || ''), left: txMoney(t) });
   });
@@ -8947,6 +9108,14 @@ function _ledgerListInner(A) {
   }).join('');
 }
 /* ── 거래처 한 곳의 원장 (잔액이 굴러간다) ── */
+/* ★ 2026-10-06 — 초기화 이전(정산 완료) 줄 접기/펴기. 화면을 다시 안 그리고 줄만 토글한다 */
+let _ldgOldOpen = false;
+function ledgerOldToggle() {
+  _ldgOldOpen = !_ldgOldOpen;
+  document.querySelectorAll('tr.ldg-old').forEach(tr => { tr.style.display = _ldgOldOpen ? '' : 'none'; });
+  const ic = el('ldg-old-ic'); if (ic) ic.className = 'ti ti-chevron-' + (_ldgOldOpen ? 'down' : 'right');
+  const tx = el('ldg-old-tx'); if (tx) tx.textContent = _ldgOldOpen ? '접기' : '눌러서 펼치기';
+}
 function ledgerDetailHtml(client) {
   const R = ledgerRange();
   const CAT = filters.ledgerCat || 'all';
@@ -8961,7 +9130,12 @@ function ledgerDetailHtml(client) {
   const inR = d => (d || '') >= R.sd && (d || '') <= R.ed;
   const shown = all.filter(r => inR(r.d));
   const before = all.filter(r => !inR(r.d) && (r.d || '') < R.sd);
-  const openBal = (!catOn && before.length) ? before[before.length - 1].bal : 0;
+  /* ★ 정산 완료 줄은 잔액이 비어 있으므로(null) 건너뛰고 «마지막으로 값이 있는 줄»을 쓴다 */
+  const _lastOf = arr => { for (let i = arr.length - 1; i >= 0; i--) if (arr[i].bal != null) return arr[i].bal; return 0; };
+  const openBal = (!catOn && before.length) ? _lastOf(before) : 0;
+  const _lastBal = _lastOf(all);
+  const _rs = catOn ? null : clientReset(client);
+  const _rsD = _rs ? _rs.date : '';
   /* ── 분류별 매출 (세라믹 / 세면대 / 석재 / 통관비용) ──
      한 견적에 세라믹과 세면대가 같이 있으면 품목 금액 비율대로 나눠 담는다. */
   const cSplit = {}; LCATS.forEach(c => cSplit[c] = { sum: 0, n: 0 });
@@ -8976,14 +9150,24 @@ function ledgerDetailHtml(client) {
       <span style="font-size:11px;color:var(--t3);width:38px;flex:none">분류</span>
       ${kc('all', '전체')}${catsHere.map(c => kc(c, c, cSplit[c])).join('')}
     </div>` : '';
-  const obNote = _obAmt ? `<div class="banner" style="margin-bottom:10px;font-size:12px;background:#fff7e0;border:1px solid #f0d090;color:#8a5a00"><i class="ti ti-history"></i><span style="flex:1;min-width:0">
+  const obNote = (_obAmt && !_rs) ? `<div class="banner" style="margin-bottom:10px;font-size:12px;background:#fff7e0;border:1px solid #f0d090;color:#8a5a00"><i class="ti ti-history"></i><span style="flex:1;min-width:0">
       <b>이월 잔액 ${fmtWon(_obAmt)}원</b>이 미수에 포함되어 있습니다 (앱 이전 거래). 매출·계산서 집계에는 들어가지 않습니다.</span></div>` : '';
+  const rsNote = _rs ? `<div class="banner" style="margin-bottom:10px;font-size:12px;background:#eaf1ff;border:1px solid #c7ddf7;color:#1b4fb0"><i class="ti ti-refresh-dot"></i><span style="flex:1;min-width:0">
+      <b>${esc(_rs.date)} 까지 정산 완료</b>로 초기화되어 있습니다 — 그 날 기준잔액 <b>${fmtWon(_rs.bal)}원</b>부터 다시 쌓습니다.
+      위 <b>확정 매출·받은 돈</b>도 <b>${esc(_rs.date)} 이후</b>만 센 금액입니다. 이전 기록은 아래에서 <b>펼쳐 볼 수 있습니다</b> (지워지지 않았습니다).${_rs.memo ? ' · ' + esc(_rs.memo) : ''}</span></div>` : '';
   const catNote = catOn ? `<div class="banner info" style="margin-bottom:10px;font-size:12px"><i class="ti ti-info-circle"></i><span style="flex:1;min-width:0;display:block">
       <b>${esc(CAT)}</b> 몫만 보고 있습니다 — 매출·계산서 금액은 그 견적의 <b>${esc(CAT)} 품목 금액 비율</b>만큼입니다.
       입금은 은행 기록에 «무슨 품목 대금인지»가 안 적혀 있어 분류로 나눌 수 없으므로, <b>입금·잔액(미수)은 «전체»에서만 보입니다.</b></span></div>` : '';
   const rc = (v, l) => `<button class="chip ${(filters.ledgerRange || 'all') === v ? 'active' : ''}" onclick="ledgerSetRange('${v}')">${l}</button>`;
   const money = (v, col) => `<td style="text-align:right;white-space:nowrap${col ? ';color:' + col : ''}">${v ? fmtWon(v) : '<span style="color:var(--bd2)">·</span>'}</td>`;
   const row = r => {
+    /* ★ 초기화 기준일 — 여기서부터 다시 쌓는다 */
+    if (r.k === 'reset') return `<tr style="background:#eaf1ff;border-top:2px solid #2f6fed">
+      <td style="white-space:nowrap;color:#1b4fb0;font-weight:700">${esc((r.d || '').slice(2))}</td>
+      <td><span class="pill" style="background:#2f6fed;color:#fff"><i class="ti ti-refresh-dot"></i> 초기화</span></td>
+      <td><b style="color:#1b4fb0">여기까지 정산 완료 — 아래 잔액부터 다시 시작</b>${r.memo ? ` <span style="color:var(--t3)">· ${esc(r.memo)}</span>` : ''}${r.by ? ` <span style="color:var(--t3)">· ${esc(r.by)}</span>` : ''}</td>
+      ${money(0)}${money(0)}
+      <td style="text-align:right;white-space:nowrap;font-weight:800;color:#1b4fb0">${fmtWon(r.bal)}</td></tr>`;
     if (r.k === 'open') return `<tr style="background:#fff7e0">
       <td style="white-space:nowrap;color:var(--t3)">${esc((r.d || '').slice(2))}</td>
       <td><span class="pill" style="background:#ffeab8;color:#8a5a00"><i class="ti ti-history"></i> 이월</span></td>
@@ -9050,18 +9234,36 @@ function ledgerDetailHtml(client) {
       <b>미수를 마이너스로 만들지 않고 따로 둡니다.</b></span></div>` : ''}
     ${catChips}
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:9px">${catChips ? '<span style="font-size:11px;color:var(--t3);width:38px;flex:none">기간</span>' : ''}${rc('all', '전체')}${rc('3m', '최근 3개월')}${rc('tm', '이번 달')}${rc('lm', '지난 달')}</div>
-    ${obNote}${catNote}
+    ${rsNote}${obNote}${catNote}
     ${catOn ? catTable : `<div class="tbl-wrap"><table class="tbl">
       <thead><tr><th style="width:58px">날짜</th><th style="width:56px">구분</th><th>내용</th>
         <th style="text-align:right;width:92px">매출</th><th style="text-align:right;width:92px">입금</th><th style="text-align:right;width:98px">잔액(미수)</th></tr></thead>
       <tbody>
         ${(R.sd !== '0000-00-00' && before.length) ? `<tr style="background:var(--soft)"><td colspan="5" style="color:var(--t2)"><i class="ti ti-corner-down-right"></i> 이월 (${esc(R.sd)} 이전)</td>
           <td style="text-align:right;font-weight:800">${fmtWon(openBal)}</td></tr>` : ''}
-        ${shown.length ? shown.map(row).join('') : `<tr><td colspan="6" style="text-align:center;color:var(--t3);padding:18px">이 기간에 내역이 없습니다</td></tr>`}
+        ${(() => {
+          /* ★ 정산 완료(초기화 이전) 줄은 흐리게 접어 둔다 — 합계·잔액에는 안 들어간다 */
+          const oldR = shown.filter(r => r.old), newR = shown.filter(r => !r.old);
+          if (!shown.length) return `<tr><td colspan="6" style="text-align:center;color:var(--t3);padding:18px">이 기간에 내역이 없습니다</td></tr>`;
+          const head = oldR.length ? `<tr style="background:#f3f4f6;cursor:pointer" onclick="ledgerOldToggle()">
+            <td colspan="6" style="color:var(--t3);font-size:12px;padding:8px 10px">
+              <i class="ti ti-chevron-${_ldgOldOpen ? 'down' : 'right'}" id="ldg-old-ic"></i>
+              <b>정산 완료</b> — ${esc(_rsD)} 이전 ${oldR.length}건
+              <span style="color:var(--t3)">(매출 ${fmtWon(oldR.filter(r => r.k === 'sale').reduce((a, r) => a + r.amt, 0))} · 입금 ${fmtWon(oldR.filter(r => r.k === 'pay').reduce((a, r) => a + r.amt, 0))})</span>
+              · <span id="ldg-old-tx">${_ldgOldOpen ? '접기' : '눌러서 펼치기'}</span></td></tr>` : '';
+          /* 「매출」 줄처럼 style 이 없는 줄도 있어서, 있으면 끼워 넣고 없으면 새로 붙인다 */
+          const _st = (_ldgOldOpen ? '' : 'display:none;') + 'opacity:.45;';
+          const oldHtml = oldR.map(r => {
+            let h = row(r);
+            h = /^<tr[^>]*style="/.test(h) ? h.replace(/^(<tr[^>]*style=")/, '$1' + _st) : h.replace(/^<tr/, '<tr style="' + _st + '"');
+            return h.replace(/^<tr/, '<tr class="ldg-old"');
+          }).join('');
+          return head + oldHtml + newR.map(row).join('');
+        })()}
         <tr style="background:var(--soft);font-weight:800"><td colspan="3">합계</td>
-          <td style="text-align:right">${fmtWon(shown.filter(r => r.k === 'sale').reduce((s, r) => s + r.amt, 0))}</td>
-          <td style="text-align:right;color:var(--gd)">${fmtWon(shown.filter(r => r.k === 'pay').reduce((s, r) => s + r.amt, 0))}</td>
-          <td style="text-align:right;color:${(all.length ? all[all.length - 1].bal : 0) > 0 ? 'var(--red-t)' : 'var(--gd)'}">${fmtWon(all.length ? all[all.length - 1].bal : 0)}</td></tr>
+          <td style="text-align:right">${fmtWon(shown.filter(r => !r.old && r.k === 'sale').reduce((s, r) => s + r.amt, 0))}</td>
+          <td style="text-align:right;color:var(--gd)">${fmtWon(shown.filter(r => !r.old && r.k === 'pay').reduce((s, r) => s + r.amt, 0))}</td>
+          <td style="text-align:right;color:${_lastBal > 0 ? 'var(--red-t)' : 'var(--gd)'}">${fmtWon(_lastBal)}</td></tr>
       </tbody>
     </table></div>
     <div style="font-size:11.5px;color:var(--t3);margin-top:7px">잔액 = 확정 매출 누계 − 입금 누계. 세금계산서 줄은 발행 사실만 표시하고 잔액에는 영향을 주지 않습니다.
