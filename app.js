@@ -11978,12 +11978,30 @@ async function xlsxStyled() {
   return _xlsxS;
 }
 /* 표 제목 14칸 · 열 너비 · 구분별 색 */
-const CL_HEAD = ['날짜', '거래처', '전표', '구분', '공장', '품목명', '규격', '헤베수', '수량', '원가단가', '원가', '매출액', '마진', '마진율'];
-const CL_WCH = [11, 24, 13, 7, 11, 44, 28, 8, 7, 12, 15, 15, 14, 9];
+/* ★★ 2026-10-07 — 사용자 요청 4가지
+   ① 원가 미입력 건도 «한 줄»이 아니라 다른 건처럼 품목 상세를 다 펼친다
+   ② 엑셀에서 원가단가를 수기로 넣으면 원가·마진·마진율·소계·총계가 «수식»으로 따라온다
+   ③ 이슈(실수 비용)로 적은 내용은 귀책·사유까지 전부 나온다
+   ④ O열에 «영업담당» — 고를 수 있고(드롭다운) 이름마다 색이 붙는다          */
+const CL_HEAD = ['날짜', '거래처', '전표', '구분', '공장·귀책', '품목명', '규격', '헤베수', '수량', '원가단가', '원가', '매출액', '마진', '마진율', '영업담당', '비고'];
+const CL_WCH = [11, 22, 13, 7, 12, 40, 24, 8, 7, 12, 15, 15, 14, 9, 14, 34];
+/* 영업담당 — 고를 수 있는 이름과 색 (사용자 지정) */
+const CL_REPS = [
+  { nm: '장별대리', bg: 'DCE9FB', fg: '1B4FB0' },
+  { nm: '김성민사장님', bg: 'DAF2E6', fg: '0F6E56' },
+  { nm: '임병기사장님', bg: 'FCEBC8', fg: '8A5A00' }
+];
 const CL_FILL = { '자재': 'DEEBF7', '가공': 'E2EFDA', '시공': 'FFF2CC', '운송': 'FDEADA', '부속': 'F2F2F2', '기타': 'EDEDED', '이슈': 'FFD9D4', '할인': 'FCE0E6' };
 /* aoa(줄 목록) + meta(줄 종류) → 색까지 입힌 시트 */
-function _clSheet(XS, aoa, meta) {
+function _clSheet(XS, aoa, meta, opt) {
+  opt = opt || {};
   const ws = XS.utils.aoa_to_sheet(aoa);
+  /* ★ 수식 칸 — 값 대신 수식을 넣는다 (엑셀을 열면 바로 계산된다) */
+  (opt.fx || []).forEach(f => {
+    const a = XS.utils.encode_cell({ r: f.r, c: f.c });
+    ws[a] = { t: 'n', f: f.f };
+  });
+  const NEED = opt.need || [];
   const N = CL_HEAD.length;
   const bd = { style: 'thin', color: { rgb: 'FFBFBFBF' } };
   const box = { top: bd, bottom: bd, left: bd, right: bd };
@@ -11999,7 +12017,8 @@ function _clSheet(XS, aoa, meta) {
     if (kind === 'gap') continue;
     for (let c = 0; c < N; c++) {
       const k = cell(r, c);
-      const st = { border: box, font: { sz: 10 }, alignment: { vertical: 'center', horizontal: c <= 6 ? 'left' : (c === 13 ? 'center' : 'right') } };
+      const st = { border: box, font: { sz: 10 },
+        alignment: { vertical: 'center', horizontal: (c <= 6 || c === 15) ? 'left' : ((c === 13 || c === 14) ? 'center' : 'right'), wrapText: c === 15 } };
       if (kind === 'head') {
         st.fill = { patternType: 'solid', fgColor: { rgb: 'FF44546A' } };
         st.font = { sz: 10, bold: true, color: { rgb: 'FFFFFFFF' } };
@@ -12021,7 +12040,13 @@ function _clSheet(XS, aoa, meta) {
         st.fill = { patternType: 'solid', fgColor: { rgb: 'FFEAF3E0' } };
         st.font = { sz: 10, bold: true };
       }
-      if (kind !== 'head' && typeof k.v === 'number') {
+      /* ★ 아직 원가를 안 넣은 줄 — «여기에 적으세요» 칸(원가단가)을 노랗게 */
+      if (NEED[r] && (c === 9 || c === 10)) {
+        st.fill = { patternType: 'solid', fgColor: { rgb: c === 9 ? 'FFFFF2CC' : 'FFEAF3E0' } };
+        st.border = { top: bd, bottom: bd, left: { style: 'medium', color: { rgb: 'FFD9A441' } }, right: { style: 'medium', color: { rgb: 'FFD9A441' } } };
+        st.font = { sz: 10, bold: true, color: { rgb: 'FF8A5A00' } };
+      }
+      if (kind !== 'head' && c <= 13 && (typeof k.v === 'number' || k.f)) {
         k.z = (c === 7) ? '0.00;;""' : (c === 13) ? '0.0%;;""' : MONEY;
       }
       k.s = st;
@@ -12036,7 +12061,7 @@ function _clSheet(XS, aoa, meta) {
    그래서 다 만들어진 엑셀 파일(사실은 zip 압축파일) 안에 있는
    시트 설명서에 «위 n줄 고정» 한 줄을 직접 끼워 넣어 준다.
    혹시 실패하면 고정 없이 그냥 받아지게 한다 (파일은 무조건 받아진다). */
-function clSaveXlsx(XS, wb, name, freezeRows) {
+function clSaveXlsx(XS, wb, name, freezeRows, extra) {
   let out = null;
   try {
     const buf = XS.write(wb, { type: 'array', bookType: 'xlsx' });
@@ -12046,8 +12071,37 @@ function clSaveXlsx(XS, wb, name, freezeRows) {
     const tl = 'A' + (freezeRows + 1);
     const pane = '<pane ySplit="' + freezeRows + '" topLeftCell="' + tl + '" activePane="bottomLeft" state="frozen"/>'
       + '<selection pane="bottomLeft" activeCell="' + tl + '" sqref="' + tl + '"/>';
-    const nx = xml.replace(/<sheetView([^>]*)\/>/, '<sheetView$1>' + pane + '</sheetView>');
+    let nx = xml.replace(/<sheetView([^>]*)\/>/, '<sheetView$1>' + pane + '</sheetView>');
     if (nx === xml) throw new Error('sheetView 를 못 찾음');
+    /* ★ 2026-10-07 — 담당자 칸: «고르는 목록»과 «이름별 색» 을 넣는다 */
+    const E = extra || {};
+    let cfXml = '', dvXml = '', dxXml = '';
+    if (E.cf && E.cf.rules && E.cf.rules.length) {
+      dxXml = '<dxfs count="' + E.cf.rules.length + '">' + E.cf.rules.map(r =>
+        '<dxf><font><color rgb="FF' + r.fg + '"/></font><fill><patternFill><bgColor rgb="FF' + r.bg + '"/></patternFill></fill></dxf>').join('') + '</dxfs>';
+      cfXml = '<conditionalFormatting sqref="' + E.cf.sqref + '">' + E.cf.rules.map((r, i) =>
+        '<cfRule type="cellIs" dxfId="' + i + '" priority="' + (i + 1) + '" operator="equal"><formula>"' + r.eq + '"</formula></cfRule>').join('') + '</conditionalFormatting>';
+    }
+    if (E.dv && E.dv.list && E.dv.list.length) {
+      const l1 = E.dv.list.join(',');
+      if (l1.length <= 250) dvXml = '<dataValidations count="1"><dataValidation type="list" allowBlank="1" showInputMessage="0" showErrorMessage="0" sqref="'
+        + E.dv.sqref + '"><formula1>"' + l1 + '"</formula1></dataValidation></dataValidations>';
+    }
+    if (cfXml || dvXml) {
+      const ins = cfXml + dvXml;                       // 순서: 조건부서식 → 목록 (엑셀 규칙)
+      if (nx.indexOf('<pageMargins') >= 0) nx = nx.replace('<pageMargins', ins + '<pageMargins');
+      else if (nx.indexOf('<ignoredErrors') >= 0) nx = nx.replace('<ignoredErrors', ins + '<ignoredErrors');
+      else nx = nx.replace('</worksheet>', ins + '</worksheet>');
+    }
+    if (dxXml) {
+      const sent = (zip.FileIndex || []).filter(f => /styles\.xml$/.test(f.name || ''))[0];
+      if (sent) {
+        const sx = new TextDecoder().decode(new Uint8Array(sent.content));
+        let ns = sx.replace(/<dxfs\b[^>]*(?:\/>|>[\s\S]*?<\/dxfs>)/, dxXml);
+        if (ns === sx) ns = (sx.indexOf('<tableStyles') >= 0) ? sx.replace('<tableStyles', dxXml + '<tableStyles') : sx.replace('</styleSheet>', dxXml + '</styleSheet>');
+        const sb = new TextEncoder().encode(ns); sent.content = sb; sent.size = sb.length;
+      }
+    }
     const nb = new TextEncoder().encode(nx);
     ent.content = nb; ent.size = nb.length;
     out = XS.CFB.write(zip, { fileType: 'zip', type: 'array' });
@@ -12069,50 +12123,138 @@ async function downloadCostLedger() {
   toast('엑셀 만드는 중…');
   const XS = await xlsxStyled();
   if (!XS) { toast('엑셀 모듈을 못 불러왔습니다'); return; }
+
   const aoa = [[''], [''], [], CL_HEAD.slice()];
   const meta = ['title', 'sub', 'gap', 'head'];
-  const push = (row, k) => { aoa.push(row); meta.push(k); };
+  const need = [false, false, false, false];
+  const fx = [];                                  // 수식 칸 목록
+  /* push 는 «엑셀 줄 번호»(1부터)를 돌려준다 — 수식에 바로 쓰려고 */
+  const push = (row, k, isNeed) => { aoa.push(row); meta.push(k); need.push(!!isNeed); return aoa.length; };
+  const F = (rowNo, col, f) => fx.push({ r: rowNo - 1, c: col, f: f });
+  /* 한 줄의 원가·마진·마진율 수식
+     원가 K = 원가단가 × (헤베 × 수량)  ·  헤베가 없으면 수량만  ·  수량도 없으면 1회
+     — 프로그램에서 계산하는 방법과 똑같다 */
+  const fCost = n => 'IF(J' + n + '="","",ROUND(J' + n + '*IF(H' + n + '>0,H' + n + '*IF(I' + n + '>0,I' + n + ',1),IF(I' + n + '>0,I' + n + ',1)),0))';
+  /* ★ 원가를 아직 안 넣은 줄은 마진·마진율을 «빈칸»으로 둔다 —
+     0원 원가로 보고 마진 100% 로 찍히면 숫자를 믿을 수 없게 된다 */
+  const addMargin = n => {
+    F(n, 12, 'IF(OR(L' + n + '="",K' + n + '=""),"",L' + n + '-K' + n + ')');
+    F(n, 13, 'IF(OR(M' + n + '="",N(L' + n + ')<=0),"",M' + n + '/L' + n + ')');
+  };
+  /* 소계·총계 — 원가가 하나도 안 들어왔으면 마진을 비워 둔다 */
+  const addSum = n => {
+    F(n, 12, 'IF(N(K' + n + ')>0,L' + n + '-K' + n + ',"")');
+    F(n, 13, 'IF(AND(N(K' + n + ')>0,N(L' + n + ')>0),M' + n + '/L' + n + ',"")');
+  };
+
   let tSup = 0, tCost = 0, nNo = 0;
+  const reps = {};                                // 엑셀에 실제로 나온 담당자 이름
   qs.forEach(q => {
     const sup = quoteSaleNet(q);
     const pc = +q.processCost || 0;
     const ic = (q.issueLines || []).reduce((a, b) => a + (+b.cost || 0), 0);
     const has = (q.costLines && q.costLines.length) || pc > 0 || ic > 0 || (q.costTotal != null);
-    const rep = quoteSalesRepOf(q);
+    const rep = quoteSalesRepOf(q) || '';
+    if (rep) reps[rep] = 1;
     const who = ' · 담당 ' + (q.by || '-') + (rep ? ' · 영업 ' + rep : '');
     const tag = '▣ ' + (q.client || '') + ' / ' + (q.docNo || '') + who;
-    if (!has) {                                /* 원가를 아직 안 넣은 건 — 붉게 한 줄 */
-      nNo++; tSup += sup;
-      push([qDate(q), q.client || '', q.docNo || '', '미입력', '', tag + '  ← 원가 미입력', '', '', '', '', '', sup, '', ''], 'none');
+    const D = qDate(q), C = q.client || '', NO = q.docNo || '';
+    const first = aoa.length + 1;                 // 이 견적의 첫 상세 줄 (엑셀 줄 번호)
+
+    if (!has) {
+      /* ★ 원가 미입력 — 예전엔 붉은 «한 줄»이었다. 이제 다른 건과 똑같이 품목을 다 펼친다.
+         원가단가 칸(노란 칸)에 숫자만 넣으면 원가·마진·소계·총계가 수식으로 따라온다. */
+      nNo++;
+      const items = (q.items || []).filter(it => it && (it.name || '').trim());
+      if (items.length) {
+        items.forEach(it => {
+          const gb = costGubunOf(it.name) || '자재';
+          /* ★ 헤베를 곱하는 줄은 «자재이면서 세면대가 아닌» 줄뿐이다 (프로그램 입력칸과 똑같은 규칙).
+             세면대는 «개당» 단가라 헤베를 곱하면 원가가 엉뚱해진다. */
+          const hb = (gb === '자재' && !costIsBasin(it.name)) ? (costHebeOf(it.name, it.spec || '') || '') : '';
+          const amt = Math.round(+it.amt || 0);
+          const n = push([D, C, NO, gb, '', it.name || '', it.spec || '', hb, +it.qty || '', '', '', amt, '', '', rep,
+            '원가단가를 넣으면 자동 계산'], gb, true);
+          F(n, 10, fCost(n)); addMargin(n);
+        });
+      } else {
+        const n = push([D, C, NO, '자재', '', '(품목 없음) ' + tag, '', '', '', '', '', sup, '', '', rep, '원가단가를 넣으면 자동 계산'], '자재', true);
+        F(n, 10, fCost(n)); addMargin(n);
+      }
+      /* ★ 이슈로 적어 둔 내용은 원가를 안 넣은 건에도 그대로 나와야 한다 (사용자 요청) */
+      (q.issueLines || []).forEach(l => {
+        const n = push([D, C, NO, '이슈', l.blame || '', '⚠ ' + (l.name || ''), l.spec || '', +l.hebe || '', +l.qty || '', +l.unitCost || '', +l.cost || '', '', '', '', rep,
+          (l.blame ? '[' + l.blame + '] ' : '') + (l.blameNote || '')], '이슈', !(+l.cost));
+        if (+l.unitCost > 0 || !(+l.cost)) F(n, 10, fCost(n));
+        addMargin(n);
+      });
+      const _dc0 = quoteDcSupply(q);
+      if (_dc0 > 0) { const n = push([D, C, NO, '할인', '', '할인 (D/C)', '', '', '', '', '', -_dc0, '', '', rep, q.discountNote || ''], '할인'); addMargin(n); }
+      const last0 = aoa.length;
+      const sb0 = push(['', '', NO, '소계', '', tag, '', '', '', '', '', '', '', '', rep, '※ 원가 미입력 — 노란 칸에 원가단가를 넣으세요'], 'none');
+      F(sb0, 10, 'SUM(K' + first + ':K' + last0 + ')');
+      F(sb0, 11, 'SUM(L' + first + ':L' + last0 + ')');
+      addSum(sb0);
+      tSup += sup;
       push([], 'gap');
       return;
     }
+
     const ct = (q.costLines || []).reduce((a, b) => a + (+b.cost || 0), 0) + pc + ic;
     tSup += sup; tCost += ct;
     const sm = costSaleMap(q);
-    const c3 = (sale, cost) => (sale == null) ? ['', '', ''] : [sale, sale - cost, sale > 0 ? +((sale - cost) / sale).toFixed(4) : 0];
     (q.costLines || []).forEach(l => {
-      const _c = +l.cost || 0, _s = sm.line(l.name);
-      push([qDate(q), q.client || '', q.docNo || '', l.gubun || '', l.factory || '', l.name || '', l.spec || '', +l.hebe || '', +l.qty || '', +l.unitCost || '', _c].concat(c3(_s, _c)), l.gubun || '');
+      const _c = +l.cost || 0, _s = sm.line(l.name), _u = +l.unitCost || 0;
+      const n = push([D, C, NO, l.gubun || '', l.factory || '', l.name || '', l.spec || '', +l.hebe || '', +l.qty || '',
+        _u || '', _u > 0 ? '' : _c, (_s == null) ? '' : _s, '', '', rep, ''], l.gubun || '');
+      if (_u > 0) F(n, 10, fCost(n));             // 원가단가가 있으면 수식 (고치면 바로 따라온다)
+      addMargin(n);
     });
-    if (pc > 0) push([qDate(q), q.client || '', q.docNo || '', '가공', '공장견적', '가공비(공장 견적 총액)', '', '', '', '', pc].concat(c3(sm.proc(), pc)), '가공');
+    if (pc > 0) {
+      const _s = sm.proc();
+      const n = push([D, C, NO, '가공', '공장견적', '가공비(공장 견적 총액)', '', '', '', '', pc, (_s == null) ? '' : _s, '', '', rep, ''], '가공');
+      addMargin(n);
+    }
     (q.issueLines || []).forEach(l => {
-      push([qDate(q), q.client || '', q.docNo || '', '이슈', l.blame || '', '⚠ ' + (l.name || '') + (l.blameNote ? ' — ' + l.blameNote : ''), l.spec || '', +l.hebe || '', +l.qty || '', +l.unitCost || '', +l.cost || 0, '', '', ''], '이슈');
+      const _u = +l.unitCost || 0;
+      const n = push([D, C, NO, '이슈', l.blame || '', '⚠ ' + (l.name || ''), l.spec || '', +l.hebe || '', +l.qty || '',
+        _u || '', _u > 0 ? '' : (+l.cost || 0), '', '', '', rep,
+        (l.blame ? '[' + l.blame + '] ' : '') + (l.blameNote || '')], '이슈');
+      if (_u > 0) F(n, 10, fCost(n));
+      addMargin(n);
     });
     const _dc = quoteDcSupply(q);
-    if (_dc > 0) push([qDate(q), q.client || '', q.docNo || '', '할인', '', '할인 (D/C)' + (q.discountNote ? ' — ' + q.discountNote : ''), '', '', '', '', '', -_dc, '', ''], '할인');
-    const mg = sup - ct;
-    push(['', '', q.docNo || '', '소계', '', tag, '', '', '', '', ct, sup, mg, sup > 0 ? +(mg / sup).toFixed(4) : 0], 'sub');
+    if (_dc > 0) { const n = push([D, C, NO, '할인', '', '할인 (D/C)', '', '', '', '', '', -_dc, '', '', rep, q.discountNote || ''], '할인'); addMargin(n); }
+    const last = aoa.length;
+    const sb = push(['', '', NO, '소계', '', tag, '', '', '', '', '', '', '', '', rep, ''], 'sub');
+    F(sb, 10, 'SUM(K' + first + ':K' + last + ')');
+    F(sb, 11, 'SUM(L' + first + ':L' + last + ')');
+    addSum(sb);
     push([], 'gap');
   });
-  push(['', '', '', '총계', '', '견적서 ' + qs.length + '건' + (nNo ? ' (원가 미입력 ' + nNo + '건 포함)' : ''), '', '', '', '', tCost, tSup, tSup - tCost, tSup > 0 ? +((tSup - tCost) / tSup).toFixed(4) : 0], 'tot');
+
+  /* 총계 — «소계» 줄만 더한다 (D열이 «소계»인 줄) */
+  const bodyEnd = aoa.length;
+  const tot = push(['', '', '', '총계', '', '견적서 ' + qs.length + '건' + (nNo ? ' (원가 미입력 ' + nNo + '건 포함)' : ''),
+    '', '', '', '', '', '', '', '', '', nNo ? '노란 칸에 원가단가를 넣으면 전부 자동 계산됩니다' : ''], 'tot');
+  F(tot, 10, 'SUMIF($D$5:$D$' + bodyEnd + ',"소계",K$5:K$' + bodyEnd + ')');
+  F(tot, 11, 'SUMIF($D$5:$D$' + bodyEnd + ',"소계",L$5:L$' + bodyEnd + ')');
+  addSum(tot);
+
   aoa[0][0] = '원가 원장 — ' + (srch ? '「' + srch + '」 검색 결과 (전체 기간)' : ym.slice(0, 4) + '년 ' + (+ym.slice(5, 7)) + '월');
   aoa[1][0] = '출력일 ' + todayStr() + ' · 견적서 ' + qs.length + '건 · 매출 ' + fmtWon(tSup) + ' · 원가 ' + fmtWon(tCost) + ' · 마진 ' + fmtWon(tSup - tCost)
-    + (nNo ? '   ※ 붉은 줄 ' + nNo + '건은 원가 미입력 — 마진에 안 잡힙니다' : '');
+    + (nNo ? '   ※ 원가 미입력 ' + nNo + '건 — 노란 칸(원가단가)에 넣으면 원가·마진·소계·총계가 자동으로 따라옵니다' : '');
+
   const wb = XS.utils.book_new();
-  XS.utils.book_append_sheet(wb, _clSheet(XS, aoa, meta), '원가원장');
-  clSaveXlsx(XS, wb, '원가원장_' + (srch ? srch.replace(/[\\/:*?"<>|]/g, '') : ym) + '.xlsx', 4);
-  toast('원가 원장 엑셀 다운로드');
+  XS.utils.book_append_sheet(wb, _clSheet(XS, aoa, meta, { fx: fx, need: need }), '원가원장');
+  /* 담당자 칸 — 고르는 목록 + 이름별 색 */
+  const names = CL_REPS.map(x => x.nm).concat(Object.keys(reps).filter(n => CL_REPS.every(x => x.nm !== n)));
+  const sq = 'O5:O' + Math.max(5, tot);
+  clSaveXlsx(XS, wb, '원가원장_' + (srch ? srch.replace(/[\\/:*?"<>|]/g, '') : ym) + '.xlsx', 4, {
+    dv: { sqref: sq, list: names },
+    cf: { sqref: sq, rules: CL_REPS.map(x => ({ eq: x.nm, bg: x.bg, fg: x.fg })) }
+  });
+  toast('원가 원장 엑셀 다운로드' + (nNo ? ' · 미입력 ' + nNo + '건은 노란 칸에 입력' : ''));
 }
 /* ══════════════════════════════════════════════════════════
    계정과목 원장 — 통장 출금 한 건 한 건을 계정으로 나눠 본다 (2026-09-07)
