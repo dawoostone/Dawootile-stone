@@ -11783,7 +11783,7 @@ function renderCostForm() {
   }) : (q.items || []).filter(it => costGubunOf(it.name) !== '가공').map(it => ({ gubun: costGubunOf(it.name), factory: '', name: it.name, spec: it.spec || '', hebe: costHebeOf(it.name, it.spec || ''), qty: it.qty || '', unitCost: costUnitOf(it.name, costHebeOf(it.name, it.spec || '')), cost: '', cnStone: it.stone || '' }));
   const _dcRaw = quoteDcRaw(q), _dcSup = quoteDcSupply(q), _saleNet = quoteSaleNet(q);
   const _issueRows = (q.issueLines || []).map(issueLineHtml).join('');
-  const _sm = costSaleMap(q);
+  const _sm = costSaleMap(q, lines);
   const rows = lines.map(l => costLineHtml(l, _sm.line(l.name))).join('');
   el('pg-' + tab).innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-calculator"></i>원가 정리</h2><p>${esc(q.docNo || '')} · ${esc(q.client || '')} · 매출 ${fmtWon(q.supply)}</p></div>
@@ -11872,21 +11872,40 @@ async function submitCost(id) {
    원가 줄은 견적 항목에서 만들어지므로 «품목명»으로 짝을 맞춘다.
    ★ 같은 이름이 두 줄이면 한 번 쓴 항목은 다시 안 쓴다 (매출이 두 번 세지지 않게).
    ★ 가공은 원가를 총액 한 줄로 넣으므로, 견적서의 가공 항목 금액을 모두 더해서 붙인다. */
-function costSaleMap(q) {
+function costSaleMap(q, lines) {
   const used = new Set();
   const items = (q && q.items) || [];
   const amt = it => Math.round(+((it && it.amt) || 0));
+  /* ══════════════════════════════════════════════════════════
+     ★★ 2026-10-07 — «이름이 같은 줄이 여러 개»일 때 매출을 한 줄씩 나눠 붙인다
+     사용자 제보: 「세면대 비규격 주문제작」 4줄짜리 견적에서
+       첫 줄에 매출 2,860,000(네 줄 합계)이 통째로 붙고 나머지 3줄은 빈칸,
+       마진율도 78.9% 로 엉뚱하게 나왔다.
+     예전에는 이름이 같은 «매출 품목을 전부» 한꺼번에 첫 원가 줄에 몰아줬다.
+     ★ 이제 같은 이름의 원가 줄 수를 먼저 세고,
+        · 여러 줄이면 위에서부터 «한 줄씩» 짝지어 준다
+        · 마지막 줄은 남은 것을 전부 가져간다 (매출 품목이 더 많은 경우)
+     ══════════════════════════════════════════════════════════ */
+  const need = {}, seen = {};
+  ((lines && lines.length) ? lines : ((q && q.costLines) || [])).forEach(l => {
+    const k = _normName((l && l.name) || ''); if (k) need[k] = (need[k] || 0) + 1;
+  });
   return {
     /* 원가 줄 하나에 붙는 매출 (못 찾으면 null — 0원과 구별해서 «-» 로 둔다) */
     line: function (name) {
       const k = _normName(name || ''); if (!k) return null;
+      const tot = need[k] || 1;
+      const nth = (seen[k] = (seen[k] || 0) + 1);      // 이 이름의 몇 번째 원가 줄인지
+      const onlyOne = tot > 1 && nth < tot;            // 마지막 줄이 아니면 한 개만
       let sum = null;
-      items.forEach((it, idx) => {
-        if (used.has(idx)) return;
-        if (_normName(it.name || '') !== k) return;
-        if (costGubunOf(it.name) === '가공') return;      // 가공은 아래 총액 줄에서 센다
+      for (let idx = 0; idx < items.length; idx++) {
+        const it = items[idx];
+        if (used.has(idx)) continue;
+        if (_normName(it.name || '') !== k) continue;
+        if (costGubunOf(it.name) === '가공') continue;   // 가공은 아래 총액 줄에서 센다
         used.add(idx); sum = (sum || 0) + amt(it);
-      });
+        if (onlyOne) break;
+      }
       return sum;
     },
     /* 가공비 한 줄에 붙는 매출 = 견적서 가공 항목 전부 */
@@ -12206,7 +12225,7 @@ async function downloadCostLedger() {
 
     const ct = (q.costLines || []).reduce((a, b) => a + (+b.cost || 0), 0) + pc + ic;
     tSup += sup; tCost += ct;
-    const sm = costSaleMap(q);
+    const sm = costSaleMap(q, q.costLines || []);
     (q.costLines || []).forEach(l => {
       const _c = +l.cost || 0, _s = sm.line(l.name), _u = +l.unitCost || 0;
       const n = push([D, C, NO, l.gubun || '', l.factory || '', l.name || '', l.spec || '', +l.hebe || '', +l.qty || '',
