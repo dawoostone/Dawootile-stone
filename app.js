@@ -12403,24 +12403,31 @@ const ACCT_RULES = [
   ['접대비', /접대|선물|경조사|화환/],
   ['매입/자재비', /매입|자재|슬라브|슬랩|원석|타일|수입|무역|대전송금|송금|스톤|석재|세라믹|대리석|도기|수전|부속/]
 ];
-/* 이 출금 한 건의 계정 → { cat, sure }
+/* 이 출금 한 건의 계정 → { cat, sure, only }
    sure=true : 사람이 정했거나(t.acct) 같은 상대방을 전에 정해 둔 것(별칭)
-   sure=false: 적요를 보고 규칙으로 추정한 것 (합계에는 똑같이 들어간다) */
+   sure=false: 적요를 보고 규칙으로 추정한 것 (합계에는 똑같이 들어간다)
+   ★★ only=true : «이 건만» 예외 (2026-10-07)
+      사용자: *"계정과목 자동 기억되는 건 좋은데, 건바이건으로 예외적용 필요"*
+      자물쇠(acctOnly)가 걸린 줄은 적요 추정도, «같은 이름 자동»(별칭)도 건드리지 않는다.
+      같은 상대방 이름의 규칙을 나중에 바꿔도 이 줄만은 그대로 남는다. */
 function acctOf(t) {
   const cats = acctCats();
+  const only = !!(t && t.acctOnly);
   const fix = String((t && t.acct) || '').trim();
-  if (fix) return { cat: fix, sure: true };
+  if (fix) return { cat: fix, sure: true, only: only };
+  /* ★ 자물쇠만 걸고 계정을 안 고른 줄 = «규칙이 뭐라 해도 미분류로 둔다» */
+  if (only) return { cat: '', sure: true, only: true };
   const k = _acctKey((t && t.payer) || '');
   const al = acctAliasMap()[k];
-  if (al) return { cat: al, sure: true };
+  if (al) return { cat: al, sure: true, only: false };
   /* ★ 적요(상대방 이름)만 본다. 이체 수단(way)에는 '인터넷'·'펌뱅킹'이 들어 있어서
      같이 보면 인터넷뱅킹 이체가 전부 공과금으로 잡힌다 (실측 45건 7.3억 오분류). */
   /* ★ 2026-10-01 — 은행 파일은 이름 칸과 적요 칸이 따로다.
      「김홍수 / 9월 운반비」처럼 적요에 쓸모 있는 말이 있으면 같이 본다.
      (거래매체(way)는 여전히 안 본다 — 인터넷뱅킹이 전부 공과금으로 잡혔던 적이 있다) */
   const hay = String((t && t.payer) || '') + ' ' + String((t && t.memo) || '');
-  for (const [cat, re] of ACCT_RULES) { if (re.test(hay)) return { cat: cats.indexOf(cat) >= 0 ? cat : '기타', sure: false }; }
-  return { cat: '', sure: false };     // 미분류 — 화면에서 따로 모아 보여준다
+  for (const [cat, re] of ACCT_RULES) { if (re.test(hay)) return { cat: cats.indexOf(cat) >= 0 ? cat : '기타', sure: false, only: false }; }
+  return { cat: '', sure: false, only: false };     // 미분류 — 화면에서 따로 모아 보여준다
 }
 function acctCatOf(t) { return acctOf(t).cat; }
 
@@ -12481,6 +12488,7 @@ function acctListInner() {
   const cats = acctCats();
   let list = acctOuts(ym);
   if (pick === 'none') list = list.filter(t => !acctCatOf(t));
+  else if (pick === 'only') list = list.filter(t => !!t.acctOnly);     // ★ 예외로 지정한 것만 모아보기
   else if (pick !== 'all') list = list.filter(t => acctCatOf(t) === pick);
   if (qy) {
     const amtP = quoteAmtPred(filters.acctSearch);
@@ -12522,7 +12530,7 @@ function acctListInner() {
       <td style="white-space:nowrap;color:var(--t3)">${esc(String(t.dt || t.date || '').slice(2))}</td>
       <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc([t.payer, t.memo, t.accName].filter(Boolean).join(' · '))}"><b>${esc(t.payer || t.memo || '(적요 없음)')}</b>${t.bankNm ? ` <span style="color:var(--t3);font-size:11.5px">${esc(t.bankNm)}</span>` : ''}${(t.memo && t.memo !== t.payer) || t.accName ? `<div style="font-size:10.5px;color:var(--t3)">${esc([t.memo && t.memo !== t.payer ? t.memo : '', t.accName].filter(Boolean).join('  ·  '))}</div>` : ''}</td>
       <td style="text-align:right;white-space:nowrap;font-weight:700;color:var(--red-t)">${fmtWon(txMoney(t))}</td>
-      <td style="white-space:nowrap">${opt(t, a.cat)}${a.cat && !a.sure ? ' <span class="pill" style="background:#fff7e6;color:#b45309;border:1px solid #f0d9a8;font-size:10px" title="적요를 보고 앱이 추정한 것 — 맞으면 그냥 두세요">추정</span>' : ''}</td>
+      <td style="white-space:nowrap">${opt(t, a.cat)}<button class="btn btn-sm" style="padding:2px 6px;font-size:11px;margin-left:3px;border:1.5px solid ${a.only ? '#c4b5fd' : 'var(--bd)'};background:${a.only ? '#f5f3ff' : 'transparent'};color:${a.only ? '#6d28d9' : 'var(--t3)'}" title="${a.only ? '예외 해제 — 다시 «같은 이름 자동»을 따릅니다' : '이 건만 — 같은 이름 규칙과 상관없이 이 줄만 따로 둡니다'}" onclick="acctOnlyToggle('${t.id}')"><i class="ti ti-${a.only ? 'lock' : 'lock-open'}"></i></button>${a.only ? ' <span class="pill" style="background:#f5f3ff;color:#6d28d9;border:1px solid #ddd6fe;font-size:10px" title="이 줄만 따로 — 같은 이름 규칙이 바뀌어도 그대로입니다">예외</span>' : (a.cat && !a.sure ? ' <span class="pill" style="background:#fff7e6;color:#b45309;border:1px solid #f0d9a8;font-size:10px" title="적요를 보고 앱이 추정한 것 — 맞으면 그냥 두세요">추정</span>' : '')}</td>
     </tr>`;
   };
   const MAX = 300;
@@ -12534,15 +12542,44 @@ function acctListInner() {
       <tbody>${list.slice(0, MAX).map(row).join('')}</tbody></table></div>
     ${list.length > MAX ? `<div style="font-size:11.5px;color:var(--t3);text-align:center;padding:9px">최근 ${MAX}건만 표시 · 검색이나 계정으로 좁혀 보세요</div>` : ''}`;
 }
-/* 계정을 고르면: 그 건에 저장 + 같은 상대방을 별칭으로 기억(다음 달부터 자동) */
+/* 계정을 고르면: 그 건에 저장 + 같은 상대방을 별칭으로 기억(다음 달부터 자동)
+   ★ 단, «이 건만» 자물쇠가 걸려 있으면 그 줄에만 저장하고 규칙은 안 건드린다. */
 async function acctPick(id, cat) {
   if (!isAdmin()) { toast('관리자만 가능합니다'); return; }
   const t = (state.banktx || []).find(x => x.id === id); if (!t) return;
+  const only = !!t.acctOnly;
   try {
     await Store.update('banktx', id, { acct: cat || '', acctBy: (me && me.name) || '', acctAt: Date.now() });
-    const k = _acctKey(t.payer || '');
-    if (k) { const m = Object.assign({}, acctAliasMap()); if (cat) m[k] = cat; else delete m[k]; await saveAcctAlias(m); }
-    toast(cat ? (cat + ' 로 지정') : '미분류로 되돌림');
+    if (!only) {
+      const k = _acctKey(t.payer || '');
+      if (k) { const m = Object.assign({}, acctAliasMap()); if (cat) m[k] = cat; else delete m[k]; await saveAcctAlias(m); }
+    }
+    toast(cat ? (cat + ' 로 지정' + (only ? ' (이 건만)' : '')) : (only ? '이 건만 미분류로' : '미분류로 되돌림'));
+    setTimeout(renderSettle, 400);
+  } catch (e) { toast('실패: ' + ((e && e.message) || e)); }
+}
+/* ══════════════════════════════════════════════════════════
+   ★★ «이 건만» 예외 자물쇠 — 2026-10-07
+   사용자: *"계정과목 자동 기억되는 건 좋은데, 건바이건으로 예외적용 필요"*
+
+   켜면  : 지금 보이는 계정을 그 줄에 굳힌다. 같은 이름 규칙이 나중에 바뀌어도
+           이 줄은 그대로. 이 줄에서 계정을 바꿔도 다른 줄로 번지지 않는다.
+   끄면  : 그 줄에 굳혀 둔 계정을 지우고, 다시 규칙(같은 이름 자동 · 적요 추정)을 따른다.
+   ★ 기준(별칭 규칙)은 건드리지 않는다 — 예외는 어디까지나 그 한 줄만.
+   ══════════════════════════════════════════════════════════ */
+async function acctOnlyToggle(id) {
+  if (!isAdmin()) { toast('관리자만 가능합니다'); return; }
+  const t = (state.banktx || []).find(x => x.id === id); if (!t) return;
+  const on = !t.acctOnly;
+  try {
+    if (on) {
+      const cur = acctOf(t).cat || '';     // 지금 보이는 계정을 그대로 굳힌다
+      await Store.update('banktx', id, { acctOnly: true, acct: cur, acctBy: (me && me.name) || '', acctAt: Date.now() });
+      toast(cur ? ('이 건만 «' + cur + '» — 규칙이 바뀌어도 이 줄은 그대로') : '이 건만 미분류로 고정');
+    } else {
+      await Store.update('banktx', id, { acctOnly: false, acct: '', acctBy: (me && me.name) || '', acctAt: Date.now() });
+      toast('예외 해제 — 다시 «같은 이름 자동»을 따릅니다');
+    }
     setTimeout(renderSettle, 400);
   } catch (e) { toast('실패: ' + ((e && e.message) || e)); }
 }
@@ -12606,6 +12643,8 @@ function _alSheet(XS, aoa, meta, opt) {
       }
       /* ★ 같은 계정과목이 이어지는 줄은 이름을 흐리게 — 읽기는 편하고, 거르기(필터)는 되게 값은 넣어 둔다 */
       if ((opt.dim || [])[r] && c === 1) st.font = { sz: 10, color: { rgb: 'FFBFBFBF' } };
+      /* ★ «이 건만» 예외로 지정한 줄 — 분류 칸을 보라색으로 (2026-10-07) */
+      if ((opt.only || [])[r] && c === 6) st.font = { sz: 9.5, bold: true, color: { rgb: 'FF6D28D9' } };
       k.s = st;
     }
   }
@@ -12633,7 +12672,7 @@ async function acctXlsx() {
 
   const aoa = [[''], [''], []];
   const meta = ['title', 'sub', 'gap'];
-  const fx = [], dim = [];
+  const fx = [], dim = [], only = [];
   const push = (row, k) => { aoa.push(row); meta.push(k); return aoa.length; };   // 엑셀 줄 번호(1부터)
   const F = (n, c, f) => fx.push({ r: n - 1, c: c, f: f });
 
@@ -12660,8 +12699,9 @@ async function acctXlsx() {
     g.forEach((t, ix) => {
       const a = acctOf(t);
       if (ix > 0) dim[aoa.length] = true;              // 두 번째 줄부터는 계정과목 이름을 흐리게
+      if (a.only) only[aoa.length] = true;             // ★ «이 건만» 예외로 지정한 줄
       push([String(t.date || '').slice(2), c, t.payer || '', txMoney(t), t.bankNm || '',
-        t.memo || '', a.cat ? (a.sure ? '지정' : '추정') : '', ''],   /* 적요만 — 거래매체(인터넷뱅킹 등)는 줄마다 같아서 뺀다 */
+        t.memo || '', a.only ? '예외' : (a.cat ? (a.sure ? '지정' : '추정') : ''), ''],   /* 적요만 — 거래매체(인터넷뱅킹 등)는 줄마다 같아서 뺀다 */
         c === '(미분류)' ? 'none' : 'row');
     });
     const n = push(['', c + ' 소계', g.length + '건', '', '', '', '', ''], 'sub');
@@ -12681,7 +12721,7 @@ async function acctXlsx() {
     + '   (통장 잔액은 담지 않습니다)';
 
   const wb = XS.utils.book_new();
-  XS.utils.book_append_sheet(wb, _alSheet(XS, aoa, meta, { fx: fx, dim: dim, filterRow: headRow - 1 }), '계정별출금');
+  XS.utils.book_append_sheet(wb, _alSheet(XS, aoa, meta, { fx: fx, dim: dim, only: only, filterRow: headRow - 1 }), '계정별출금');
   clSaveXlsx(XS, wb, '계정별출금_' + ym + '.xlsx', headRow);
   toast('계정별 출금 원장 엑셀 다운로드');
 }
@@ -12712,6 +12752,9 @@ function acctCard(ym) {
   const T = acctTotals(ym), cats = acctCats();
   const tot = list.reduce((a, t) => a + txMoney(t), 0);
   const pick = filters.acctCat || 'all';
+  /* ★ «이 건만» 예외로 지정해 둔 줄 — 따로 모아 볼 수 있게 (2026-10-07) */
+  const _only = list.filter(t => t.acctOnly);
+  const _onlyN = _only.length, _onlySum = _only.reduce((a, t) => a + txMoney(t), 0);
   const chip = (v, label, sum, n, col) => `<button class="chip ${pick === v ? 'active' : ''}" onclick="acctSetCat('${v}')" style="${pick === v ? '' : ''}">${label}${sum != null ? ` <b style="color:${pick === v ? 'inherit' : (col || 'var(--red-t)')}">${fmtWon(sum)}</b><span style="color:${pick === v ? 'inherit' : 'var(--t3)'};font-size:10.5px"> ${n}건</span>` : ''}</button>`;
   const shown = cats.filter(c => T.byCat[c]);
   /* 이 달 확정 매출 — 나간 돈과 나란히 놓고 남는 돈을 본다 */
@@ -12719,7 +12762,8 @@ function acctCard(ym) {
   return `
     <div class="banner info" style="margin-bottom:11px;font-size:12px"><i class="ti ti-info-circle"></i><span style="flex:1;min-width:0">
       <b>통장에서 나간 돈</b>을 계정과목으로 나눈 것입니다. 매입계산서는 돈이 나갈 때 통장에 찍히므로 여기서 또 세지 않습니다.
-      «추정» 표시는 적요를 보고 앱이 자동으로 붙인 것 — 틀리면 오른쪽에서 바꿔주세요. <b>한 번 바꾸면 같은 상대방은 다음부터 자동</b>입니다.</span></div>
+      «추정» 표시는 적요를 보고 앱이 자동으로 붙인 것 — 틀리면 오른쪽에서 바꿔주세요. <b>한 번 바꾸면 같은 상대방은 다음부터 자동</b>입니다.
+      <br>★ 같은 이름인데 <b>이 건만</b> 다르게 넣어야 하면 줄 오른쪽 <i class="ti ti-lock-open"></i> 자물쇠를 눌러 «예외»로 두세요 — 규칙은 그대로 두고 그 줄만 따로 갑니다.</span></div>
     <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:11px">
       <div class="stat"><div class="ic g"><i class="ti ti-file-text"></i></div><div class="v" style="font-size:17px">${fmtWon(saleM)}</div><div class="l">이 달 확정 매출</div></div>
       <div class="stat"><div class="ic r"><i class="ti ti-arrow-down-right"></i></div><div class="v" style="font-size:17px;color:var(--red-t)">${fmtWon(tot)}</div><div class="l">이 달 통장 출금</div><div class="s">${list.length}건</div></div>
@@ -12741,8 +12785,8 @@ function acctCard(ym) {
       </div>` : `<div style="font-size:12px;color:var(--t3);text-align:center;padding:8px">이번 달 출금 내역이 없습니다</div>`}
     </div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:9px">
-      ${chip('all', '전체', tot, list.length)}${T.noneN ? chip('none', '미분류', T.noneSum, T.noneN, 'var(--amber-t)') : ''}
-      ${pick !== 'all' && pick !== 'none' ? `<span class="chip active">${esc(pick)}</span>` : ''}
+      ${chip('all', '전체', tot, list.length)}${T.noneN ? chip('none', '미분류', T.noneSum, T.noneN, 'var(--amber-t)') : ''}${_onlyN ? chip('only', '예외', _onlySum, _onlyN, '#6d28d9') : ''}
+      ${pick !== 'all' && pick !== 'none' && pick !== 'only' ? `<span class="chip active">${esc(pick)}</span>` : ''}
       ${pick !== 'all' ? `<button class="chip" onclick="acctSetCat('all')"><i class="ti ti-x"></i>해제</button>` : ''}
     </div>
     <div class="search-box" style="margin-bottom:10px"><i class="ti ti-search"></i>
