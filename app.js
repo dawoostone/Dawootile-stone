@@ -12546,25 +12546,144 @@ async function acctPick(id, cat) {
     setTimeout(renderSettle, 400);
   } catch (e) { toast('실패: ' + ((e && e.message) || e)); }
 }
-function acctXlsx() {
+/* ══════════════════════════════════════════════════════════
+   ★★ 계정별 출금 원장 엑셀 — 2026-10-07 전면 개편
+   사용자: *"장부 거래내역 (계정과목 정리한 것) 도 가시성 있게 원가원장 처럼 정리
+            계정과목별로 볼 수 있게"*  (「회사지출」 엑셀 양식 전달받음)
+
+   받은 양식 그대로:
+     ① 맨 위에 «계정과목별 요약» (금액 큰 순 · 비중 %)
+     ② 그 아래 «계정과목별로 묶은» 상세 — 그룹마다 소계, 그룹 사이 빈 줄
+     ③ 맨 아래 총계
+   ★ 금액은 모두 수식(SUM) 이라 손으로 고쳐도 소계·총계가 따라온다.
+   ★ 미분류 줄은 붉게 — 정리할 게 남았다는 표시.
+   ══════════════════════════════════════════════════════════ */
+const AL_HEAD = ['날짜', '계정과목', '상대방', '금액', '은행', '적요 · 설명', '분류', '비고'];
+const AL_WCH = [14, 18, 26, 16, 12, 34, 8, 22];
+/* 줄 종류별 색 — 원가원장과 같은 색감 */
+function _alSheet(XS, aoa, meta, opt) {
+  opt = opt || {};
+  const ws = XS.utils.aoa_to_sheet(aoa);
+  (opt.fx || []).forEach(f => { ws[XS.utils.encode_cell({ r: f.r, c: f.c })] = { t: 'n', f: f.f }; });
+  const N = AL_HEAD.length;
+  const bd = { style: 'thin', color: { rgb: 'FFBFBFBF' } };
+  const box = { top: bd, bottom: bd, left: bd, right: bd };
+  const MONEY = '#,##0;\\(#,##0\\);\\-';
+  const cell = (r, c) => { const a = XS.utils.encode_cell({ r: r, c: c }); if (!ws[a]) ws[a] = { t: 's', v: '' }; return ws[a]; };
+  cell(0, 0).s = { font: { sz: 14, bold: true, color: { rgb: 'FF1F3864' } }, alignment: { vertical: 'center' } };
+  cell(1, 0).s = { font: { sz: 9, color: { rgb: 'FFC00000' } }, alignment: { vertical: 'center' } };
+  ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: N - 1 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: N - 1 } }];
+  ws['!rows'] = [{ hpt: 23 }, { hpt: 14 }, { hpt: 6 }];
+  for (let r = 2; r < aoa.length; r++) {
+    const kind = meta[r] || '';
+    if (kind === 'gap') continue;
+    for (let c = 0; c < N; c++) {
+      const k = cell(r, c);
+      const st = { border: box, font: { sz: 10 },
+        alignment: { vertical: 'center', horizontal: (c === 0 || c === 6) ? 'center' : ((c === 3) ? 'right' : 'left'), wrapText: c === 5 } };
+      if (kind === 'head' || kind === 'sumhead') {
+        st.fill = { patternType: 'solid', fgColor: { rgb: 'FF44546A' } };
+        st.font = { sz: 10, bold: true, color: { rgb: 'FFFFFFFF' } };
+        st.alignment = { vertical: 'center', horizontal: 'center' };
+      } else if (kind === 'tot' || kind === 'sumtot') {
+        st.fill = { patternType: 'solid', fgColor: { rgb: 'FF1F3864' } };
+        st.font = { sz: 11, bold: true, color: { rgb: 'FFFFFFFF' } };
+      } else if (kind === 'sub') {                       // 계정과목 소계
+        st.fill = { patternType: 'solid', fgColor: { rgb: 'FFFCE4D6' } };
+        st.font = { sz: 10, bold: true, color: { rgb: 'FF833C00' } };
+      } else if (kind === 'none') {                      // 미분류 — 정리할 게 남았다
+        st.fill = { patternType: 'solid', fgColor: { rgb: 'FFFDECEA' } };
+        st.font = { sz: 10, color: { rgb: 'FFC0341D' } };
+      } else if (kind === 'sumrow') {
+        st.fill = { patternType: 'solid', fgColor: { rgb: 'FFF5F7FA' } };
+        if (c === 0) st.font = { sz: 10, bold: true };
+      } else if (c === 3) {                              // 금액 칸 — 나간 돈이라 연한 붉은빛
+        st.fill = { patternType: 'solid', fgColor: { rgb: 'FFFDF4F2' } };
+        st.font = { sz: 10, bold: true };
+      }
+      if (kind !== 'head' && kind !== 'sumhead' && (typeof k.v === 'number' || k.f)) {
+        k.z = (c === 2 && (kind === 'sumrow' || kind === 'none')) ? '0.0%;;""' : MONEY;
+      }
+      /* ★ 같은 계정과목이 이어지는 줄은 이름을 흐리게 — 읽기는 편하고, 거르기(필터)는 되게 값은 넣어 둔다 */
+      if ((opt.dim || [])[r] && c === 1) st.font = { sz: 10, color: { rgb: 'FFBFBFBF' } };
+      k.s = st;
+    }
+  }
+  ws['!cols'] = AL_WCH.map(w => ({ wch: w }));
+  if (opt.filterRow != null) ws['!autofilter'] = { ref: XS.utils.encode_range({ s: { r: opt.filterRow, c: 0 }, e: { r: Math.max(opt.filterRow + 1, aoa.length) - 1, c: N - 1 } }) };
+  ws['!margins'] = { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 };
+  return ws;
+}
+async function acctXlsx() {
   if (!isAdmin()) { toast('관리자만'); return; }
   if (typeof XLSX === 'undefined') { toast('엑셀 모듈 로딩 중 — 잠시 후'); return; }
   const ym = filters.settleMonth || todayStr().slice(0, 7);
   const list = acctOuts(ym);
   if (!list.length) { toast(ym + ' 출금 내역이 없습니다'); return; }
-  const T = acctTotals(ym), cats = acctCats();
-  const aoa = [['계정별 출금 원장 · ' + ym], ['출력일 ' + todayStr() + ' · 통장에서 나간 돈 기준 (통장 잔액 미포함)'], []];
-  aoa.push(['계정과목', '금액', '건수']);
-  cats.forEach(c => { if (T.byCat[c]) aoa.push([c, T.byCat[c].sum, T.byCat[c].n]); });
-  if (T.noneN) aoa.push(['미분류', T.noneSum, T.noneN]);
-  aoa.push(['합계', list.reduce((a, t) => a + txMoney(t), 0), list.length]);
-  aoa.push([]); aoa.push(['일시', '적요 · 상대방', '은행', '금액', '계정과목', '분류방법']);
-  list.forEach(t => { const a = acctOf(t); aoa.push([t.dt || t.date || '', t.payer || '', t.bankNm || '', txMoney(t), a.cat || '미분류', a.cat ? (a.sure ? '지정' : '추정') : '']); });
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = [{ wch: 17 }, { wch: 26 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 9 }];
-  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '계정별출금');
-  XLSX.writeFile(wb, '계정별출금_' + ym + '.xlsx');
-  toast('엑셀 저장됨');
+  toast('엑셀 만드는 중…');
+  const XS = await xlsxStyled();
+  if (!XS) { toast('엑셀 모듈을 못 불러왔습니다'); return; }
+
+  const tot = list.reduce((a, t) => a + txMoney(t), 0);
+  /* 계정과목별로 묶는다 — 설정에 적힌 순서대로, 금액이 있는 것만. 미분류는 맨 끝 */
+  const byCat = {};
+  list.forEach(t => { const c = acctCatOf(t) || '(미분류)'; (byCat[c] || (byCat[c] = [])).push(t); });
+  const order = acctCats().filter(c => byCat[c]).concat(Object.keys(byCat).filter(c => acctCats().indexOf(c) < 0 && c !== '(미분류)').sort());
+  if (byCat['(미분류)']) order.push('(미분류)');
+
+  const aoa = [[''], [''], []];
+  const meta = ['title', 'sub', 'gap'];
+  const fx = [], dim = [];
+  const push = (row, k) => { aoa.push(row); meta.push(k); return aoa.length; };   // 엑셀 줄 번호(1부터)
+  const F = (n, c, f) => fx.push({ r: n - 1, c: c, f: f });
+
+  /* ── ① 계정과목별 요약 ── */
+  push(['계정과목', '건수', '비중', '금액', '', '', '', ''], 'sumhead');
+  const sumFirst = aoa.length + 1;
+  const sumRowOf = {};
+  order.forEach(c => {
+    const g = byCat[c], gs = g.reduce((a, t) => a + txMoney(t), 0);
+    const n = push([c, g.length, '', gs, '', '', '', ''], c === '(미분류)' ? 'none' : 'sumrow');
+    sumRowOf[c] = n;
+    F(n, 2, 'IF(N($D$' + (sumFirst + order.length) + ')>0,D' + n + '/$D$' + (sumFirst + order.length) + ',"")');
+  });
+  const sumTot = push(['합계', list.length, '', '', '', '', '', ''], 'sumtot');
+  F(sumTot, 3, 'SUM(D' + sumFirst + ':D' + (sumTot - 1) + ')');
+  push([], 'gap');
+
+  /* ── ② 계정과목별 상세 ── */
+  const headRow = push(AL_HEAD.slice(), 'head');
+  const subRows = [];
+  order.forEach(c => {
+    const g = byCat[c].slice().sort((a, b) => String(a.dt || a.date || '').localeCompare(String(b.dt || b.date || '')));
+    const first = aoa.length + 1;
+    g.forEach((t, ix) => {
+      const a = acctOf(t);
+      if (ix > 0) dim[aoa.length] = true;              // 두 번째 줄부터는 계정과목 이름을 흐리게
+      push([String(t.date || '').slice(2), c, t.payer || '', txMoney(t), t.bankNm || '',
+        t.memo || '', a.cat ? (a.sure ? '지정' : '추정') : '', ''],   /* 적요만 — 거래매체(인터넷뱅킹 등)는 줄마다 같아서 뺀다 */
+        c === '(미분류)' ? 'none' : 'row');
+    });
+    const n = push(['', c + ' 소계', g.length + '건', '', '', '', '', ''], 'sub');
+    F(n, 3, 'SUM(D' + first + ':D' + (n - 1) + ')');
+    subRows.push(n);
+    /* 위 요약 줄도 같은 값을 보게 — 한 군데만 고쳐도 다 따라온다 */
+    F(sumRowOf[c], 3, 'D' + n);
+    push([], 'gap');
+  });
+  const totRow = push(['', '총계', list.length + '건', '', '', '', '', ym + ' 통장에서 나간 돈'], 'tot');
+  F(totRow, 3, subRows.length ? ('SUM(' + subRows.map(r => 'D' + r).join(',') + ')') : '0');
+
+  aoa[0][0] = '계정별 출금 원장 — ' + ym.slice(0, 4) + '년 ' + (+ym.slice(5, 7)) + '월';
+  aoa[1][0] = '출력일 ' + todayStr() + ' · 출금 ' + list.length + '건 · 합계 ' + fmtWon(tot)
+    + ' · 계정과목 ' + order.filter(c => c !== '(미분류)').length + '개'
+    + (byCat['(미분류)'] ? ('   ※ 붉은 줄 ' + byCat['(미분류)'].length + '건은 «미분류» — 계정을 정해 주세요') : '')
+    + '   (통장 잔액은 담지 않습니다)';
+
+  const wb = XS.utils.book_new();
+  XS.utils.book_append_sheet(wb, _alSheet(XS, aoa, meta, { fx: fx, dim: dim, filterRow: headRow - 1 }), '계정별출금');
+  clSaveXlsx(XS, wb, '계정별출금_' + ym + '.xlsx', headRow);
+  toast('계정별 출금 원장 엑셀 다운로드');
 }
 /* 계정과목 목록 편집 */
 function openAcctCats() {
