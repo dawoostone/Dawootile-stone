@@ -202,6 +202,57 @@ const Store = {
       this._writeLocal(coll, arr); if (this._watchers[coll]) this._watchers[coll](arr);
     }
   },
+  /* ══════════════════════════════════════════════════════════
+     ★★ 여러 건을 «묶어서» 저장·삭제 (2026-10-07)
+     사용자: *"엑셀 장부 올리는거 되게 느린데 전산 과부하 오지 않는지 체크"*
+
+     한 건씩 보내면 서버 왕복(약 0.15초)이 건수만큼 쌓인다.
+     실측: 600건 올리면 서버 왕복만 90초, 거기에 저장할 때마다 앱이
+           돈 계산(24ms)과 화면 다시 그리기(16ms)를 600번 해서 +24초.
+           → 올리는 2분 동안 화면이 멈춰 있었다.
+     ★ 이제 400건씩 한 덩어리로 보낸다 — 600건이면 왕복 2번이면 끝난다.
+     ops: [{ id, set:{…} }  또는  { id, update:{…} }  또는  { id, del:true }]
+     ══════════════════════════════════════════════════════════ */
+  async bulk(coll, ops, onProg) {
+    const list = (ops || []).filter(o => o && o.id);
+    if (!list.length) return { ok: 0, fail: 0 };
+    let ok = 0, fail = 0;
+    const SZ = 400;                                    // 파이어스토어 한 덩어리 한도는 500 — 여유 있게
+    for (let i = 0; i < list.length; i += SZ) {
+      const part = list.slice(i, i + SZ);
+      try {
+        if (CLOUD) {
+          const b = db.batch();
+          part.forEach(o => {
+            const ref = cref(coll).doc(o.id);
+            if (o.del) b.delete(ref);
+            else if (o.set) b.set(ref, o.set, { merge: true });
+            else b.update(ref, o.update || {});
+          });
+          await b.commit();
+        } else {
+          for (const o of part) {
+            if (o.del) await this.remove(coll, o.id);
+            else if (o.set) await this.setMerge(coll, o.id, o.set);
+            else await this.update(coll, o.id, o.update || {});
+          }
+        }
+        ok += part.length;
+      } catch (e) {
+        /* 덩어리가 실패하면 그 덩어리만 한 건씩 다시 — 어느 줄이 문제인지 가려낸다 */
+        for (const o of part) {
+          try {
+            if (o.del) await this.remove(coll, o.id);
+            else if (o.set) await this.setMerge(coll, o.id, o.set);
+            else await this.update(coll, o.id, o.update || {});
+            ok++;
+          } catch (e2) { fail++; }
+        }
+      }
+      if (onProg) { try { onProg(Math.min(i + SZ, list.length), list.length); } catch (e) { } }
+    }
+    return { ok: ok, fail: fail };
+  },
   /* 지정 문서 id로 병합 업서트(다른 앱이 써넣은 필드는 보존) — 연동 브릿지용 */
   async setMerge(coll, id, obj) {
     if (CLOUD) { await cref(coll).doc(id).set(obj, { merge: true }); }
@@ -579,6 +630,11 @@ async function seedSample() {
   for (const o of outs) { o.type = 'out'; o.hebe = +(o.jang * 5.12).toFixed(2); o.by = '김민준'; await Store.add('transactions', o); }
 }
 const _loadedColls = {};
+/* ★ 묶음 저장 중에는 «화면 다시 그리기»를 멈춘다 (끝나면 한 번만 그린다).
+   자료가 한 건 바뀔 때마다 전부 다시 그리면, 600건 올릴 때 600번을 그린다. */
+let _bulkBusy = 0;
+function bulkBegin() { _bulkBusy++; }
+function bulkEnd() { _bulkBusy = Math.max(0, _bulkBusy - 1); if (!_bulkBusy && me) { moneyBust(); render(); } }
 function onData(coll) {
   _loadedColls[coll] = true;
   if (['quotes', 'banktx', 'appmeta', 'clients'].includes(coll)) moneyBust();   // 돈 계산을 다시 하게 만든다
@@ -596,7 +652,7 @@ function onData(coll) {
   if (['priceList', 'members'].includes(coll) && me && !isCustomerRole()) scheduleCustPriceSync();   // 거래처 화면에 보일 단가 미리 계산해서 거래처 문서에 기재(디바운스)
   if (coll === 'chulgoReqs') { refreshChulgoChatIfOpen(); if (me && !isCustomerRole()) chulgoAlertNew(); }   // 채팅 실시간 갱신 + 새 지시 소리 알림
   if (coll === 'cutPlans') cutPlanListRefresh();   // 최근 커팅플랜 목록만 살짝 갱신 (입력 중인 칸은 안 건드린다)
-  if (me) render();
+  if (me && !_bulkBusy) render();                 // ★ 묶음 저장 중에는 안 그린다 (끝나고 한 번만)
 }
 /* 예정홀딩(및 일부 예정 품목)을 재고 여유가 생길 때 일정 빠른 순으로 자동 확보 — 재진입 방지 */
 let _actPlanRun = false;
@@ -7728,7 +7784,9 @@ async function txSkipPayer(pkey) {
   const sum = list.reduce((a, t) => a + txMoney(t), 0);
   if (!confirm('「' + nm + '」 이름으로 들어온 입금 ' + list.length + '건 (' + fmtWon(sum) + '원)을\n견적과 무관한 돈으로 보고 무시할까요?\n\n통장 내역에는 그대로 남고, 언제든 되돌릴 수 있습니다.')) return;
   let n = 0;
-  for (const t of list) { try { await Store.update('banktx', t.id, { noQuote: true, noQuoteBy: (me && me.name) || '', noQuoteAt: Date.now() }); n++; } catch (e) { } }
+  const _p = { noQuote: true, noQuoteBy: (me && me.name) || '', noQuoteAt: Date.now() };
+  bulkBegin();
+  try { n = (await Store.bulk('banktx', list.map(t => ({ id: t.id, update: _p })))).ok; } finally { bulkEnd(); }
   moneyBust(); toast(n + '건 무시함');
   setTimeout(() => { if (filters.bankList) renderQuote(); else renderLedger(); }, 300);
 }
@@ -8430,8 +8488,8 @@ async function bkupSave() {
     const add = [...new Set(list.map(i => (i.acct || '').trim()).filter(Boolean))].filter(a => cur.indexOf(a) < 0);
     if (add.length) { await saveAcctCats(cur.concat(add)); setSt('계정과목 ' + add.length + '개 추가함'); }
   } catch (e) { }
-  let n = 0, fail = 0;
-  for (const it of list) {
+  /* ★ 2026-10-07 — 한 건씩 보내던 것을 «묶음»으로 (600건: 2분 → 몇 초) */
+  const ops = list.map(it => {
     /* ★ 거래후잔액은 담지 않는다 */
     const row = {
       date: it.date, dt: it.dt, payer: it.payer, memo: it.memo || '', pkey: _bankKey(it.payer),
@@ -8442,10 +8500,15 @@ async function bkupSave() {
     };
     if (it.client) row.client = it.client;                    // 파일이 정해 준 거래처를 그대로
     if (it.acct) { row.acct = it.acct; row.acctBy = who; row.acctAt = Date.now(); }
-    try { await Store.setMerge('banktx', it.id, row); n++; }
-    catch (e) { fail++; }
-    if (n % 25 === 0) setSt('저장 중… ' + n + ' / ' + list.length);
-  }
+    return { id: it.id, set: row };
+  });
+  setSt('저장 중… 0 / ' + ops.length);
+  bulkBegin();
+  let n = 0, fail = 0;
+  try {
+    const r = await Store.bulk('banktx', ops, (done, tot) => setSt('저장 중… ' + done + ' / ' + tot));
+    n = r.ok; fail = r.fail;
+  } finally { bulkEnd(); }
   try { await saveBkupMap(String(_bkup.accName || '').trim(), bkupCurMap()); } catch (e) { }   // ★ 이 통장의 칸 배치를 기억
   moneyBust();
   toast(n + '건 넣었습니다' + (fail ? (' · 실패 ' + fail + '건') : ''));
@@ -8480,7 +8543,8 @@ async function bkupUndo(batch) {
   if (!ids.length) { toast('지울 것이 없습니다'); return; }
   if (!confirm(ids.length + '건을 지웁니다. 되돌릴 수 없습니다.\n\n계속할까요?')) return;
   let n = 0;
-  for (const id of ids) { try { await Store.remove('banktx', id); n++; } catch (e) { } }
+  bulkBegin();
+  try { n = (await Store.bulk('banktx', ids.map(id => ({ id: id, del: true })))).ok; } finally { bulkEnd(); }
   moneyBust(); toast(n + '건 되돌렸습니다');
   closeModal(); setTimeout(() => { if (filters.bankList) renderLedger(); }, 400);
 }
@@ -9365,10 +9429,10 @@ async function xfApply(client) {
   if (!ids.length) { toast('무시할 입금을 고르세요'); return; }
   const sum = (state.banktx || []).filter(t => ids.indexOf(t.id) >= 0).reduce((a, t) => a + txMoney(t), 0);
   if (!confirm('입금 ' + ids.length + '건 (' + fmtWon(sum) + '원)을\n앱에 없는 거래의 대금으로 보고 무시할까요?\n\n통장 내역에는 그대로 남고, 언제든 되돌릴 수 있습니다.')) return;
+  const _p = { noQuote: true, noQuoteBy: (me && me.name) || '', noQuoteAt: Date.now() };
   let n = 0;
-  for (const id of ids) {
-    try { await Store.update('banktx', id, { noQuote: true, noQuoteBy: (me && me.name) || '', noQuoteAt: Date.now() }); n++; } catch (e) { }
-  }
+  bulkBegin();
+  try { n = (await Store.bulk('banktx', ids.map(id => ({ id: id, update: _p })))).ok; } finally { bulkEnd(); }
   moneyBust(); closeModal();
   toast(n + '건 무시함 · 과입에서 빠집니다');
   setTimeout(() => { if (filters.bankList) renderQuote(); else renderLedger(); }, 350);
@@ -9444,7 +9508,8 @@ async function ledgerFixSave(pkey, i) {
   if (!confirm(`${ids.length}건을 "${c}" 로 지정할까요?\n앞으로 같은 이름은 자동으로 이 거래처가 됩니다.`)) return;
   try {
     const m = Object.assign({}, bankAliasMap()); m[pkey] = c; await saveBankAlias(m);
-    for (const id of ids) await Store.update('banktx', id, { client: c });
+    bulkBegin();
+    try { await Store.bulk('banktx', ids.map(id => ({ id: id, update: { client: c } }))); } finally { bulkEnd(); }
     toast(ids.length + '건 지정됨 · ' + c);
     setTimeout(renderLedger, 400);
   } catch (e) { toast('실패: ' + ((e && e.message) || e)); }
@@ -10997,6 +11062,9 @@ function priceListImport(input) {
       for (let r = 0; r < Math.min(rows.length, 12); r++) { const m = mapPriceCols(rows[r]); if (m.name != null && (m.dist != null || m.agency != null || m.interior != null || m.consumer != null)) { hi = r; map = m; break; } }
       if (hi < 0) { toast('헤더를 못 찾음 — 자재명 + 유통/대리점/인테리어/소비자 열이 필요합니다'); input.value = ''; return; }
       let n = 0; const adm = isAdmin();
+      /* ★ 2026-10-07 — 올리는 동안 화면을 다시 그리지 않는다 (줄마다 다시 그리면 수백 번 그린다) */
+      bulkBegin();
+      try {
       for (let r = hi + 1; r < rows.length; r++) {
         const cells = rows[r] || []; const name = String(cells[map.name] == null ? '' : cells[map.name]).trim(); if (!name) continue;
         if (isCustomBasin(name)) continue;   // ★ 비규격 세면대는 엑셀로 올려도 단가를 안 받는다
@@ -11007,6 +11075,7 @@ function priceListImport(input) {
         await plSave(name, patch, 'excel');     // ★ 엑셀로 고친 것도 «누가 언제»를 남긴다
         n++;
       }
+      } finally { bulkEnd(); }
       toast(n ? (n + '개 자재 단가 반영됨') : '반영된 행이 없습니다 (열 이름 확인)'); input.value = ''; setTimeout(() => { if (filters.quoteSettings) renderQuoteSettings(); }, 400);
     } catch (err) { toast('파일을 읽지 못했습니다'); input.value = ''; }
   };
