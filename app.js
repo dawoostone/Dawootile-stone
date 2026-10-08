@@ -5414,15 +5414,35 @@ function quoteLiveHoldIds(q) {
 function quoteHoldBoxHtml(client) {
   client = (client || '').trim();
   if (!client) return '<div style="font-size:12px;color:var(--t3);padding:4px 2px">거래처를 입력하면 홀딩 자재가 표시됩니다.</div>';
-  const hs = (state.holdings || []).filter(h => _normName(h.vendor || '') === _normName(client) && (h.status || '홀딩') === '홀딩');
+  /* ══════════════════════════════════════════════════════════
+     ★★ 2026-10-08 — «예정» 홀딩도 견적에서 불러올 수 있게
+     사용자: *"예정홀딩은 견적에 불러오기 안됨 ?"*
+
+     그동안 여기서는 status 가 «홀딩» 인 것만 골랐다. 그래서 재고가 아직
+     안 잡힌 «예정» 홀딩(실측 4건)은 견적서에서 아예 보이지 않았다.
+     현장 화면(holdingsForSite)은 예전부터 «홀딩·예정» 둘 다 보여 줬으니
+     견적서만 빠져 있던 셈이다.
+     ★ 이제 예정도 담을 수 있다 — 다만 «아직 재고가 안 잡혔다»를 눈에 띄게 적는다.
+       (견적은 내도 되고, 물건이 들어오면 앱이 알아서 그 홀딩을 잡아 준다)
+     ══════════════════════════════════════════════════════════ */
+  const hs = (state.holdings || []).filter(h => _normName(h.vendor || '') === _normName(client)
+    && ['홀딩', '예정'].includes(h.status || '홀딩'))
+    .sort((a, b) => {
+      const pa = ((a.status || '홀딩') === '예정') ? 1 : 0, pb = ((b.status || '홀딩') === '예정') ? 1 : 0;
+      if (pa !== pb) return pa - pb;                                    // 재고 잡힌 홀딩 먼저, 예정은 뒤로
+      return (a.useDate || '9999-99-99').localeCompare(b.useDate || '9999-99-99');
+    });
   if (!hs.length) return '<div style="font-size:12px;color:var(--t3);padding:4px 2px">이 거래처의 홀딩 자재가 없습니다.</div>';
   return hs.map(h => {
     const items = holdItems(h);
-    const label = items.map(it => `${esc(it.materialName)} ${it.jang}장`).join(', ');
+    const plan = ((h.status || '홀딩') === '예정');            // 홀딩 전체가 «예정»
+    const someP = !plan && items.some(it => it.planned);       // 품목 일부만 «예정»
+    const label = items.map(it => `${esc(it.materialName)} ${it.jang}장${(!plan && it.planned) ? ' <span style="color:#8a5a00;font-size:10.5px;font-weight:700">(예정)</span>' : ''}`).join(', ');
+    const badge = (plan || someP) ? `<span class="pill" style="background:#fdf6ea;color:#8a5a00;border:1px solid #e0c088;font-size:10px;margin-right:4px">${plan ? '예정' : '일부 예정'}</span>` : '';
     const enc = encodeURIComponent(JSON.stringify(items.map(it => ({ name: it.materialName, qty: it.jang, spec: specOfMaterial(it.materialName) }))));   // 규격은 자재 기준으로 조회(롯트 아님)
     const on = _qFromHolds.indexOf(h.id) >= 0;
-    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid var(--soft)">
-      <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px"><i class="ti ti-lock" style="font-size:12px;color:var(--blue)"></i> ${label}</div><div style="font-size:11px;color:var(--t3)">${h.useDate ? '사용예정 ' + esc(h.useDate) : ''}${h.note ? ' · ' + esc(h.note) : ''}</div>${on ? '<div style="font-size:11px;color:var(--gd);font-weight:700"><i class="ti ti-check" style="font-size:12px"></i> 이 견적에 담김 · 출고하면 홀딩이 풀립니다</div>' : ''}</div>
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid var(--soft);${plan ? 'background:#fffcf5' : ''}">
+      <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px">${badge}<i class="ti ti-${plan ? 'clock-hour-4' : 'lock'}" style="font-size:12px;color:${plan ? '#b45309' : 'var(--blue)'}"></i> ${label}</div><div style="font-size:11px;color:var(--t3)">${h.useDate ? '사용예정 ' + esc(h.useDate) : ''}${h.note ? ' · ' + esc(h.note) : ''}</div>${(plan || someP) ? `<div style="font-size:11px;color:#8a5a00"><i class="ti ti-info-circle" style="font-size:12px"></i> 아직 <b>재고가 안 잡힌</b> 홀딩입니다 — 견적은 내셔도 되고, 물건이 들어오면 자동으로 잡힙니다.</div>` : ''}${on ? '<div style="font-size:11px;color:var(--gd);font-weight:700"><i class="ti ti-check" style="font-size:12px"></i> 이 견적에 담김 · 출고하면 홀딩이 풀립니다</div>' : ''}</div>
       <button type="button" class="btn btn-sm ${on ? '' : 'btn-pri'}" onclick="quoteAddHold('${enc}','${esc(h.id)}')"><i class="ti ti-plus"></i>${on ? '다시 추가' : '견적에 추가'}</button></div>`;
   }).join('');
 }
@@ -6081,7 +6101,7 @@ function renderQuoteForm() {
         <div class="fld full" style="margin-bottom:10px"><label>수신·참조 <span style="color:var(--t3);font-weight:500">(담당자·현장 등, 선택)</span></label><input id="q-attn" lang="ko" placeholder="예: 홍길동 과장 / OO현장" value="${esc(v.attn || '')}"></div>
         <div class="fld full" style="margin-bottom:10px;background:var(--soft);border-radius:10px;padding:9px 12px"><label style="display:flex;align-items:center;gap:9px;cursor:pointer;font-weight:600;margin:0"><input type="checkbox" id="q-userep" ${editing && v.useSalesRep ? 'checked' : ''} style="width:18px;height:18px"> 영업담당자로 표기 <span style="font-weight:400;color:var(--t3);font-size:12px">(견적 담당자 대신 거래처 영업담당자 이름·연락처 표시)</span></label></div>
         <div class="fld full" style="margin-bottom:10px"><label>현장 주소 <span style="color:var(--t3);font-weight:500">(선택 · 견적서 수신란에 표시)</span></label><input id="q-site" lang="ko" placeholder="예: OO시 OO구 OO동 OO현장" value="${esc(v.siteAddr || '')}"></div>
-        <div class="fld full" style="margin-bottom:10px"><label><i class="ti ti-lock" style="font-size:13px;color:var(--blue)"></i> 이 거래처 홀딩 자재 불러오기 <span style="color:var(--t3);font-weight:500">(눌러서 견적에 추가 → 확정 후 출고)</span></label>
+        <div class="fld full" style="margin-bottom:10px"><label><i class="ti ti-lock" style="font-size:13px;color:var(--blue)"></i> 이 거래처 홀딩 자재 불러오기 <span style="color:var(--t3);font-weight:500">(진행·<b style="color:#8a5a00">예정</b> 홀딩 · 눌러서 견적에 추가 → 확정 후 출고)</span></label>
           <div id="q-holdbox" style="border:1px solid var(--bd2);border-radius:10px;padding:4px 10px;max-height:26vh;overflow:auto">${quoteHoldBoxHtml(v.client || '')}</div>
         </div>
         <div class="fld full" style="margin-bottom:10px">
