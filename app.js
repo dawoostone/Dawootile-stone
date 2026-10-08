@@ -19575,7 +19575,7 @@ table{border-collapse:collapse;width:100%}
 function chulgoQueueRow(r) {
   const items = (r.items || []).map(it => `${esc(it.name)} ${+it.qty || 0}${esc(it.unit || '')}`).join(', ');
   return `<label class="cq-item" style="display:flex;gap:9px;align-items:flex-start;padding:9px 8px;border-bottom:0.5px solid var(--bd)">
-    <input type="checkbox" class="cq-chk" value="${r.id}" style="width:19px;height:19px;margin-top:2px">
+    <input type="checkbox" class="cq-chk" value="${r.id}" onchange="dspSyncSched(true)" style="width:19px;height:19px;margin-top:2px">
     <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13.5px">${r.urgent ? '<span class="pill" style="background:#fde8e8;color:#c0341d;font-size:10px">긴급</span> ' : ''}${esc(r.client || '-')} ${futureBadge(r.schedDate, 'sm')}</div>
       <div style="font-size:12px;color:var(--t2);margin-top:2px;word-break:break-word">${items}</div>
       ${(r.dispatchDest || '').trim() ? `<div style="font-size:11px;color:#1b4fb0;margin-top:2px"><i class="ti ti-map-pin" style="font-size:12px;vertical-align:-1px"></i> 하차 ${esc(r.dispatchDest)}</div>` : ''}
@@ -19681,7 +19681,7 @@ function chulgoOfficeSection() {
       </div>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;background:#eef4ff;border:1.5px solid #c3d6f5;border-radius:10px;padding:8px 10px">
         <label for="dsp-date" style="flex:none;font-size:13px;font-weight:700;color:#1b4fb0;white-space:nowrap"><i class="ti ti-calendar-event"></i> 출고예정일</label>
-        <input type="date" id="dsp-date" value="${esc(chulgoDefaultSched())}" onchange="dspDateHint()" style="flex:1;min-width:0;font-size:15px;padding:7px 9px;border:1.5px solid var(--bd2);border-radius:9px;background:#fff">
+        <input type="date" id="dsp-date" value="${esc(chulgoDefaultSched())}" onchange="dspDateTouched()" style="flex:1;min-width:0;font-size:15px;padding:7px 9px;border:1.5px solid var(--bd2);border-radius:9px;background:#fff">
         <button type="button" class="btn btn-sm" style="flex:none" onclick="dspDateShift(1)" title="하루 뒤">＋1일</button>
       </div>
       <div id="dsp-date-hint" style="font-size:11.5px;margin:-3px 2px 8px;line-height:1.5"></div>
@@ -19769,32 +19769,72 @@ function renderChulgo() {
     <button class="btn btn-sm btn-block" style="margin-bottom:10px;${chulgoPushEnabled() ? 'background:var(--gl2);border-color:var(--gbd);color:var(--gd)' : ''}" onclick="toggleChulgoPush()"><i class="ti ti-device-mobile"></i> 📱 휴대폰 출고 지시 알림 <b>${chulgoPushEnabled() ? '켜짐' : '꺼짐'}</b> · 눌러서 ${chulgoPushEnabled() ? '끄기' : '켜기'} <span style="font-weight:500;color:var(--t3)">(원하는 사람만 · 앱 꺼져도 수신)</span></button>
     ${side === 'office' ? chulgoOfficeSection() : chulgoWarehouseSection()}`;
   requestAnimationFrame(() => window.scrollTo(0, _sy));   // ★ 보던 자리로 되돌림
-  dspDateHint();   // 출고예정일이 미래면 안내 한 줄
+  dspSyncSched();  // 출고예정일 안내 한 줄 (체크한 건이 있으면 그 예정일로)
 }
-/* 배차 폼의 출고예정일 기본값 — 대기열에 이미 잡힌 예정일 중 가장 이른 미래일, 없으면 오늘 */
-function chulgoDefaultSched() {
-  const q = (state.chulgoReqs || []).filter(r => (r.status || '') === '대기열' && (r.schedDate || '').trim());
-  const fut = q.map(r => r.schedDate).filter(isFutureYmd).sort();
-  return fut.length ? fut[0] : todayStr();
+/* ══════════════════════════════════════════════════════════
+   ★★ 배차 폼의 «출고예정일» — 2026-10-08 고침
+   사용자: *"출고 관리에서 날짜 왜 계속 12일인지 ?"*
+
+   예전: 대기열 «어딘가»에 있는 가장 이른 미래 예정일을 가져왔다.
+         → 10/12 짜리 요청이 한 건 섞여 있으면, 전혀 상관없는 건을
+           지시할 때도 날짜 칸이 늘 10/12 로 떠 있었다.
+   이제: 기본은 «오늘». 대기열에서 건을 «체크»하면, 그 체크한 요청서에
+         적힌 예정일로만 따라 맞춘다 (여러 개면 가장 이른 날).
+         사람이 날짜를 직접 고친 뒤에는 멋대로 바꾸지 않는다.
+   ══════════════════════════════════════════════════════════ */
+let _dspDateTouched = false;        // 사람이 날짜칸을 직접 건드렸나
+let _dspDateVal = '';               // 직접 고른 날짜 (화면을 다시 그려도 유지)
+function chulgoDefaultSched() { return _dspDateVal || todayStr(); }
+function dspDateTouched() {
+  const i = el('dsp-date');
+  _dspDateTouched = true; _dspDateVal = (i && i.value) || '';
+  dspDateHint();
 }
-function dspDateHint() {
+function dspDateToday() {
+  const i = el('dsp-date'); if (!i) return;
+  i.value = todayStr(); _dspDateTouched = true; _dspDateVal = '';
+  dspDateHint();
+}
+function dspDateReset() { _dspDateTouched = false; _dspDateVal = ''; }
+/* 체크한 건의 예정일로 날짜칸을 맞춘다. fromUser=true 면 «체크를 다 풀었을 때 오늘로» 되돌린다. */
+function dspSyncSched(fromUser) {
+  const i = el('dsp-date'); if (!i) return;
+  const ids = [...document.querySelectorAll('#chulgo-queue input.cq-chk:checked')].map(c => c.value);
+  if (!ids.length) {
+    if (fromUser) { dspDateReset(); i.value = todayStr(); }
+    dspDateHint(); return;
+  }
+  if (_dspDateTouched) { dspDateHint(); return; }      // 사람이 정한 날짜가 우선
+  const ds = ids.map(id => (((state.chulgoReqs || []).find(r => r.id === id) || {}).schedDate || ''))
+    .filter(v => /^\d{4}-\d{2}-\d{2}$/.test(v)).sort();
+  i.value = ds.length ? ds[0] : todayStr();
+  dspDateHint(ds.length ? 'req' : '');
+}
+function dspDateHint(from) {
   const box = el('dsp-date-hint'); if (!box) return;
   const v = el('dsp-date') ? el('dsp-date').value : '';
   const d = dayDiff(v);
-  if (d == null || d === 0) { box.innerHTML = ''; return; }
-  if (d > 0) box.innerHTML = `<span style="color:#1b4fb0"><i class="ti ti-calendar-clock"></i> <b>${mdLabel(v)} (D-${d}) 예정</b>으로 지시가 나갑니다. 요청서에도 그 날짜로 찍힙니다.</span>`;
-  else box.innerHTML = `<span style="color:var(--amber-t,#8a5a00)"><i class="ti ti-alert-triangle"></i> ${-d}일 지난 날짜입니다.</span>`;
+  const back = (from === 'req')
+    ? ` <button type="button" class="btn btn-sm" style="padding:1px 8px;font-size:10.5px;vertical-align:1px" onclick="dspDateToday()">오늘로</button>` : '';
+  if (d == null || d === 0) {
+    box.innerHTML = (from === 'req')
+      ? `<span style="color:var(--t3)"><i class="ti ti-calendar-check"></i> 체크한 요청서에 적힌 예정일(오늘)입니다.</span>` : '';
+    return;
+  }
+  if (d > 0) box.innerHTML = `<span style="color:#1b4fb0"><i class="ti ti-calendar-clock"></i> <b>${mdLabel(v)} (D-${d}) 예정</b>으로 지시가 나갑니다. 요청서에도 그 날짜로 찍힙니다.${from === 'req' ? ' <span style="color:var(--t3)">— 체크한 요청서에 적힌 날짜</span>' : ''}</span>${back}`;
+  else box.innerHTML = `<span style="color:var(--amber-t,#8a5a00)"><i class="ti ti-alert-triangle"></i> ${-d}일 지난 날짜입니다.</span>${back}`;
 }
 function dspDateShift(n) {
   const i = el('dsp-date'); if (!i) return;
   const base = /^\d{4}-\d{2}-\d{2}$/.test(i.value || '') ? i.value : todayStr();
   const dt = new Date(base + 'T00:00:00'); dt.setDate(dt.getDate() + n);
-  i.value = _ymd(dt); dspDateHint();
+  i.value = _ymd(dt); _dspDateTouched = true; _dspDateVal = i.value; dspDateHint();
 }
 async function issueDispatch() {
   const ids = [...document.querySelectorAll('#chulgo-queue input.cq-chk:checked')].map(c => c.value);
   if (!ids.length) { toast('출고 지시할 항목을 체크하세요'); return; }
   const schedDate = (el('dsp-date') && el('dsp-date').value || '').trim();   // ★ 미래 날짜로도 지시할 수 있다
+  dspDateReset();                                                            // ★ 다음 건은 다시 «오늘»부터
   const sel = (el('dsp-driver-sel') && el('dsp-driver-sel').value) || '';
   const company = sel === '__company';
   let driver = '';
