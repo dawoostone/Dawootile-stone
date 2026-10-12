@@ -1091,7 +1091,7 @@ async function saveClientBizInfo(id) {
   const taxInfo = { bizNo: g('bizno'), corpName: g('corp') || c.value, ceo: g('ceo'), addr: g('addr'), bizType: g('biztype'), bizClass: g('bizclass'), contact: g('contact'), email: g('email'), tel: g('tel'), hp: g('hp'), fax: g('fax') };
   const patch = { taxInfo: taxInfo };
   const ct = classifyCtype(taxInfo.bizType, taxInfo.bizClass, taxInfo.corpName);
-  if (ctypeAutoOK(c.ctype) && (c.ctype || '') !== ct && (taxInfo.bizType || taxInfo.bizClass)) patch.ctype = ct;
+  if (ctypeAutoOK(c) && (c.ctype || '') !== ct && (taxInfo.bizType || taxInfo.bizClass)) patch.ctype = ct;   // ★ 손으로 정한 업체 구분은 지킨다
   await Store.update('clients', id, patch); toast('거래처 정보 저장됨'); setTimeout(renderClients, 300);
 }
 async function lookupClientBiz(id) {
@@ -1176,7 +1176,7 @@ async function importClientsFull(input) {
       if (match) {
         const ex = match.taxInfo || {}; const merged = {};
         ['bizNo', 'corpName', 'ceo', 'addr', 'bizType', 'bizClass', 'contact', 'email'].forEach(k => { merged[k] = ti[k] || ex[k] || ''; });
-        const patch = { taxInfo: merged }; if ((bizType || bizClass) && ctypeAutoOK(match.ctype)) patch.ctype = ct;   // 손으로 정한 대리점·별도는 지킨다
+        const patch = { taxInfo: merged }; if ((bizType || bizClass) && ctypeAutoOK(match)) patch.ctype = ct;   // ★ 손으로 정한 업체 구분은 지킨다
         batch.update(coll.doc(match.id), patch); updated++; ops++;
       } else {
         const ref = coll.doc(); batch.set(ref, { value: name, ctype: ct, taxInfo: ti });
@@ -1318,7 +1318,9 @@ function renderClientDetail() {
       <div id="cb-body" style="display:none;padding:0 16px 14px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><label style="font-size:12.5px;color:var(--t2)">거래처 유형</label>
         <select onchange="setClientTypeSetting('${c.id}',this.value)" style="font-size:13px;padding:6px 9px;border:1.5px solid var(--bd2);border-radius:8px">${CTYPES.map(t => `<option ${((c.ctype) || '소비자') === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
-        <span style="font-size:11px;color:var(--t3)">사업자정보 조회 시 자동 분류됩니다</span></div>
+        <span style="font-size:11px;color:var(--t3)">${String(c.ctypeBy || '').trim()
+          ? `<i class="ti ti-lock" style="font-size:12px;color:var(--gd)"></i> <b>${esc(c.ctypeBy)}</b> 님이 직접 정함 — 사업자 조회·계산서 발행이 못 바꿉니다`
+          : '아직 직접 정한 적이 없어, 사업자정보 조회 시 자동 분류됩니다'}</span></div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">
         <div class="fld" style="flex:1;min-width:180px;margin:0"><label>사업자등록번호</label><div style="display:flex;gap:6px"><input id="cb-bizno" inputmode="numeric" value="${esc(ti.bizNo || '')}" placeholder="000-00-00000" style="${inp}"><button class="btn btn-sm btn-pri" style="flex:none;white-space:nowrap" onclick="lookupClientBiz('${c.id}')"><i class="ti ti-search"></i>조회</button></div></div>
         ${fld('corp', '상호', ti.corpName || c.value)}
@@ -2846,7 +2848,7 @@ async function ensureClient(name, ctype) {
   /* ★ 2026-09-16 — 견적에서 새로 생긴 거래처는 «업체 구분»을 비워 두지 않는다.
      예전엔 {value} 만 넣어서 그 거래처는 유형이 빈 채로 남았다. */
   const t = String(ctype || '').trim();
-  try { await Store.add('clients', Object.assign({ value: v }, (t && CTYPES.indexOf(t) >= 0) ? { ctype: t } : {})); } catch (e) { }
+  try { await Store.add('clients', Object.assign({ value: v }, (t && CTYPES.indexOf(t) >= 0) ? ctypeStamp(t) : {})); } catch (e) { }
 }
 /* 입고 자재 검색 후보: 재고에 등록된 품목명만 */
 function invNames() {
@@ -5599,7 +5601,12 @@ function qCtypeNoteRefresh() {
   const c = (state.clients || []).find(x => _normName(x.value) === _normName(client));
   if (!c) { box.innerHTML = `<span style="color:var(--t3)">새 거래처 — 저장하면 <b>${esc(pick)}</b>로 등록됩니다</span>`; return; }
   const cur = (c.ctype || '').trim();
-  if (cur === pick) { box.innerHTML = `<span style="color:var(--gd)"><i class="ti ti-check" style="font-size:12px"></i> 거래처 정보와 같음</span>`; return; }
+  const _lock = String(c.ctypeBy || '').trim();
+  if (cur === pick) {
+    box.innerHTML = `<span style="color:var(--gd)"><i class="ti ti-check" style="font-size:12px"></i> 거래처 정보와 같음</span>`
+      + (_lock ? ` <span style="color:var(--t3)" title="사업자 조회·계산서 발행이 이 값을 못 바꿉니다"><i class="ti ti-lock" style="font-size:11px"></i> ${esc(_lock)} 지정</span>` : '');
+    return;
+  }
   box.innerHTML = `<span style="color:#a2560f">거래처는 <b>${esc(cur || '미지정')}</b></span>
     <button type="button" class="btn btn-sm" style="padding:1px 7px;font-size:10.5px;margin-left:4px;color:var(--gd);border-color:var(--gd)"
       onclick="qCtypeSaveToClient()"><i class="ti ti-device-floppy"></i>${esc(pick)}${_koRo(pick)} 저장</button>`;
@@ -5612,8 +5619,8 @@ async function qCtypeSaveToClient() {
   const c = (state.clients || []).find(x => _normName(x.value) === _normName(client));
   if (!c) { toast('아직 등록 안 된 거래처입니다 — 견적을 저장하면 같이 등록됩니다'); return; }
   try {
-    await Store.update('clients', c.id, { ctype: pick });
-    toast(client + ' → 업체 구분 ' + pick + _koRo(pick) + ' 저장됨');
+    await Store.update('clients', c.id, ctypeStamp(pick));
+    toast(client + ' → 업체 구분 ' + pick + _koRo(pick) + ' 저장됨 (자동분류가 못 바꿉니다)');
     setTimeout(qCtypeNoteRefresh, 400);
   } catch (e) { toast('저장 실패: ' + ((e && e.message) || e)); }
 }
@@ -6589,7 +6596,7 @@ async function submitQuote(id) {
       const cdoc = (state.clients || []).find(x => _normName(x.value) === _normName(client));
       if (cdoc && (cdoc.ctype || '') !== ctype) {
         const _was = (cdoc.ctype || '').trim();
-        await Store.update('clients', cdoc.id, { ctype });
+        await Store.update('clients', cdoc.id, ctypeStamp(ctype));
         setTimeout(() => toast(client + ' 업체 구분 ' + (_was ? (_was + ' → ') : '') + ctype + _koRo(ctype) + ' 저장됨'), 900);
       }
     } catch (e) { }
@@ -7189,7 +7196,7 @@ async function taxSaveClientNow(quiet) {
   try {
     const patch = { taxInfo: buyer };
     const ct = classifyCtype(buyer.bizType, buyer.bizClass, buyer.corpName);   // 업태·종목으로 거래처 유형도 같이 정리
-    if (ctypeAutoOK(c.ctype) && (c.ctype || '') !== ct && (buyer.bizType || buyer.bizClass)) patch.ctype = ct;
+    if (ctypeAutoOK(c) && (c.ctype || '') !== ct && (buyer.bizType || buyer.bizClass)) patch.ctype = ct;   // ★ 손으로 정한 값은 안 건드린다
     await Store.update('clients', c.id, patch);
     const b = el('tx-saved');
     if (b) { b.textContent = '· 저장됨'; setTimeout(() => { if (el('tx-saved')) el('tx-saved').textContent = ''; }, 2000); }
@@ -10097,7 +10104,7 @@ async function submitTaxInvoice(id) {
   try {
     toast('세금계산서 발행 중…');
     await saveClientTaxInfo(q.client, buyer);
-    try { const _ct = classifyCtype(buyer.bizType, buyer.bizClass, buyer.corpName); const _c = (state.clients || []).find(x => _normName(x.value) === _normName(q.client)); if (_c && ctypeAutoOK(_c.ctype) && (_c.ctype || '') !== _ct) await Store.update('clients', _c.id, { ctype: _ct }); } catch (e) { }
+    try { const _ct = classifyCtype(buyer.bizType, buyer.bizClass, buyer.corpName); const _c = (state.clients || []).find(x => _normName(x.value) === _normName(q.client)); if (_c && ctypeAutoOK(_c) && (_c.ctype || '') !== _ct) await Store.update('clients', _c.id, { ctype: _ct }); } catch (e) { }   // ★ 손으로 정한 값은 안 건드린다
     const token = await auth.currentUser.getIdToken();
     const send = async pl => {
       const rr = await fetch(PUSH_FN + '?action=taxinvoice', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify(pl) });
@@ -10133,9 +10140,27 @@ function classifyCtype(bizType, bizClass, name) {
   if (/도매|소매|도소매|타일|도기|위생|석재|제조|무역|유통|자재|판매|건자재/.test(t)) return '유통';
   return '소비자';
 }
-/* 자동분류가 지금 값을 덮어써도 되는지.
-   '대리점'·'별도' 는 사람이 정한 값이라 사업자 조회·계산서 발행 때 건드리면 안 된다. */
-function ctypeAutoOK(cur) { const c = ctypeNorm(cur); return c !== '대리점' && c !== '신성그룹' && c !== '현대엘앤씨'; }
+/* ══════════════════════════════════════════════════════════
+   자동분류가 지금 값을 덮어써도 되는지.
+   ★★ 2026-10-12 — 사람이 손으로 정한 업체 구분은 «절대» 안 덮는다.
+   사용자: *"업체구분 견적서에서 저장하면 왜 저장 안되는지 ?"*
+
+   저장은 잘 됐다. 문제는 그 뒤였다 — 사업자 조회·세금계산서 발행·홈택스
+   불러오기가 업태·종목을 보고 유형을 다시 매겨서 조용히 되돌렸다.
+   실측: 업태·종목이 있는 거래처 825곳 중 57곳이 자동분류와 어긋나 있었고,
+        그중 44곳이 «유통 → 인테리어» 로 되돌려질 상태였다.
+        (자동분류는 상호에 «디자인»만 들어가도 인테리어로 본다)
+   업체 구분은 곧 단가라서 조용히 바뀌면 안 된다.
+   ★ 손으로 정하면 ctypeBy 가 찍히고, 그 뒤로는 자동분류가 손대지 못한다.
+     바꾸고 싶으면 사람이 다시 고르면 된다.
+   ══════════════════════════════════════════════════════════ */
+function ctypeAutoOK(cur) {
+  if (cur && typeof cur === 'object') { if (String(cur.ctypeBy || '').trim()) return false; cur = cur.ctype; }
+  const c = ctypeNorm(cur);
+  return c !== '대리점' && c !== '신성그룹' && c !== '현대엘앤씨';
+}
+/* 사람이 정한 업체 구분에 찍는 도장 */
+function ctypeStamp(t) { return { ctype: t, ctypeBy: (me && me.name) || '사용자', ctypeAt: Date.now() }; }
 /* 사업자번호로 기업정보 조회 → 자동입력 + 유형 자동분류 + 거래처 등록 */
 async function lookupBizInfo() {
   const raw = el('tx-bizno') ? el('tx-bizno').value : ''; const corpNum = (raw || '').replace(/[^0-9]/g, '');
@@ -10179,8 +10204,9 @@ async function lookupBizInfo() {
       const buyer = Object.assign(taxBuyerFromForm(q.client), { bizNo: corpNum });
       await saveClientTaxInfo(q.client, buyer);
       const c = (state.clients || []).find(x => _normName(x.value) === _normName(q.client));
-      // 업태·종목이 실제로 있을 때만 유형을 고친다 (빈 값으로 '소비자' 덮어쓰기 방지)
-      if (hasCat && c && (c.ctype || '') !== ct) { try { await Store.update('clients', c.id, { ctype: ct }); } catch (e) { } }
+      /* 업태·종목이 실제로 있을 때만 유형을 고친다 (빈 값으로 '소비자' 덮어쓰기 방지)
+         ★★ 여기는 ctypeAutoOK 검사가 아예 빠져 있어서, 대리점·신성그룹까지 덮어썼다 (2026-10-12 고침) */
+      if (hasCat && c && ctypeAutoOK(c) && (c.ctype || '') !== ct) { try { await Store.update('clients', c.id, { ctype: ct }); } catch (e) { } }
     }
     if (msg) msg.innerHTML = '<span style="color:var(--gd)"><i class="ti ti-check"></i> 조회완료'
       + (hasCat ? (' · 유형 <b>' + esc(ct) + '</b>') : ' <span style="color:var(--t3)">(업태·종목이 없어 유형은 그대로 둡니다)</span>')
@@ -11175,7 +11201,7 @@ async function saveQuoteMemo() {
   if (ex) await Store.update('appmeta', ex.id, { text: t }); else await Store.add('appmeta', { key: 'quoteMemo', text: t });
   toast('비고 기본 양식 저장됨');
 }
-async function setClientTypeSetting(id, type) { try { await Store.update('clients', id, { ctype: type }); } catch (e) { } }
+async function setClientTypeSetting(id, type) { try { await Store.update('clients', id, ctypeStamp(type)); } catch (e) { } }
 function _ctypeNorm(v) { const s = String(v == null ? '' : v).replace(/\s/g, ''); if (!s) return ''; if (/신성/.test(s)) return '신성그룹'; if (/현대엘앤씨|현대엘엔씨|현대L&C/i.test(s)) return '현대엘앤씨'; if (/유통|도매/.test(s)) return '유통'; if (/대리점/.test(s)) return '대리점'; if (/인테리어|시공/.test(s)) return '인테리어'; if (/별도|이외|특판|예외/.test(s)) return '대리점'; if (/소비자|소매|일반|개인/.test(s)) return '소비자'; return ''; }
 /* 거래처 유형 엑셀/CSV 업로드 → clients.ctype 학습 */
 function clientTypeImport(input) {
@@ -11202,7 +11228,7 @@ function clientTypeImport(input) {
         const cells = rows[r] || []; const name = String(cells[nameC] == null ? '' : cells[nameC]).trim(); if (!name) continue;
         const ctype = _ctypeNorm(cells[typeC]); if (!ctype) { skipped++; continue; }
         const c = (state.clients || []).find(x => _normName(x.value) === _normName(name));
-        if (c) { await Store.update('clients', c.id, { ctype }); } else { await Store.add('clients', { value: name, ctype }); added++; }
+        if (c) { await Store.update('clients', c.id, ctypeStamp(ctype)); } else { await Store.add('clients', Object.assign({ value: name }, ctypeStamp(ctype))); added++; }
         n++;
       }
       toast(n ? (n + '개 거래처 유형 반영' + (added ? ' (신규 ' + added + ')' : '') + (skipped ? ' · 유형없음 ' + skipped + '건 건너뜀' : '')) : '반영된 행이 없습니다 (유형 열 확인)'); input.value = '';
