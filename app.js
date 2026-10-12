@@ -20149,9 +20149,15 @@ function chulgoOfficeSection() {
   const times = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
   const regDrivers2 = registeredDrivers(); const dsel = filters.chulgoDriver || '';
   const whAlerts = (state.chulgoReqs || []).filter(r => r.reqType === '입고알림' && r.fromWarehouse && (r.status || '') === '대기열').sort((a, b) => (+b.createdAt || 0) - (+a.createdAt || 0));
-  const whAlertCard = whAlerts.length ? `<div class="card" style="padding:12px 14px;margin-bottom:12px;border:1.5px solid #f0c060;background:#fffaf0">
-      <div style="font-weight:700;font-size:14px;margin-bottom:8px;color:#8a5a00"><i class="ti ti-bell-ringing"></i> 창고 입고 알림 <span style="background:#e0281d;color:#fff;border-radius:9px;padding:0 7px;font-size:11px">${whAlerts.length}</span></div>
-      <div data-keepscroll id="wh-alert-list" style="max-height:38vh;overflow:auto">${whAlerts.map(r => chulgoReqCard(r, true)).join('')}</div>
+  /* ★ 2026-10-12 — 새 알림이 없어도 카드를 띄운다. 예전엔 통째로 숨겨서
+     «지나간 알림»을 볼 수가 없었다 (실측 19건 전부 처리 완료 → 화면 0건). */
+  const _whPastN = whPastAll().length;
+  const whAlertCard = (whAlerts.length || _whPastN) ? `<div class="card" style="padding:12px 14px;margin-bottom:12px;${whAlerts.length ? 'border:1.5px solid #f0c060;background:#fffaf0' : ''}">
+      <div style="font-weight:700;font-size:14px;${whAlerts.length ? 'margin-bottom:8px;color:#8a5a00' : 'color:var(--t2)'}"><i class="ti ti-bell-ringing"></i> 창고 입고 알림 ${whAlerts.length
+        ? `<span style="background:#e0281d;color:#fff;border-radius:9px;padding:0 7px;font-size:11px">${whAlerts.length}</span>`
+        : '<span style="font-weight:500;font-size:11.5px;color:var(--t3)">· 새로 온 알림 없음</span>'}</div>
+      ${whAlerts.length ? `<div data-keepscroll id="wh-alert-list" style="max-height:38vh;overflow:auto">${whAlerts.map(r => chulgoReqCard(r, true)).join('')}</div>` : ''}
+      ${whPastSectionHtml()}
     </div>` : '';
   const driverView = `<div class="card" style="padding:12px 14px;margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px"><div style="font-weight:700;font-size:14px"><i class="ti ti-steering-wheel" style="color:var(--blue)"></i> 기사별 출고 보기</div><button class="btn btn-sm" onclick="openDriverMgr()"><i class="ti ti-user-cog"></i>기사 관리</button></div>
@@ -20388,6 +20394,82 @@ async function submitChulgoReq() {
     toast('등록됨 · ' + docNo);
     renderChulgo();
   } finally { setTimeout(() => { _busy = false; }, 600); }
+}
+/* ══════════════════════════════════════════════════════════
+   ★★ 창고 입고알림 — «지나간 알림» 보기 (2026-10-12)
+   사용자: *"창고에서 입고알림 보낸 것 내역 확인"*
+
+   예전에는 «대기열» 인 알림만 화면에 띄웠다. 사무실에서 «접수» 를 누르는 순간
+   목록에서 사라져서, 창고가 뭘 보냈는지 나중에 확인할 방법이 없었다.
+   실측: 입고알림 19건이 전부 확인·완료라 화면에는 0건이 떠 있었다.
+   ★ 이제 알림 카드 아래에 «지나간 알림»을 접어 두고, 달·종류·검색으로 찾는다.
+   ══════════════════════════════════════════════════════════ */
+let _whPastOpen = false;
+function whAlertsAll() { return (state.chulgoReqs || []).filter(r => r.reqType === '입고알림').sort((a, b) => (+b.createdAt || 0) - (+a.createdAt || 0)); }
+function whPastAll() { return whAlertsAll().filter(r => (r.status || '') !== '대기열'); }
+function _whYm(r) { const t = +r.createdAt || 0; if (!t) return ''; const d = new Date(t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+function _whDt(t) { const v = +t || 0; if (!v) return '-'; const d = new Date(v); return String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0') + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+function whMonths() { const m = {}; whPastAll().forEach(r => { const k = _whYm(r); if (k) m[k] = (m[k] || 0) + 1; }); return Object.keys(m).sort().reverse(); }
+function whKinds() { const m = {}; whPastAll().forEach(r => { const k = (r.alertKind || '').trim(); if (k) m[k] = (m[k] || 0) + 1; }); return Object.keys(m).sort((a, b) => m[b] - m[a]).map(k => ({ k: k, n: m[k] })); }
+function whPastList() {
+  const ym = filters.whMonth || 'all', kd = filters.whKind || 'all';
+  const q = (filters.whSearch || '').trim().toLowerCase();
+  let L = whPastAll();
+  if (ym !== 'all') L = L.filter(r => _whYm(r) === ym);
+  if (kd !== 'all') L = L.filter(r => (r.alertKind || '') === kd);
+  if (q) L = L.filter(r => [r.client, r.alertKind, r.memo, r.sender, r.docNo, r.ackedBy, r.doneBy, (r.items || []).map(i => i.name).join(' ')].join(' ').toLowerCase().indexOf(q) >= 0);
+  return L;
+}
+function whPastToggle(d) { _whPastOpen = !!(d && d.open); }
+function whSetMonth(v) { filters.whMonth = v; whPastRefresh(); }
+function whSetKind(v) { filters.whKind = (filters.whKind === v) ? 'all' : v; whPastRefresh(); }
+function whSetSearch(v) { filters.whSearch = v; whPastRefresh(); }
+function whPastRefresh() { const b = el('wh-past-box'); if (b) b.innerHTML = whPastBoxHtml(); }
+/* 지나간 알림 한 줄 */
+function whPastRowHtml(r) {
+  const body = (r.items || []).map(i => String(i.name || '')).filter(Boolean).join(' / ');
+  const done = (r.status || '') === '완료';
+  const who = r.ackedBy || r.doneBy || '';
+  const when = r.ackedAt || r.doneAt || 0;
+  return `<tr>
+    <td style="white-space:nowrap;color:var(--t3)">${esc(_whDt(r.createdAt))}</td>
+    <td style="white-space:nowrap"><span class="pill" style="background:${/환불/.test(r.alertKind || '') ? '#fdecea;color:#c0341d;border:1px solid #f3c6c0' : '#eef4ff;color:#1b4fb0;border:1px solid #c3d6f5'};font-size:10px">${esc(r.alertKind || '알림')}</span></td>
+    <td style="white-space:nowrap"><b>${esc(r.client || '-')}</b></td>
+    <td style="word-break:break-word">${esc(body || '-')}${r.memo ? `<div style="font-size:11px;color:var(--t3);margin-top:1px">${esc(r.memo)}</div>` : ''}</td>
+    <td style="white-space:nowrap;color:var(--t2)">${esc(r.sender || '-')}</td>
+    <td style="white-space:nowrap"><span class="pill ${done ? 'p-done' : 'p-prog'}" style="font-size:10px">${done ? '완료' : '접수'}</span>${who ? `<div style="font-size:10.5px;color:var(--t3);margin-top:1px">${esc(who)}${when ? ' · ' + esc(_whDt(when)) : ''}</div>` : ''}</td>
+  </tr>`;
+}
+function whPastBoxHtml() {
+  const ym = filters.whMonth || 'all', kd = filters.whKind || 'all';
+  const ms = whMonths(), ks = whKinds(), L = whPastList(), all = whPastAll();
+  const chip = (on, label, fn) => `<button class="chip ${on ? 'active' : ''}" style="font-size:11.5px;padding:3px 9px" onclick="${fn}">${label}</button>`;
+  const MAX = 200;
+  return `<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <span style="font-size:11px;color:var(--t3);width:30px;flex:none">달</span>
+      ${chip(ym === 'all', '전체 ' + all.length, "whSetMonth('all')")}
+      ${ms.map(m => chip(ym === m, (+m.slice(5, 7)) + '월', "whSetMonth('" + m + "')")).join('')}
+    </div>
+    ${ks.length > 1 ? `<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <span style="font-size:11px;color:var(--t3);width:30px;flex:none">종류</span>
+      ${ks.map(x => chip(kd === x.k, esc(x.k) + ' ' + x.n, "whSetKind('" + esc(x.k) + "')")).join('')}
+    </div>` : ''}
+    <div class="tbl-wrap"><table class="tbl" style="font-size:12.5px">
+      <thead><tr><th style="width:76px">보낸 때</th><th style="width:100px">종류</th><th style="width:110px">거래처</th><th>내용</th><th style="width:84px">보낸이</th><th style="width:92px">처리</th></tr></thead>
+      <tbody>${L.length ? L.slice(0, MAX).map(whPastRowHtml).join('') : `<tr><td colspan="6" style="text-align:center;color:var(--t3);padding:16px">해당하는 알림이 없습니다</td></tr>`}</tbody>
+    </table></div>
+    ${L.length > MAX ? `<div style="font-size:11.5px;color:var(--t3);text-align:center;padding:8px">최근 ${MAX}건만 표시 · 달이나 검색으로 좁혀 보세요</div>` : ''}`;
+}
+function whPastSectionHtml() {
+  const n = whPastAll().length;
+  if (!n) return '';
+  return `<details id="wh-past" ${_whPastOpen ? 'open' : ''} ontoggle="whPastToggle(this)" style="margin-top:${'10px'}">
+    <summary style="font-size:12.5px;color:var(--t2);cursor:pointer;padding:7px 2px;list-style:none">
+      <i class="ti ti-history"></i> <b>지나간 알림 ${n}건</b> <span style="color:var(--t3)">— 접수·완료된 것 (눌러서 펼치기)</span></summary>
+    <div class="search-box" style="margin:6px 0 9px"><i class="ti ti-search"></i>
+      <input id="wh-past-q" placeholder="거래처·내용·보낸이 검색" value="${esc(filters.whSearch || '')}" oninput="whSetSearch(this.value)" autocomplete="off" lang="ko"></div>
+    <div id="wh-past-box">${whPastBoxHtml()}</div>
+  </details>`;
 }
 async function chulgoAck(id) { const r = (state.chulgoReqs || []).find(x => x.id === id); if (!r) return; await Store.update('chulgoReqs', id, { status: '확인', ackedBy: (me && me.name) || '', ackedAt: Date.now() }); toast('접수(확인) 처리됨'); }
 async function chulgoDone(id) {
