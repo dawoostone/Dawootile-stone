@@ -7457,10 +7457,21 @@ function isGagongItem(it) {
   if (!it.extra) { try { if (quotePriceItems().some(x => _normName(x.name) === _normName(nm))) return false; } catch (e) { } }
   return true;
 }
-/* 계산서 비고란 — 견적의 현장명 우선, 없으면 현장주소·수신참조, 그것도 없으면 견적번호 */
+/* 견적의 현장 주소 — 견적서 '현장 주소' 칸 우선, 없으면 연결된 현장(현장 메뉴)의 주소 */
+function taxSiteAddrOf(q) {
+  if (!q) return '';
+  const a = String(q.siteAddr || '').trim(); if (a) return a;
+  let s = null; try { s = quoteSiteOf(q); } catch (e) { }
+  if (!s) return '';
+  const reg = String(s.region || '').trim(), ad = String(s.address || '').trim();
+  if (!ad) return reg;
+  return (reg && ad.indexOf(reg) !== 0) ? (reg + ' ' + ad) : ad;
+}
+/* 계산서 비고란 — ★ 현장 주소 우선 (2026-10-14 사용자 요청: 현장명 말고 현장 주소)
+   주소가 아예 없을 때만 현장명 → 수신참조 → 견적번호 순으로 채운다 */
 function taxRemarkOf(q) {
   if (!q) return '';
-  const cand = [q.siteName, q.siteAddr, q.attn].map(v => (v || '').trim()).filter(Boolean);
+  const cand = [taxSiteAddrOf(q), q.siteName, q.attn].map(v => (v || '').trim()).filter(Boolean);
   return cand.length ? cand[0] : ('견적 ' + (q.docNo || ''));
 }
 /* 폼 입력 + 견적 내용 → 세금계산서 payload 초안 만들기 (발행하지 않음) */
@@ -7517,7 +7528,7 @@ function buildTaxPayload(id) {
   }
   const supplyTotal = detailList.reduce((a, b) => a + (+b.supplyCost || 0), 0);
   const taxTotal = detailList.reduce((a, b) => a + (+b.tax || 0), 0); const totalAmount = supplyTotal + taxTotal;
-  const remark1 = taxRemarkOf(q);   // 계산서 비고 = 현장명(없으면 견적번호)
+  const remark1 = taxRemarkOf(q);   // 계산서 비고 = 현장 주소(없으면 현장명 → 견적번호)
   return {
     _quoteId: id, _buyer: buyer, _reN: _reN,
     invoicerCorpNum: co.bizno, mgtKey: _mgtKey, writeDate, purposeType,
@@ -10083,7 +10094,7 @@ function taxPreviewInner() {
       <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:12.5px;color:var(--t2)">세액 합계</span><b style="font-size:13.5px">${fmtWon(d.taxTotal)}원</b></div>
       <div style="display:flex;justify-content:space-between;padding:7px 0 0;border-top:1.5px solid var(--bd2);margin-top:5px"><span style="font-size:13.5px;font-weight:700">합계금액</span><b style="font-size:17px;color:var(--gd)">${fmtWon(d.totalAmount)}원</b></div>
     </div>
-    <div class="fld full" style="margin-bottom:11px"><label>비고 <span style="color:var(--t3);font-weight:500">(계산서에 표시 · 견적서의 현장명이 자동으로 들어갑니다)</span></label><input value="${esc(d.remark1 || '')}" oninput="taxPrevSetTop('remark1',this.value)" placeholder="현장명" style="${inp}"></div>
+    <div class="fld full" style="margin-bottom:11px"><label>비고 <span style="color:var(--t3);font-weight:500">(계산서에 표시 · 현장 주소가 자동으로 들어갑니다)</span></label><input value="${esc(d.remark1 || '')}" oninput="taxPrevSetTop('remark1',this.value)" placeholder="현장 주소" style="${inp}"></div>
     <div class="frm-foot" style="display:flex;gap:6px">
       <button class="btn" style="flex:1" onclick="closeModal()">닫기</button>
       ${d._bundle
@@ -15811,7 +15822,7 @@ function buildBillTaxPayload() {
   // 문서관리번호 — 묶음은 'B' + 첫 견적번호 를 바탕으로, 이미 쓰인 번호는 피한다
   const _rawBase = ('B' + String(qs[0].docNo || Date.now())).replace(/[^0-9A-Za-z\-_]/g, '').slice(0, 20);
   const mgtKey = taxFreeMgtKey(_rawBase, '');
-  const sites = [...new Set(qs.map(billSiteOf).filter(Boolean))];
+  const sites = [...new Set(qs.map(q => taxSiteAddrOf(q) || billSiteOf(q)).filter(Boolean))];   // 묶음 계산서 비고도 현장 주소 우선
   const remark1 = sites.length ? (sites[0] + (sites.length > 1 ? ' 외 ' + (sites.length - 1) + '곳' : '')) : ('견적 ' + qs.length + '건');
   const docNos = qs.map(q => q.docNo).filter(Boolean);
   return {
