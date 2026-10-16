@@ -2741,6 +2741,15 @@ function buildAlerts() {
   const holdReqs = (state.holdRequests || []).filter(r => (r.status || '대기') === '대기');
   holdReqs.forEach(r => { const items = (r.items || []).map(it => `${it.materialName} ${+it.jang || 0}장`).join(', '); alerts.push({ key: 'holdreq|' + r.id, c: 'a', ic: 'ti-lock-plus', t: `${r.vendor || ''} 홀딩 요청`, s: items + (r.useDate ? ` · 사용 ${r.useDate}` : '') + (r.note ? ` · ${r.note}` : ''), tag: '홀딩요청' }); });
   lowItems.forEach(i => alerts.push({ key: 'low|' + i.name, c: 'r', ic: 'ti-alert-triangle', t: `${i.name} 입고 필요`, s: `가용 ${availJang(i)}장 · 안전재고 ${(+i.safeJang || 0)}장 미만`, tag: '재고부족' }));
+  /* ★ 돈은 들어왔는데 주문확정을 안 누른 견적 — 세면대 건을 먼저 (2026-10-16) */
+  try {
+    paidUnconfirmed().slice().sort((a, b) => (b.basin ? 1 : 0) - (a.basin ? 1 : 0)).forEach(x => {
+      alerts.push({ key: 'paidunconf|' + x.id, c: x.basin ? 'r' : 'a', ic: 'ti-cash-banknote',
+        t: `${x.q.client || ''} 입금 확인 — 주문확정 필요${x.basin ? ' (세면대)' : ''}`,
+        s: `${x.q.docNo || ''} · 견적 ${fmtWon(x.q.total)} · ${x.tx.date || ''} ${fmtWon(x.amt)}원 입금${x.full ? '' : ' (계약금)'}${x.basin ? ' · 확정해야 세면대 발주로 넘어갑니다' : ''}`,
+        tag: '확정대기' });
+    });
+  } catch (e) { }
   openIssues.forEach(i => alerts.push({ key: 'issue|' + (i.id || i.reason), c: 'r', ic: 'ti-alert-triangle', t: `${i.siteName || '현장'} 이슈 미해결`, s: (i.reason || '').slice(0, 40), tag: '이슈' }));
   /* 예정홀딩 알림 — ★ 사용예정일(그리고 남은 날짜 D-n)을 같이 보여준다.
      자재가 여러 종류면 「A 외 2종」으로 묶고, 장수도 전 품목 합계로 센다. */
@@ -9126,7 +9135,52 @@ function clientResetCardHtml(c) {
 }
 let _cmCache = null, _qpCache = null, _cmAt = 0;
 /* 자료가 바뀌면 다시 계산 — 거래처 이름 목록·입금자 추정 결과도 같이 버린다 */
-function moneyBust() { _cmCache = null; _qpCache = null; _lcNames = null; _tcIx = null; }
+function moneyBust() { _cmCache = null; _qpCache = null; _lcNames = null; _tcIx = null; _puCache = null; }
+/* ══════════════════════════════════════════════════════════
+   ★★ «돈은 들어왔는데 주문확정을 안 누른 견적» (2026-10-16)
+   사용자: *"주문 확정 안눌러도 입금 됐으면 입금 된 거 볼 수 있게 해줘
+            세면대 발주 놓칠 수 있으니"*
+
+   앱은 «확정»한 견적만 매출·입금 계산에 넣는다. 그래서 돈이 먼저 들어와도
+   확정을 안 눌렀으면 그 견적은 조용히 미확정으로 남고, 세면대 발주 같은
+   다음 일이 통째로 빠진다.
+   ★ 헛짚지 않게 조건을 빡빡하게 잡았다 — 아래를 «전부» 만족할 때만 알린다:
+     ① 아직 확정 안 한 견적 (잔금 견적서로 대체된 건 제외)
+     ② 그 거래처 입금 중 «견적 총액» 또는 «계약금» 과 1원까지 같은 것이 있다
+     ③ 그 입금이 견적일 «이후» 에 들어왔다
+     ④ 그 돈이 아직 어느 확정 견적에도 안 붙어 있다 (거래처 과입 범위 안)
+   (실측: 미확정 178건 중 7건 — 그중 3건이 세면대. 넓게 잡으면 45건까지 늘지만
+    과입이 큰 거래처에서 헛짚음이 많아 쓸모가 없었다)
+   ══════════════════════════════════════════════════════════ */
+let _puCache = null, _puAt = 0;
+function paidUnconfirmed() {
+  if (_puCache && Date.now() - _puAt < 3000) return _puCache;
+  const M = clientMoneyMap();
+  const out = [];
+  (state.quotes || []).forEach(q => {
+    if (q.ordered || q.supersededBy) return;
+    const c = (q.client || '').trim(); if (!c) return;
+    const tot = Math.round(+q.total || 0); if (!(tot > 0)) return;
+    const extra = Math.round(+((M[c] || {}).extra) || 0);
+    if (!(extra > 0)) return;                       // 아직 어디에도 안 붙은 돈이 없으면 패스
+    const dep = Math.round(+q.depositAmt || 0);
+    const qd = String(q.date || '');
+    const hit = (state.banktx || []).filter(t => txIsIn(t) && !txSkip(t) && txClientOf(t) === c
+      && String(t.date || '') >= qd
+      && (txMoney(t) === tot || (dep > 0 && txMoney(t) === dep)))
+      .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+    if (!hit.length) return;
+    const t0 = hit[0], amt = txMoney(t0);
+    if (amt > extra) return;                        // 그 돈은 이미 다른 확정 견적에 붙어 있다
+    out.push({ id: q.id, q: q, tx: t0, amt: amt, full: amt === tot,
+      basin: (q.items || []).some(i => String(i.name || '').includes('세면대')) });
+  });
+  out.sort((a, b) => String(b.q.date || '').localeCompare(String(a.q.date || '')));
+  _puAt = Date.now(); _puCache = out;
+  return out;
+}
+function paidUnconfMap() { const m = {}; paidUnconfirmed().forEach(x => m[x.id] = x); return m; }
+function paidUnconfOf(q) { return (q && !q.ordered) ? paidUnconfMap()[q.id] : null; }
 function _moneyBuild() {
   if (_cmCache && _qpCache && Date.now() - _cmAt < 3000) return;   // 자료가 바뀌면 moneyBust() 가 바로 지우므로 오래 들고 있어도 안전
   const M = {}, P = {};
@@ -11757,7 +11811,13 @@ function quoteCardHtml(q) {
   const names = (q.items || []).map(it => it.name).filter(Boolean).slice(0, 3).join(', ') + ((q.items || []).length > 3 ? ` 외 ${q.items.length - 3}` : '');
   const _pa = quotePaid(q); const _tt = Math.round(+q.total || 0); const _rem = quoteRem(q);
   const _cRem = clientRemOf(q.client);        // 이 거래처가 우리한테 갚아야 할 총액 (원장 기준)
-  const paidPill = quoteSuperseded(q) ? '' : (_tt > 0 && _pa >= _tt) ? `<button class="pill p-done" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 결제완료</button>` : (_pa > 0 ? `<button class="pill p-prog" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 입금 ${fmtWon(_pa)} · 미수 ${fmtWon(_rem)}</button>` : `<button class="pill p-wait" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 미결제</button>`);
+  const paidPill0 = quoteSuperseded(q) ? '' : (_tt > 0 && _pa >= _tt) ? `<button class="pill p-done" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 결제완료</button>` : (_pa > 0 ? `<button class="pill p-prog" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 입금 ${fmtWon(_pa)} · 미수 ${fmtWon(_rem)}</button>` : `<button class="pill p-wait" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 미결제</button>`);
+  /* ★ 확정은 안 눌렀는데 돈이 들어온 건 — 카드에서 바로 보이게 (2026-10-16) */
+  const _pu = paidUnconfOf(q);
+  const puPill = _pu
+    ? `<button class="pill" style="border:1.5px solid var(--gd);background:#e8f8f0;color:#0f6e56;cursor:pointer;font-weight:800" onclick="quoteMarkPaid('${q.id}')" title="${esc(_pu.tx.date || '')} ${fmtWon(_pu.amt)}원 입금 — 아직 주문확정을 안 눌렀습니다"><i class="ti ti-cash-banknote"></i> 입금 확인 ${fmtWon(_pu.amt)}${_pu.full ? '' : ' (계약금)'}</button>`
+    : '';
+  const paidPill = paidPill0 + puPill;         // 결제 배지 + «입금 확인» 배지
   const taxPill = taxPillHtml(q, true);
   const _shipD = q.shipped ? quoteShipDate(q) : '';
   const shipBadge = q.shipped ? `<span class="pill p-done"><i class="ti ti-truck-delivery"></i> 출고 완료${_shipD ? ' ' + esc(_shortDate(_shipD)) : ''}</span>` : '';
@@ -14918,6 +14978,24 @@ function renderQuote() {
   const _selQs = filters.quoteBundle ? (state.quotes || []).filter(x => _qSel.has(x.id)) : [];
   const _selTotal = _selQs.reduce((a, q) => a + (+q.total || 0), 0);
   const _listHtml = _quoteListInner();   // ★ 먼저 만들어야 _qShownIds 가 채워진다 (묶음 바의 '전체 선택 N건' 이 이걸 본다)
+  /* ★ 돈은 들어왔는데 확정을 안 누른 견적 — 맨 위에 띄운다 (2026-10-16) */
+  const _puList = paidUnconfirmed();
+  const _puBasin = _puList.filter(x => x.basin).length;
+  const puBanner = _puList.length ? `<div class="card" style="margin-bottom:11px;padding:12px 14px;border:1.5px solid var(--gd);background:#f2fbf6">
+      <div style="font-weight:800;font-size:14px;color:#0f6e56;margin-bottom:3px"><i class="ti ti-cash-banknote"></i> 입금은 들어왔는데 <u>주문확정을 안 누른</u> 견적 ${_puList.length}건${_puBasin ? ` <span class="pill" style="background:#fff;color:#8a5a00;border:1px solid #e0c088;font-size:10.5px">세면대 ${_puBasin}건</span>` : ''}</div>
+      <div style="font-size:11.5px;color:var(--t3);margin-bottom:8px">입금액이 견적 금액(또는 계약금)과 <b>1원까지 같은</b> 건입니다. 확정을 눌러야 세면대 발주·출고로 넘어갑니다.</div>
+      <div style="display:flex;flex-direction:column;gap:5px">
+        ${_puList.slice(0, 8).map(x => `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 8px;background:#fff;border:1px solid #cfe9dc;border-radius:9px">
+          <b style="font-size:12.5px">${esc(x.q.client || '-')}</b>
+          ${x.basin ? '<span class="pill" style="background:#fdf6ea;color:#8a5a00;border:1px solid #e0c088;font-size:10px"><i class="ti ti-bath"></i> 세면대</span>' : ''}
+          <span style="font-size:11.5px;color:var(--t3)">${esc(x.q.docNo || '')} · ${esc(x.q.date || '')}</span>
+          <span style="margin-left:auto;font-size:12.5px;white-space:nowrap">견적 <b>${fmtWon(x.q.total)}</b> · <b style="color:var(--gd)">${esc(x.tx.date || '')} 입금 ${fmtWon(x.amt)}${x.full ? '' : ' (계약금)'}</b></span>
+          <button class="btn btn-sm" onclick="filters.quoteEdit='';filters.taxEdit='';openQuoteInline('${x.id}')"><i class="ti ti-eye"></i>견적</button>
+          <button class="btn btn-sm btn-pri" onclick="quoteConfirmOrder('${x.id}')"><i class="ti ti-clipboard-check"></i>확정</button>
+        </div>`).join('')}
+      </div>
+      ${_puList.length > 8 ? `<div style="font-size:11.5px;color:var(--t3);margin-top:7px">외 ${_puList.length - 8}건은 아래 목록에서 초록색 <b>«입금 확인»</b> 표시로 찾을 수 있습니다.</div>` : ''}
+    </div>` : '';
   const bundleBar = filters.quoteBundle ? `<div id="q-bundlebar" class="card" style="margin-bottom:10px;padding:11px 13px;border:1.5px solid var(--gd);background:#f2fbf6">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
         <div style="font-size:12.5px"><b style="color:var(--gd)"><i class="ti ti-stack-2"></i> 청구 묶음</b> · ${_selQs.length ? `${esc(_qSelClient)} · <b>${_selQs.length}건</b> · 합계 <b style="color:var(--gd)">${fmtWon(_selTotal)}</b>원` : '같은 거래처 견적을 2건 이상 선택하세요'}</div>
@@ -14943,6 +15021,7 @@ function renderQuote() {
     </div>
     ${_pmBanner()}
     ${toggle}
+    ${puBanner}
     ${bundleBar}
     <div class="search-box" style="margin-bottom:10px"><i class="ti ti-search"></i>
       <input id="q-search" placeholder="거래처·견적번호·자재·금액 검색 (예: 220만, 1000만~3000만, 500만이상)" value="${esc(filters.quoteSearch || '')}" oninput="filters.quoteSearch=this.value;quotesFilter()" autocomplete="off" lang="ko">
