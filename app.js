@@ -1965,19 +1965,23 @@ function holdItems(h) {
   return [{ materialName: (h && h.materialName) || '', jang: +(h && h.jang) || 0, hebe: +(h && h.hebe) || 0, lot: (h && h.lot) || '', pattern: (h && h.pattern) || '', planned: false }];
 }
 /* 현장의 자재 목록 (다자재 지원, 구버전 호환) */
-/* ★★ 2026-09-19 — 현장명을 비워두면 「업체명 - 자재명」이 자동으로 들어간다
-   사용자: *"현장 카드로 볼때 현장명에 업체명 - 자재명 이렇게 자동으로 입력했음 함"*
-   예전에는 「업체명 현장」이 들어갔다 — 같은 업체의 현장이 여럿이면 구분이 안 됐다.
-   ★ 자재가 여러 종류면 「… 외 2건」 을 붙인다 (카드 줄이 넘치지 않게).
-   ★ 자재가 아직 미정이면 예전처럼 「업체명 현장」. */
-function siteAutoName(client, items) {
-  const c = String(client == null ? '' : client).trim();
-  const ns = (items || [])
-    .map(r => String((r && (r.name || r.materialName)) || '').trim())
-    .filter(n => n && n !== '(미정)');
-  if (!c) return ns[0] || '';
-  if (!ns.length) return c + ' 현장';
-  return c + ' - ' + ns[0] + (ns.length > 1 ? ' 외 ' + (ns.length - 1) + '건' : '');
+/* ══════════════════════════════════════════════════════════
+   ★★ 2026-10-17 — 현장 등록 칸 정리
+   (2026-09-19 에 넣었던 «업체명 - 자재명» 자동 현장명은 여기서 없앴다)
+   사용자: *"현장 지역은 없어도 되겠음 / 현장명은 기본 비워놓는 걸로 /
+            현장 주소 란에만 현장 주소 넣어줘"*
+
+   ① 「지역」 칸을 없앴다 (주소에 지역이 이미 들어 있다).
+   ② 현장명은 더 이상 «업체명 - 자재명»으로 자동 채우지 않는다 — 비우면 빈 채로 둔다.
+   ③ 그래서 이름이 빈 현장이 생긴다. 화면에서는 «주소 → 업체명» 순으로 대신 보여준다.
+      ★ 저장된 값은 건드리지 않는다 — 보여줄 때만 대신 쓴다.
+   ══════════════════════════════════════════════════════════ */
+function siteTitle(s) {
+  if (!s) return '(현장)';
+  const n = String(s.name || '').trim(); if (n) return n;
+  const a = String(s.address || '').trim(); if (a) return a;
+  const c = String(s.client || '').trim(); if (c) return c + ' 현장';
+  return '(이름 없음)';
 }
 function siteItems(s) {
   if (s && s.items && s.items.length) return s.items.map(x => ({ name: x.name || x.materialName || '', qty: x.qty != null ? x.qty : (x.jang || ''), lot: x.lot || '' }));
@@ -2660,7 +2664,7 @@ function holdingOptions() {
 /* 현장 목록 옵션 (홀딩에서 골라쓰기용) */
 function siteOptions(sel) {
   return state.sites.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).map(s =>
-    `<option value="${esc(s.id)}" ${sel === s.id ? 'selected' : ''}>${esc(s.name || '(이름없음)')}${s.client ? ' · ' + esc(s.client) : ''}${s.materialName ? ' · ' + esc(s.materialName) : ''}${s.constructDate ? ' · 시공 ' + esc(s.constructDate) : ''}</option>`).join('');
+    `<option value="${esc(s.id)}" ${sel === s.id ? 'selected' : ''}>${esc(siteTitle(s))}${s.client ? ' · ' + esc(s.client) : ''}${s.materialName ? ' · ' + esc(s.materialName) : ''}${s.constructDate ? ' · 시공 ' + esc(s.constructDate) : ''}</option>`).join('');
 }
 /* 등록된 품목 select 옵션 */
 function itemOptions(sel) {
@@ -2775,9 +2779,9 @@ function buildAlerts() {
   });
   const demoted = state.holdings.filter(h => h.autoDemoted && !['확정', '해제'].includes(h.status || '홀딩') && holdItems(h).some(x => x.planned));
   demoted.forEach(h => alerts.push({ key: 'demote|' + h.id, c: 'a', ic: 'ti-transfer', t: `${h.vendor || ''} 홀딩 자동 조정됨`, s: `임박 건에 재고 양보 → 일부 예정홀딩 전환 · 사용예정 ${h.useDate || '-'}`, tag: '자동조정' }));
-  soonConstruct.forEach(s => alerts.push({ key: 'const|' + s.id + '|' + s.constructDate, c: 'a', ic: 'ti-tools', t: `${s.name} 시공 임박`, s: `${s.constructDate} 시공 예정 · ${s.team || '시공팀 미정'}`, tag: 'D-' + daysFromNow(s.constructDate) }));
+  soonConstruct.forEach(s => alerts.push({ key: 'const|' + s.id + '|' + s.constructDate, c: 'a', ic: 'ti-tools', t: `${siteTitle(s)} 시공 임박`, s: `${s.constructDate} 시공 예정 · ${s.team || '시공팀 미정'}`, tag: 'D-' + daysFromNow(s.constructDate) }));
   soonHold.forEach(h => alerts.push({ key: 'hold|' + h.id + '|' + h.useDate, c: 'b', ic: 'ti-lock', t: `${h.vendor} 홀딩 사용 임박`, s: `${h.materialName} ${(+h.hebe || 0).toFixed(1)}㎡ · ${h.useDate} 사용`, tag: '홀딩' }));
-  waitQuote.forEach(s => alerts.push({ key: 'quote|' + s.id + '|' + s.stage, c: 'a', ic: 'ti-file-invoice', t: `${s.name} 견적 진행 필요`, s: `현재 단계: ${s.stage} · ${s.client || ''}`, tag: s.stage }));
+  waitQuote.forEach(s => alerts.push({ key: 'quote|' + s.id + '|' + s.stage, c: 'a', ic: 'ti-file-invoice', t: `${siteTitle(s)} 견적 진행 필요`, s: `현재 단계: ${s.stage} · ${s.client || ''}`, tag: s.stage }));
   const _recency = a => {
     const k = a.key || '';
     if (k.indexOf('holdreq|') === 0) { const x = (state.holdRequests || []).find(r => 'holdreq|' + r.id === k); return x ? +x.createdAt || 0 : 0; }
@@ -2994,7 +2998,7 @@ function openIssueForm(preSiteId) {
     <div class="sheet-h"><h3><i class="ti ti-alert-triangle"></i>이슈 등록</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
       <div class="fld full"><label>현장 선택 <span class="req">*</span> <span style="color:var(--t3);font-weight:500">(진행중 현장)</span></label>
-        <select id="i-site"><option value="">— 현장을 선택하세요 —</option>${sites.map(s => `<option value="${s.id}" ${preSiteId === s.id ? 'selected' : ''}>${esc(s.name)} · ${esc(s.client || '')}${s.constructDate ? ' · 시공 ' + s.constructDate : ''}</option>`).join('')}</select></div>
+        <select id="i-site"><option value="">— 현장을 선택하세요 —</option>${sites.map(s => `<option value="${s.id}" ${preSiteId === s.id ? 'selected' : ''}>${esc(siteTitle(s))} · ${esc(s.client || '')}${s.constructDate ? ' · 시공 ' + s.constructDate : ''}</option>`).join('')}</select></div>
       <div class="fld full"><label>이슈가 생긴 이유 <span class="req">*</span></label>
         <textarea id="i-reason" placeholder="현장에 생긴 문제를 자세히 적어주세요" style="min-height:130px"></textarea></div>
     </div>
@@ -3012,7 +3016,7 @@ async function submitIssue() {
   const s = state.sites.find(x => x.id === siteId);
   _busy = true;
   try {
-    await Store.add('issues', { kind: 'site', siteId, siteName: s ? s.name : '', reason, status: '미해결', by: me.name, createdAt: Date.now() });
+    await Store.add('issues', { kind: 'site', siteId, siteName: s ? siteTitle(s) : '', reason, status: '미해결', by: me.name, createdAt: Date.now() });
     toast('이슈 등록됨'); closeModal();
   } finally { setTimeout(() => { _busy = false; }, 800); }
 }
@@ -3149,7 +3153,7 @@ function siteTableHtml(list) {
     return `<tr style="cursor:pointer${done ? ';opacity:.62' : ''}" onclick="openSiteDetail('${s.id}')">
       <td style="white-space:nowrap"><b>${esc(_shortDate(s.constructDate) || '미정')}</b></td>
       <td style="white-space:nowrap">${pill(s.stage || '접수')}</td>
-      <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(s.name || '')}"><b>${iss ? `<span title="미해결 이슈 ${iss}건" style="color:var(--red-t)">●</span> ` : ''}${esc(s.name || '-')}</b>${s.region ? `<span style="color:var(--t3);font-size:11px"> · ${esc(s.region)}</span>` : ''}</td>
+      <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(siteTitle(s))}"><b>${iss ? `<span title="미해결 이슈 ${iss}건" style="color:var(--red-t)">●</span> ` : ''}${esc(siteTitle(s))}</b></td>
       <td style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(s.client || '')}">${esc(s.client || '-')}</td>
       <td style="white-space:nowrap">${esc(s.manager || '-')}</td>
       <td style="white-space:nowrap">${esc(s.team || '-')}</td>
@@ -3294,7 +3298,7 @@ function siteCard(s) {
   const tc = calTeamColor(s.team);   // 시공팀 색상 (자체시공=그레이)
   return `<div class="site" onclick="openSiteDetail('${s.id}')" style="border-top:3px solid ${tc}"${s.team ? ` title="시공팀: ${esc(s.team)}"` : ''}>
     <div class="site-top">
-      <div><div class="nm">${esc(s.name)}</div><div class="ad"><i class="ti ti-map-pin" style="font-size:13px"></i>${esc(s.region || '')} ${esc(s.address || '')}</div></div>
+      <div><div class="nm">${esc(siteTitle(s))}</div><div class="ad"><i class="ti ti-map-pin" style="font-size:13px"></i>${esc([s.region, s.address].map(v => String(v || '').trim()).filter(Boolean).join(' '))}</div></div>
       <div style="text-align:right;flex:none">${pill(s.stage || '접수')}${openIss.length ? `<div style="margin-top:5px"><span class="pill p-issue"><i class="ti ti-alert-triangle"></i> 이슈 ${openIss.length}</span></div>` : ''}</div>
     </div>
     <div class="site-meta">
@@ -3335,12 +3339,12 @@ function openSiteDetail(id) {
   const skip = s.orderType === '도면';
   const linkedHold = siteLinkedHold(s);
   openModal(`
-    <div class="sheet-h"><h3><i class="ti ti-building-community"></i>${esc(s.name)}</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="sheet-h"><h3><i class="ti ti-building-community"></i>${esc(siteTitle(s))}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div style="margin-bottom:12px">${pill(s.stage || '접수')}${s.confirmed ? ' <span class="pill p-done">확정</span>' : ''}</div>
     <div class="dl">
       <div class="df"><div class="k">현장 담당자</div><div class="v">${esc(s.manager || '-')}</div></div>
       <div class="df"><div class="k">업체(거래처)</div><div class="v">${esc(s.client || '-')}</div></div>
-      <div class="df full"><div class="k">현장 주소</div><div class="v">${esc(s.region || '')} ${esc(s.address || '-')}</div></div>
+      <div class="df full"><div class="k">현장 주소</div><div class="v">${esc([s.region, s.address].map(v => String(v || '').trim()).filter(Boolean).join(' ') || '-')}</div></div>
       <div class="df"><div class="k">발주 유형</div><div class="v">${esc(s.orderType || '-')}${skip ? ' (실측없음)' : ''}</div></div>
       <div class="df full"><div class="k">자재 / 수량</div><div class="v">${siteItems(s).length ? siteItems(s).map(it => esc(it.name) + ' · ' + esc(it.qty) + '장' + (it.lot ? ' <span style="color:var(--t3)">(롯트 ' + esc(it.lot) + ')</span>' : '')).join('<br>') : '-'}</div></div>
       <div class="df"><div class="k">가공 공장</div><div class="v">${esc(s.factory || '-')}</div></div>
@@ -3415,11 +3419,10 @@ function openSiteForm(id, pre) {
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-building-community"></i>${s ? '현장 수정' : '현장 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
-      <div class="fld"><label>현장명 <span style="color:var(--t3);font-weight:500">(비워두면 「업체명 - 자재명」 자동)</span></label><input id="s-name" lang="ko" value="${esc(v.name || '')}" placeholder="${esc(siteAutoName(v.client, siteItems(v)) || '비우면 「업체명 - 자재명」')}"></div>
+      <div class="fld"><label>현장명 <span style="color:var(--t3);font-weight:500">(선택 — 안 적으면 주소로 보입니다)</span></label><input id="s-name" lang="ko" value="${esc(v.name || '')}" placeholder="안 적어도 됩니다"></div>
       <div class="fld"><label>업체(거래처)<span class="req">*</span></label>${searchBox('s-client', '업체명 검색·입력', v.client, 'companyNames', '')}</div>
-      <div class="fld"><label>지역</label><input id="s-region" lang="ko" value="${esc(v.region || '')}" placeholder="지역"></div>
       <div class="fld"><label>현장 담당자</label><input id="s-manager" lang="ko" value="${esc(v.manager || me.name)}"></div>
-      <div class="fld full"><label>현장 주소</label><input id="s-address" lang="ko" value="${esc(v.address || '')}" placeholder="상세 주소"></div>
+      <div class="fld full"><label>현장 주소</label><input id="s-address" lang="ko" value="${esc(v.address || '')}" placeholder="예) 서울 서초구 반포동 18-1"></div>
       <div class="fld"><label>발주 유형</label>
         <div class="seg" id="s-ordertype">
           <button type="button" class="${v.orderType === '실측' ? 'on' : ''}" onclick="pickOrderType('실측')">실측 발주</button>
@@ -3460,7 +3463,7 @@ function curOrderType() { return _orderType || (el('s-measureDate').disabled ? '
 function runRecommend() {
   const first = collectMaterialRows()[0] || {}; const fq = +first.qty || 0;
   const o = {
-    region: el('s-region').value, address: el('s-address').value,
+    region: '', address: el('s-address').value,        // ★ 지역 칸은 없앴다 — 주소로 판단한다
     constructionDate: el('s-constructDate').value, dueDate: el('s-constructDate').value,
     jang: fq,
     volume: fq >= 25 ? '대형' : '소형',
@@ -3507,7 +3510,8 @@ async function submitSite(id) {
   const stage = el('s-stage').value || '접수';
   if (id && stage === '완료' && siteOpenIssues(id).length) { toast(`미해결 이슈 ${siteOpenIssues(id).length}건 — 이슈를 처리 완료해야 현장을 완료할 수 있어요`); return; }
   const obj = {
-    name: name || siteAutoName(client, items), client, region: el('s-region').value.trim(),
+    /* ★ 현장명은 적은 그대로 — 비면 비운다 (자동으로 «업체명 - 자재명» 을 넣지 않는다) */
+    name: name, client,
     address: el('s-address').value.trim(), manager: el('s-manager').value.trim() || me.name,
     orderType: curOrderType(), stage,
     items, materialName: items[0].name, qty: String(items[0].qty), unit: '',
