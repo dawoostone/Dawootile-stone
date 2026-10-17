@@ -13506,6 +13506,17 @@ function refundRecon() {
     noC: noC, noCN: noCN, lostN: lostN, voidN: voidN,
     acctSum: acctSum, acctN: acctRows.length, total: rows.reduce((a, r) => a + r.amt, 0) };
 }
+/* ★ 돌려준 돈이 «받은 돈»보다 많은 거래처 — 거의 항상 거래처가 잘못 붙은 것이다.
+   실측: 볼드커피(입금 165,000 / 환불 1,455,000) · (주)이펙스(입금은 「이펙스이앤지」로 들어옴).
+   그냥 두면 원장 「받은 돈」이 마이너스로 보여 헷갈리므로 대사표에서 짚어 준다. */
+function refundNegClients() {
+  const M = clientMoneyMap(), out = [];
+  Object.keys(M).forEach(c => {
+    const m = M[c];
+    if ((m.refund || 0) > 0 && m.paid < 0) out.push({ c: c, paid: m.paid, refund: m.refund || 0 });
+  });
+  return out.sort((a, b) => a.paid - b.paid);
+}
 let _rfOpen = false;
 function refundReconToggle() { _rfOpen = !_rfOpen; renderSettle(); }
 function refundReconHtml() {
@@ -13541,6 +13552,9 @@ function refundReconHtml() {
       거래처를 못 찾은 환불 <b>${R.noCN}건 · ${fmtWon(R.noC)}원</b>은 매출에도 받은 돈에도 반영되지 않습니다 — 아래에서 거래처를 지정해 주세요.</span></div>` : ''}
     ${R.lostN ? `<div class="banner warn" style="margin-top:9px;margin-bottom:0;font-size:12px"><i class="ti ti-unlink"></i><span style="flex:1;min-width:0">
       연결해 둔 견적이 지워진 환불이 <b>${R.lostN}건</b> 있습니다 — 다시 연결해 주세요.</span></div>` : ''}
+    ${(() => { const ng = refundNegClients(); return ng.length ? `<div class="banner warn" style="margin-top:9px;margin-bottom:0;font-size:12px"><i class="ti ti-alert-triangle"></i><span style="flex:1;min-width:0">
+      <b>돌려준 돈이 받은 돈보다 많은 거래처 ${ng.length}곳</b> — 환불이 엉뚱한 거래처에 붙었거나, 입금이 다른 이름으로 들어온 경우입니다.<br>
+      ${ng.map(x => `· <b>${esc(x.c)}</b> 환불 ${fmtWon(x.refund)} · 받은 돈 <b style="color:#b42318">${fmtWon(x.paid)}</b>`).join('<br>')}</span></div>` : ''; })()}
     ${diff !== 0 ? `<div style="font-size:11.5px;color:var(--t3);margin-top:8px;padding-top:7px;border-top:1px dashed var(--bd2)">
       계정 합계와 ${fmtWon(Math.abs(diff))}원 차이 — ${diff < 0 ? '계정은 다른데 견적에 환불로 연결해 둔 줄이 있습니다.' : '계정은 매출 환입인데 아직 아무 데도 반영되지 않은 줄이 있습니다.'}</div>` : `<div style="font-size:11.5px;color:#0f6e56;margin-top:8px;padding-top:7px;border-top:1px dashed var(--bd2)"><i class="ti ti-check"></i> 계정 합계와 ① + ② + ③ 이 정확히 맞습니다.</div>`}
     ${_rfOpen ? `<div class="tbl-wrap" style="margin-top:9px"><table class="tbl" style="font-size:12.5px">
