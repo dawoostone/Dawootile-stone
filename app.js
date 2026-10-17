@@ -307,6 +307,18 @@ function canTax() {
   if ((lm.role || '') !== 'staff') return false;
   return lm.canTax !== false;
 }
+/* ══════════════════════════════════════════════════════════
+   ★★ 견적 «완료 처리» 권한 (2026-10-17)
+   사용자: *"견적서 완료처리 차장님도 할 수 있게"*
+   예전에는 관리자만 눌렀다. 이제 세금계산서·거래처원장과 같은 방식으로
+   «직원별 스위치»를 둔다 — 직원은 기본 켜짐, 관리자가 사람마다 끌 수 있다.
+   ★ «완료 취소»도 같이 열어 준다 — 잘못 누르면 본인이 되돌릴 수 있어야 한다. */
+function canQuoteDone() {
+  if (isAdmin()) return true;
+  const lm = (typeof liveMe === 'function' ? liveMe() : me) || {};
+  if ((lm.role || '') !== 'staff') return false;
+  return lm.canDone !== false;
+}
 function isCustomerRole() { return me && me.role === 'customer'; }  // 고객(거래처) — 재고 조회 전용
 /* ── 고객·시공팀 화면: 좌측 메뉴를 아예 안 띄운다 (2026-09-29) ──
    사용자: "고객 화면에서는 좌측 메뉴 아예 안뜨게 해줘"
@@ -6969,17 +6981,17 @@ function quoteConfirmOrder(id) {
   toast('확정 주문 · 진행중 발주로 전환됨'); try { renderQuote(); } catch (e) { }
 }
 function quoteMarkDone(id) {
-  if (!isAdmin()) { toast('관리자만 가능합니다'); return; }
+  if (!canQuoteDone()) { toast('완료 처리 권한이 없습니다 — 관리자에게 문의하세요'); return; }
   const q = (state.quotes || []).find(x => x.id === id); if (!q) return;
   if (!confirm('이 견적을 바로 완료 처리할까요?\n(출고/현장/발주 등록 없이 완료로 표시됩니다)')) return;
-  try { Store.update('quotes', id, { ordered: true, manualDone: true, manualDoneAt: Date.now() }); } catch (e) { }
+  try { Store.update('quotes', id, { ordered: true, manualDone: true, manualDoneAt: Date.now(), manualDoneBy: (me && me.name) || '' }); } catch (e) { }
   toast('완료 처리됨'); try { renderQuote(); } catch (e) { }
 }
 function quoteUnmarkDone(id) {
-  if (!isAdmin()) { toast('관리자만 가능합니다'); return; }
+  if (!canQuoteDone()) { toast('완료 처리 권한이 없습니다 — 관리자에게 문의하세요'); return; }
   const q = (state.quotes || []).find(x => x.id === id); if (!q) return;
   if (!confirm('완료를 취소하고 진행중(확정 주문) 상태로 되돌릴까요?')) return;
-  try { Store.update('quotes', id, { manualDone: false, manualDoneAt: 0 }); } catch (e) { }
+  try { Store.update('quotes', id, { manualDone: false, manualDoneAt: 0, manualDoneBy: '' }); } catch (e) { }
   toast('완료 취소됨'); try { renderQuote(); } catch (e) { }
 }
 function quoteCancelOrder(id) {
@@ -11857,7 +11869,7 @@ function quoteCardHtml(q) {
       <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px">${balBadge}${catBadge}${(+q.rollCount || 0) ? `<span class="pill" style="background:#fff8e8;color:#b45309;border:1px solid #e6cf95" title="원래 ${esc((q.rollFrom || []).join(' → '))}"><i class="ti ti-calendar-plus"></i> 이월 ${+q.rollCount}회</span>` : ''}${paidPill}${taxPill}${depBadge}${shipBadge}${siteBadge}${basinBadge}${basinDrawsOf(q).length ? `<button class="pill" style="border:none;cursor:pointer;background:#eef4ff;color:#1b4fb0" onclick="event.stopPropagation();${basinDrawsOf(q).length > 1 ? `openQuoteView('${q.id}')` : `openQuoteDraw('${q.id}','${esc(basinDrawsOf(q)[0].id)}')`}" title="세면대 도면 보기"><i class="ti ti-ruler-2"></i> 도면 ${basinDrawsOf(q).length}</button>` : ''}${doneBadge}${canLedger() && _cRem > 0 ? `<button class="pill p-issue" style="border:none;cursor:pointer" onclick="openLedgerFor(${JSON.stringify(q.client || '').replace(/"/g, '&quot;')})" title="이 거래처 원장 보기"><i class="ti ti-book"></i> 거래처 미수 ${fmtWon(_cRem)}</button>` : ''}</div>
       <div class="frm-foot" style="margin-top:9px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
         ${q.siteDone && !isCustomerRole() ? `<button class="btn btn-sm" onclick="quoteLinkSite('${q.id}')" title="잘못 등록했으면 다른 현장으로 바꿉니다"><i class="ti ti-exchange"></i>현장 바꾸기</button><button class="btn btn-sm" style="color:var(--t3)" onclick="quoteUnlinkSite('${q.id}')" title="현장 연결만 풉니다 (현장은 안 지워집니다)"><i class="ti ti-unlink"></i>연결 해제</button>` : ''}
-        ${(q.shipped || q.siteDone || q.basinDone) ? '' : (q.manualDone ? (isAdmin() ? `<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteUnmarkDone('${q.id}')" title="완료 취소"><i class="ti ti-arrow-back-up"></i>완료 취소</button>` : '') : (q.ordered ? `<button class="btn btn-sm btn-pri" onclick="quoteRegister('${q.id}')"><i class="ti ${_regIcon}"></i>${_regLabel}</button><button class="btn btn-sm" onclick="quoteLinkSite('${q.id}')" title="이미 등록된 현장에 연결"><i class="ti ti-link"></i>현장 연결</button>${isAdmin() ? `<button class="btn btn-sm" style="color:#0f766e;border-color:#0f766e" onclick="quoteMarkDone('${q.id}')" title="바로 완료 처리 (관리자)"><i class="ti ti-checks"></i>완료 처리</button>` : ''}<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteCancelOrder('${q.id}')" title="확정 주문 취소"><i class="ti ti-arrow-back-up"></i>확정취소</button>` : `<button class="btn btn-sm btn-pri" onclick="quoteConfirmOrder('${q.id}')"><i class="ti ti-clipboard-check"></i>확정주문</button><button class="btn btn-sm" style="${_old ? 'color:#b45309;border-color:#d9a441' : 'color:var(--t3)'}" onclick="quoteRollover('${q.id}')" title="오늘 날짜·새 견적번호로 넘깁니다 (내용은 그대로)"><i class="ti ti-calendar-plus"></i>이월</button>`))}
+        ${(q.shipped || q.siteDone || q.basinDone) ? '' : (q.manualDone ? (canQuoteDone() ? `<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteUnmarkDone('${q.id}')" title="완료 취소"><i class="ti ti-arrow-back-up"></i>완료 취소</button>` : '') : (q.ordered ? `<button class="btn btn-sm btn-pri" onclick="quoteRegister('${q.id}')"><i class="ti ${_regIcon}"></i>${_regLabel}</button><button class="btn btn-sm" onclick="quoteLinkSite('${q.id}')" title="이미 등록된 현장에 연결"><i class="ti ti-link"></i>현장 연결</button>${canQuoteDone() ? `<button class="btn btn-sm" style="color:#0f766e;border-color:#0f766e" onclick="quoteMarkDone('${q.id}')" title="출고·현장·발주 등록 없이 바로 완료로 표시합니다"><i class="ti ti-checks"></i>완료 처리</button>` : ''}<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteCancelOrder('${q.id}')" title="확정 주문 취소"><i class="ti ti-arrow-back-up"></i>확정취소</button>` : `<button class="btn btn-sm btn-pri" onclick="quoteConfirmOrder('${q.id}')"><i class="ti ti-clipboard-check"></i>확정주문</button><button class="btn btn-sm" style="${_old ? 'color:#b45309;border-color:#d9a441' : 'color:var(--t3)'}" onclick="quoteRollover('${q.id}')" title="오늘 날짜·새 견적번호로 넘깁니다 (내용은 그대로)"><i class="ti ti-calendar-plus"></i>이월</button>`))}
         <button class="btn btn-sm" onclick="openQuoteInline('${q.id}')"><i class="ti ti-edit"></i>수정</button>
         <button class="btn btn-sm" onclick="printQuote('${q.id}')"><i class="ti ti-printer"></i>인쇄</button>
         <button class="btn btn-sm" onclick="quoteToHold('${q.id}')" title="이 견적 자재를 홀딩(예약)"><i class="ti ti-lock"></i>홀딩</button>
@@ -20862,7 +20874,8 @@ function openMemberForm(id) {
         <div style="font-size:11px;color:var(--t3);margin-top:7px;line-height:1.5">· 홈 · 설정은 항상 접근 가능 · 관리자는 전체 접근 · <b>정산</b>은 민감 정보라 기본 꺼짐</div>
         <div class="perm-row" style="margin-top:9px"><span class="perm-lab"><i class="ti ti-file-invoice"></i>세금계산서 발행·조회<span class="pbadge" style="background:#eaf1fe;color:#1b4fb0">과금</span></span><label class="swt"><input type="checkbox" id="m-cantax" ${v.canTax === false ? '' : 'checked'}><span class="track"></span></label></div>
         <div class="perm-row"><span class="perm-lab"><i class="ti ti-book"></i>거래처 원장 · 입금 내역</span><label class="swt"><input type="checkbox" id="m-canledger" ${v.canLedger === false ? '' : 'checked'}><span class="track"></span></label></div>
-        <div style="font-size:11px;color:var(--t3);margin-top:5px;line-height:1.5">· <b>세금계산서</b> — 켜면 발행·조회 모두 가능. 발행하면 국세청으로 실제 전송되고 팝빌 포인트가 빠집니다.<br>· <b>거래처 원장</b> — 매출·입금·미수를 봅니다. <b>통장 잔액과 출금 내역은 애초에 앱에 안 들어옵니다.</b> 통장에서 입금 가져오기와 결제 일괄 반영은 관리자만 할 수 있습니다.<br>· <b>정산</b>(원가·마진·매입)은 위 메뉴 권한에서 따로 켜야 보입니다.</div></div>
+        <div class="perm-row"><span class="perm-lab"><i class="ti ti-checks"></i>견적 완료 처리 · 완료 취소</span><label class="swt"><input type="checkbox" id="m-candone" ${v.canDone === false ? '' : 'checked'}><span class="track"></span></label></div>
+        <div style="font-size:11px;color:var(--t3);margin-top:5px;line-height:1.5">· <b>세금계산서</b> — 켜면 발행·조회 모두 가능. 발행하면 국세청으로 실제 전송되고 팝빌 포인트가 빠집니다.<br>· <b>거래처 원장</b> — 매출·입금·미수를 봅니다. <b>통장 잔액과 출금 내역은 애초에 앱에 안 들어옵니다.</b> 통장에서 입금 가져오기와 결제 일괄 반영은 관리자만 할 수 있습니다.<br>· <b>정산</b>(원가·마진·매입)은 위 메뉴 권한에서 따로 켜야 보입니다.<br>· <b>견적 완료 처리</b> — 출고·현장·발주 등록 없이 견적을 바로 «완료»로 표시합니다. 되돌리기(완료 취소)도 같이 열립니다.</div></div>
 
     </div>
     ${m && v.email ? `<div class="fld full" style="margin-bottom:12px"><label><i class="ti ti-key" style="font-size:13px;color:var(--blue)"></i> 비밀번호 변경 <span style="color:var(--t3);font-weight:500">— 메일 없이 바로 적용(가메일 계정 가능)</span></label>
@@ -20907,7 +20920,7 @@ async function submitMember(id) {
   if (state.members.some(m => m.id !== id && (m.email || '').toLowerCase() === email)) { toast('이미 등록된 이메일입니다'); return; }
   const _menus = Array.from(document.querySelectorAll('.m-menu')).filter(c => c.checked).map(c => c.value);
   const obj = { name, role: el('m-role').value, email, phone: (el('m-phone') && el('m-phone').value || '').trim() };
-  if (obj.role === 'staff') { obj.menus = _menus; obj.canTax = !!(el('m-cantax') && el('m-cantax').checked); obj.canLedger = !!(el('m-canledger') && el('m-canledger').checked); }
+  if (obj.role === 'staff') { obj.menus = _menus; obj.canTax = !!(el('m-cantax') && el('m-cantax').checked); obj.canLedger = !!(el('m-canledger') && el('m-canledger').checked); obj.canDone = !!(el('m-candone') && el('m-candone').checked); }
   // 고객 화면 단가 설정 — 고객 권한일 때만 의미가 있다
   const _cb = (el('m-custbase') && el('m-custbase').value) || '';
   const _ca = Math.round(_numv(el('m-custadj') && el('m-custadj').value));
