@@ -135,7 +135,10 @@ function quoteCatSplit(q) {
   const add = (c, sup, tot) => { const o = out[c] || (out[c] = { sup: 0, tot: 0 }); o.sup += sup; o.tot += tot; };
   const c0 = qcatNorm(q && q.category);
   const its = ((q && q.items) || []).filter(it => (it.name || '').trim());
-  const sup0 = Math.round(+((q && q.supply) || 0)), tot0 = Math.round(+((q && q.total) || 0));
+  /* ★ 환불이 붙은 견적은 «환불 뺀 금액»으로 센다 — 공급가도 같은 비율로 줄인다 */
+  const _raw = Math.round(+((q && q.total) || 0)), _net = quoteNetTotal(q);
+  const _rt = (_raw > 0 && _net !== _raw) ? (_net / _raw) : 1;
+  const sup0 = Math.round(Math.round(+((q && q.supply) || 0)) * _rt), tot0 = _net;
   if (c0 === '통관비용') { add('통관비용', sup0, tot0); return out; }   // 통관 견적은 통째로 통관비용
   if (!its.length) { add(QCATS.indexOf(c0) >= 0 ? c0 : '세라믹', sup0, tot0); return out; }
   let sumAll = 0; its.forEach(it => sumAll += Math.round(+it.amt || 0));
@@ -8873,8 +8876,12 @@ function ledgerRows(client, cat) {
   const _ob = (CAT || _rs) ? null : clientOpening(client);      // 초기화했으면 옛 이월 줄은 안 쓴다
   if (_ob) rows.push({ d: _ob.date || '2000-01-01', k: 'open', amt: _ob.amt, memo: _ob.memo });
   qs.forEach(q => {
-    const tot = Math.round(+q.total || 0);
-    let amt = tot, taxA = (+q.taxTotal || tot || 0), mixed = false;
+    /* ★ 환불이 붙은 견적은 원장 매출도 «환불 뺀 금액»으로 적는다 (2026-10-17).
+       원래 금액은 꼬리표로 같이 보여 준다 — 얼마에서 얼마가 빠졌는지 보이게. */
+    const _full = Math.round(+q.total || 0);
+    const tot = quoteNetTotal(q);
+    const _rfA = quoteRefundAmt(q), _rfV = quoteVoided(q);
+    let amt = tot, taxA = (+q.taxTotal || _full || 0), mixed = false;
     if (CAT) {
       const sp = quoteCatSplit(q), mine = sp[CAT];
       if (!mine) return;                                   // 이 분류가 없는 견적은 건너뛴다
@@ -8882,7 +8889,8 @@ function ledgerRows(client, cat) {
       amt = mine.tot;
       taxA = tot ? Math.round(taxA * (mine.tot / tot)) : taxA;
     }
-    rows.push({ d: q.date || '', k: 'sale', amt: amt, full: tot, part: mixed, docNo: q.docNo || '', site: quoteSiteText(q), attn: quoteAttnText(q), id: q.id,
+    rows.push({ d: q.date || '', k: 'sale', amt: amt, full: CAT ? tot : _full, part: mixed, docNo: q.docNo || '', site: quoteSiteText(q), attn: quoteAttnText(q), id: q.id,
+      rfA: _rfA, rfV: _rfV,                                               // ★ 환불이 반영된 줄인지
       got: CAT ? null : quotePaid(q), left: CAT ? null : quoteRem(q) });   // ★ 이 견적이 얼마나 메워졌나
     if (q.taxInvoice) rows.push({ d: q.taxDate || q.date || '', k: 'tax', amt: taxA, part: mixed, docNo: q.docNo || '', id: q.id, nts: q.ntsConfirmNum || '', mgt: q.taxMgtKey || '' });
   });
@@ -8898,7 +8906,13 @@ function ledgerRows(client, cat) {
     rows.push({ d: t.date || '', k: 'pay', amt: txMoney(t), src: t.manual ? 'manual' : 'bank', payer: t.payer || '', bankNm: t.bankNm || '', tid: t.id, skip: txSkip(t),
       pin: String(t.payFor || '').trim() });                               // ★ 어느 견적 대금으로 지정했나
   });
-  const ord = { open: -1, sale: 0, tax: 1, pay: 2, reset: 3 };
+  /* ★ 환불 줄 — 통장에서 돌려준 돈 (2026-10-17).
+     매출은 위 «매출» 줄에서 이미 깎았으므로, 이 줄은 «받은 돈»을 되돌리는 역할만 한다.
+     그래서 잔액은 다시 «올라간다» — 돈을 돌려줬으니 그만큼 덜 받은 셈이기 때문이다. */
+  clientRefundRows(client).forEach(r => {
+    rows.push({ d: r.d, k: 'refund', amt: r.amt, tid: r.tid, payer: r.payer, qid: r.qid, docNo: r.docNo, vd: r.vd, cat: r.cat });
+  });
+  const ord = { open: -1, sale: 0, tax: 1, pay: 2, refund: 2.5, reset: 3 };
   rows.sort((a, b) => (a.d || '').localeCompare(b.d || '') || (ord[a.k] - ord[b.k]) || (a.docNo || '').localeCompare(b.docNo || ''));
   /* ★ 초기화 기준일까지는 «정산 완료»로 꼬리표를 달고, 잔액 쌓기에서 뺀다 (지우지는 않는다) */
   if (_rs) {
@@ -8911,9 +8925,19 @@ function ledgerRows(client, cat) {
     if (r.old || r.skip) { r.bal = null; return; }             // 정산 끝났거나 무시한 줄은 잔액 칸을 비운다
     if (r.k === 'reset') { bal = r.amt; r.bal = bal; return; }
     if (r.k === 'sale' || r.k === 'open') bal += r.amt; else if (r.k === 'pay') bal -= r.amt;
+    else if (r.k === 'refund') bal += r.amt;                 // 돌려준 돈 — 받은 돈에서 되돌린다
     r.bal = bal;
   });
   return rows;
+}
+/* 원장 합계 — 입금 합계에서 «돌려준 돈»을 뺀다 (매출 합계는 줄마다 이미 깎여 있다) */
+function _lgPaySum(rs) {
+  let v = 0;
+  (rs || []).forEach(r => {
+    if (r.old || r.skip) return;
+    if (r.k === 'pay') v += r.amt; else if (r.k === 'refund') v -= r.amt;
+  });
+  return v;
 }
 /* 이 거래처로 들어온 통장 입금 전부 (최신순) */
 function ledgerPays(client) { return (state.banktx || []).filter(t => txIsIn(t) && !txSkip(t) && txClientOf(t) === client).sort((a, b) => (b.date || '').localeCompare(a.date || '')); }
@@ -8928,7 +8952,7 @@ function ledgerAgg() {
   (state.quotes || []).forEach(q => {
     if (!q.ordered) return; const c = (q.client || '').trim(); if (!c) return;
     const o = get(c), tot = Math.round(+q.total || 0);
-    if (q.taxInvoice) o.taxAmt += (+q.taxTotal || tot); else if (isCashRcpt(q)) { o.cashAmt = (o.cashAmt || 0) + tot; o.cashN = (o.cashN || 0) + 1; } else { o.noTaxAmt += tot; o.noTaxN++; }
+    if (q.taxInvoice) o.taxAmt += (+q.taxTotal || tot); else if (isCashRcpt(q)) { o.cashAmt = (o.cashAmt || 0) + tot; o.cashN = (o.cashN || 0) + 1; } else if (!quoteVoided(q)) { o.noTaxAmt += tot; o.noTaxN++; }
     const d = q.date || ''; if (d > o.last) o.last = d;
   });
   let unassigned = 0, unassignedSum = 0;
@@ -9111,7 +9135,7 @@ function clientResetPreview(cid) {
     if (!q.ordered || q.supersededBy) return;
     if ((q.client || '').trim() !== nm) return;
     if ((q.date || '') <= d) { oldQ++; return; }
-    saleAfter += Math.round(+q.total || 0); qn++;
+    saleAfter += quoteNetTotal(q); qn++;
   });
   (state.banktx || []).forEach(t => {
     if (!txIsIn(t) || txSkip(t) || txClientOf(t) !== nm) return;
@@ -9170,7 +9194,7 @@ function clientResetCardHtml(c) {
 }
 let _cmCache = null, _qpCache = null, _cmAt = 0;
 /* 자료가 바뀌면 다시 계산 — 거래처 이름 목록·입금자 추정 결과도 같이 버린다 */
-function moneyBust() { _cmCache = null; _qpCache = null; _lcNames = null; _tcIx = null; _puCache = null; }
+function moneyBust() { _cmCache = null; _qpCache = null; _lcNames = null; _tcIx = null; _puCache = null; _rfCache = null; }
 /* ══════════════════════════════════════════════════════════
    ★★ «돈은 들어왔는데 주문확정을 안 누른 견적» (2026-10-16)
    사용자: *"주문 확정 안눌러도 입금 됐으면 입금 된 거 볼 수 있게 해줘
@@ -9216,6 +9240,69 @@ function paidUnconfirmed() {
 }
 function paidUnconfMap() { const m = {}; paidUnconfirmed().forEach(x => m[x.id] = x); return m; }
 function paidUnconfOf(q) { return (q && !q.ordered) ? paidUnconfMap()[q.id] : null; }
+/* ══════════════════════════════════════════════════════════
+   ★★ 매출 환입 (환불) — 2026-10-17
+   사용자: *"입금했는데 환불한 견적서는 견적서에 표시할 수 있게 해주고 총매출에서 차감해줘
+            입출금 내역에서 매출 환입 과목이랑 맞춰볼 수 있게 해줘야 됨"*
+
+   ── 환불 줄이란 ──
+   통장 «출금» 중에서 계정과목이 「매출 환입 (환불)」 인 것, 또는 사람이 견적에 연결해 둔 것.
+
+   ── 두 가지가 섞여 있다 (실측 8건) ──
+   ① 주문 환불   — 판 물건 값을 돌려준 것   → 매출에서 빼고, 받은 돈에서도 뺀다
+   ② 과입금 반환 — 더 들어온 돈만 돌려준 것 → 매출은 그대로, 받은 돈에서만 뺀다
+      (플립·이펙스·영진석재·삼진 4건 4,261,640원이 여기에 해당한다.
+       이건 애초에 매출로 잡힌 적이 없는 돈이라 매출에서 빼면 이중으로 줄어든다)
+   ★ 구분은 «견적에 연결했는가» 하나로 한다. 연결했으면 ①, 안 했으면 ②.
+
+   ── 연결할 때 고르는 것 ──
+   · 부분 환불 (기본)  refundVoid 없음 → 그 견적 매출에서 «환불한 금액만» 뺀다
+   · 견적 통째 취소    refundVoid=true → 그 견적 매출을 «0» 으로 본다
+
+   ★ 저장하는 것은 통장 줄에 refundFor(견적 id) · refundVoid 두 개뿐이다.
+     견적 문서는 건드리지 않는다 — 연결을 풀면 그대로 돌아온다.
+   ══════════════════════════════════════════════════════════ */
+function isRefundTx(t) {
+  if (!t || !txIsOut(t)) return false;
+  if (String(t.refundFor || '').trim()) return true;
+  return /환입|환불/.test(acctCatOf(t) || '');
+}
+let _rfCache = null, _rfAt = 0;
+function refundIndex() {
+  if (_rfCache && Date.now() - _rfAt < 3000) return _rfCache;
+  const byQuote = {}, byClient = {}, rows = [];
+  const qix = {}; (state.quotes || []).forEach(q => { qix[q.id] = q; });
+  (state.banktx || []).forEach(t => {
+    if (!isRefundTx(t)) return;
+    const qid = String(t.refundFor || '').trim();
+    const q = qid ? qix[qid] : null;
+    const c = q ? String(q.client || '').trim() : String(txClientOf(t) || '').trim();
+    const r = {
+      tid: t.id, d: String(t.date || ''), payer: String(t.payer || t.memo || ''),
+      amt: txMoney(t), qid: q ? qid : '', docNo: q ? String(q.docNo || '') : '',
+      client: c, vd: !!(q && t.refundVoid), cat: acctCatOf(t) || '',
+      lost: (qid && !q)                                    // 연결해 둔 견적이 지워졌다
+    };
+    rows.push(r);
+    if (r.qid) (byQuote[r.qid] || (byQuote[r.qid] = [])).push(r);
+    if (c) (byClient[c] || (byClient[c] = [])).push(r);
+  });
+  rows.sort((a, b) => a.d.localeCompare(b.d));
+  _rfAt = Date.now(); _rfCache = { rows: rows, byQuote: byQuote, byClient: byClient };
+  return _rfCache;
+}
+function quoteRefundRows(q) { return (q && refundIndex().byQuote[q.id]) || []; }
+function quoteRefundAmt(q) { return quoteRefundRows(q).reduce((s, r) => s + r.amt, 0); }
+function quoteVoided(q) { return quoteRefundRows(q).some(r => r.vd); }
+/* 이 견적의 «매출로 인정하는 금액» — 환불을 뺀 값 */
+function quoteNetTotal(q) {
+  const tot = Math.round(+((q && q.total) || 0));
+  const rs = quoteRefundRows(q);
+  if (!rs.length) return tot;
+  if (rs.some(r => r.vd)) return 0;                        // 통째 취소
+  return Math.max(0, tot - rs.reduce((s, r) => s + r.amt, 0));
+}
+function clientRefundRows(c) { return refundIndex().byClient[String(c || '').trim()] || []; }
 function _moneyBuild() {
   if (_cmCache && _qpCache && Date.now() - _cmAt < 3000) return;   // 자료가 바뀌면 moneyBust() 가 바로 지우므로 오래 들고 있어도 안전
   const M = {}, P = {};
@@ -9248,7 +9335,7 @@ function _moneyBuild() {
     /* ★ 잔금 견적서로 «대체된» 원본은 매출·미수에서 뺀다 — 같은 일감을 두 번 세지 않는다 */
     if (!q.ordered || q.supersededBy) return; const c = (q.client || '').trim(); if (!c) return;
     if (CUT[c] && (q.date || '') <= CUT[c]) return;          // ★ 초기화 기준일까지는 정산 끝
-    const o = get(c); o.sale += Math.round(+q.total || 0); o.qn++;
+    const o = get(c); o.sale += quoteNetTotal(q); o.qn++;      // ★ 환불한 금액은 빼고 센다
     (byC[c] || (byC[c] = [])).push(q);
   });
   const insC = {};
@@ -9259,6 +9346,17 @@ function _moneyBuild() {
     get(c).paid += txMoney(t);
     /* ★ pin = «이 입금은 이 견적 대금» 으로 사람이 지정해 둔 것 (2026-10-11) */
     (insC[c] || (insC[c] = [])).push({ d: String(t.date || ''), left: txMoney(t), pin: String(t.payFor || '').trim() });
+  });
+  /* ★★ 돌려준 돈은 «받은 돈»에서 뺀다 (2026-10-17)
+     견적에 연결했든(주문 환불) 안 했든(과입금 반환) 통장에서 나간 것은 똑같이 뺀다.
+     ★ 매출을 깎는 것은 «연결한 것»뿐 — 위 quoteNetTotal() 에서 이미 처리했다. */
+  refundIndex().rows.forEach(r => {
+    const c = r.client; if (!c) return;
+    if (CUT[c] && r.d <= CUT[c]) return;                   // 초기화 기준일까지는 정산 끝
+    const o = get(c);
+    o.paid -= r.amt;
+    o.refund = (o.refund || 0) + r.amt;
+    if (r.qid) o.refundSale = (o.refundSale || 0) + r.amt; // 매출에서도 깎인 몫
   });
   /* ★ 2026-09-08 — «날짜 순서»를 지킨다.
      예전엔 거래처 입금 총액을 오래된 견적부터 그냥 흘려보냈다. 그런데 통장 입금(13.4억)이
@@ -9285,7 +9383,7 @@ function _moneyBuild() {
     /* 채울 순서: ★ 이월 잔액이 제일 먼저, 그 다음 오래된 견적부터 */
     const line = (byC[c] || []).slice()
       .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.docNo || '').localeCompare(b.docNo || ''))
-      .map(q => ({ id: q.id, tot: Math.round(+q.total || 0), d: String(q.date || ''), pre: quotePrepaid(q) }));
+      .map(q => ({ id: q.id, tot: quoteNetTotal(q), d: String(q.date || ''), pre: quotePrepaid(q) }));
     if (OB[c]) line.unshift({ id: '', tot: OB[c].amt, d: OB[c].d });
     const _prepay = !!PP[c];                   // 선입금 인정 거래처는 날짜 규칙을 끈다
     line.forEach(x => {
@@ -9336,8 +9434,10 @@ function clientRemMap() { const m = clientMoneyMap(), r = {}; Object.keys(m).for
 /* ★ 잔금 견적서로 «대체된» 원본은 돈 계산에서 통째로 빠진다.
    그래서 입금·미수도 0 으로 본다 — 안 그러면 카드에 원본 금액이 통째로 «미수»로 빨갛게 뜬다. */
 function quotePaid(q) { if (!q || !q.ordered || q.supersededBy) return 0; return quotePaidMap()[q.id] || 0; }
-function quoteRem(q) { if (q && q.supersededBy) return 0; return Math.max(0, Math.round(+((q && q.total) || 0)) - quotePaid(q)); }
-function quoteIsPaid(q) { if (q && q.supersededBy) return false; const t = Math.round(+((q && q.total) || 0)); return t > 0 && quotePaid(q) >= t; }
+/* ★ 미수·완납은 «환불 뺀 금액»(quoteNetTotal) 기준이다.
+   환불한 돈만큼 받을 돈도 줄어드는 것이므로, 안 그러면 환불한 금액이 그대로 미수로 남는다. */
+function quoteRem(q) { if (q && q.supersededBy) return 0; return Math.max(0, quoteNetTotal(q) - quotePaid(q)); }
+function quoteIsPaid(q) { if (q && q.supersededBy) return false; const t = quoteNetTotal(q); return t > 0 && quotePaid(q) >= t; }
 /* 견적 카드/팝업에서 그 거래처 원장으로 바로 가기 */
 function openLedgerFor(c) {
   if (!canLedger()) { toast('거래처 원장 권한이 없습니다 — 관리자에게 문의하세요'); return; }
@@ -9602,7 +9702,7 @@ function ledgerDetailHtml(client) {
   const sale = M.sale, pay = M.paid, rem = M.rem, extra = M.extra;
   const _obAmt = +M.opening || 0;
   const taxAmt = full.filter(r => r.k === 'tax').reduce((s, r) => s + r.amt, 0);
-  const noTaxAmt = (state.quotes || []).filter(q => !!q.ordered && (q.client || '').trim() === client && !taxSettled(q)).reduce((s, q) => s + (+q.total || 0), 0);
+  const noTaxAmt = (state.quotes || []).filter(q => !!q.ordered && (q.client || '').trim() === client && !taxSettled(q) && !quoteVoided(q)).reduce((s, q) => s + (+q.total || 0), 0);
   const inR = d => (d || '') >= R.sd && (d || '') <= R.ed;
   const shown = all.filter(r => inR(r.d));
   const before = all.filter(r => !inR(r.d) && (r.d || '') < R.sd);
@@ -9654,8 +9754,18 @@ function ledgerDetailHtml(client) {
       <td style="white-space:nowrap;color:var(--t3)">${esc((r.d || '').slice(2))}</td>
       <td><span class="pill p-gray">매출</span></td>
       <td><span style="cursor:pointer" onclick="openQuoteView('${r.id}')"><b>${esc(r.docNo)}</b>${r.site ? ` <span style="color:var(--t3)">· ${esc(r.site)}</span>` : ''}</span>
+        ${r.rfA > 0 ? ` <span class="pill" style="background:#fdecea;color:#c0341d;border:1px solid #f3c6c0;font-size:10px" title="원래 ${fmtWon(r.full)}원에서 환불 ${fmtWon(r.rfA)}원을 뺀 금액입니다">${r.rfV ? '취소' : '환불 -' + fmtWon(r.rfA)} · 원래 ${fmtWon(r.full)}</span>` : ''}
         ${_payTag(r)}${r.attn ? `<div style="font-size:11px;color:var(--t3);margin-top:1px"><i class="ti ti-user"></i> ${esc(r.attn)}</div>` : ''}</td>
       ${money(r.amt)}${money(0)}
+      <td style="text-align:right;white-space:nowrap;font-weight:700">${fmtWon(r.bal)}</td></tr>`;
+    /* ★ 환불 — 매출·입금을 같이 되돌린 줄 (2026-10-17) */
+    if (r.k === 'refund') return `<tr style="background:#fdf2f0">
+      <td style="white-space:nowrap;color:#c0341d">${esc((r.d || '').slice(2))}</td>
+      <td><span class="pill" style="background:#fdecea;color:#c0341d;border:1px solid #f3c6c0"><i class="ti ti-arrow-back-up"></i> ${r.qid ? (r.vd ? '취소' : '환불') : '과입반환'}</span></td>
+      <td><b>${esc(r.payer || '(적요 없음)')}</b>${r.docNo ? ` <span style="color:#c0341d;font-weight:700">→ ${esc(r.docNo)}${r.vd ? ' 통째 취소' : ''}</span>` : ' <span style="color:var(--t3)">· 견적에 연결 안 됨 — 더 들어온 돈을 돌려준 것으로 봅니다 (매출은 그대로)</span>'}
+        ${canLedger() ? `<button class="btn btn-sm btn-ghost" style="padding:1px 5px;margin-left:4px" title="어느 견적의 환불인지 지정" onclick="openRefundPick('${r.tid}')"><i class="ti ti-link"></i></button>` : ''}</td>
+      <td style="text-align:right;white-space:nowrap;color:var(--t3)">${r.qid ? '<span style="color:#c0341d">반영됨</span>' : '<span style="color:var(--bd2)">·</span>'}</td>
+      <td style="text-align:right;white-space:nowrap;font-weight:700;color:#c0341d">- ${fmtWon(r.amt)}</td>
       <td style="text-align:right;white-space:nowrap;font-weight:700">${fmtWon(r.bal)}</td></tr>`;
     if (r.k === 'tax') return `<tr style="background:#fbfaf7">
       <td style="white-space:nowrap;color:var(--t3)">${esc((r.d || '').slice(2))}</td>
@@ -9707,7 +9817,7 @@ function ledgerDetailHtml(client) {
     </table></div>
     <div style="font-size:11.5px;color:var(--t3);margin-top:7px">«섞임» 은 세라믹·세면대 등이 한 견적에 같이 든 경우로, 품목 금액 비율만큼만 잡은 금액입니다.</div>`;
   return `
-    <div class="ph"><div><h2><i class="ti ti-book"></i>${esc(client)}</h2><p>${esc(R.label)} · 매출 ${full.filter(r => r.k === 'sale').length}건 · 입금 ${full.filter(r => r.k === 'pay').length}건${catOn ? ` · <b style="color:${QCAT_COL[CAT]}">${esc(CAT)}만 보는 중</b>` : ''}</p></div>
+    <div class="ph"><div><h2><i class="ti ti-book"></i>${esc(client)}</h2><p>${esc(R.label)} · 매출 ${full.filter(r => r.k === 'sale').length}건 · 입금 ${full.filter(r => r.k === 'pay').length}건${full.some(r => r.k === 'refund') ? ` · <b style="color:#c0341d">환불 ${full.filter(r => r.k === 'refund').length}건</b>` : ''}${catOn ? ` · <b style="color:${QCAT_COL[CAT]}">${esc(CAT)}만 보는 중</b>` : ''}</p></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-sm" onclick="openAutoMatch(${JSON.stringify(client).replace(/"/g, '&quot;')})" title="금액이 1원 오차 없이 같은 입금과 견적을 한 번에 짝지어 줍니다"><i class="ti ti-arrows-join-2"></i>금액 맞춰 자동 지정</button>
         <button class="btn btn-sm" onclick="ledgerXlsx()"><i class="ti ti-file-spreadsheet"></i>엑셀</button>
@@ -9754,7 +9864,7 @@ function ledgerDetailHtml(client) {
         })()}
         <tr style="background:var(--soft);font-weight:800"><td colspan="3">합계</td>
           <td style="text-align:right">${fmtWon(shown.filter(r => !r.old && r.k === 'sale').reduce((s, r) => s + r.amt, 0))}</td>
-          <td style="text-align:right;color:var(--gd)">${fmtWon(shown.filter(r => !r.old && !r.skip && r.k === 'pay').reduce((s, r) => s + r.amt, 0))}</td>
+          <td style="text-align:right;color:var(--gd)">${fmtWon(_lgPaySum(shown))}</td>
           <td style="text-align:right;color:${_lastBal > 0 ? 'var(--red-t)' : 'var(--gd)'}">${fmtWon(_lastBal)}</td></tr>
       </tbody>
     </table></div>
@@ -11844,7 +11954,7 @@ function quoteCardHtml(q) {
   /* ★ 현장주소를 카드에서 바로 보이게 — 주소가 없으면 현장명, 그것도 없으면 안 띄운다 */
   const _siteLine = [q.siteAddr, q.siteName].map(v => String(v == null ? '' : v).trim()).find(Boolean) || '';
   const names = (q.items || []).map(it => it.name).filter(Boolean).slice(0, 3).join(', ') + ((q.items || []).length > 3 ? ` 외 ${q.items.length - 3}` : '');
-  const _pa = quotePaid(q); const _tt = Math.round(+q.total || 0); const _rem = quoteRem(q);
+  const _pa = quotePaid(q); const _tt = quoteNetTotal(q); const _rem = quoteRem(q);
   const _cRem = clientRemOf(q.client);        // 이 거래처가 우리한테 갚아야 할 총액 (원장 기준)
   const paidPill0 = quoteSuperseded(q) ? '' : (_tt > 0 && _pa >= _tt) ? `<button class="pill p-done" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 결제완료</button>` : (_pa > 0 ? `<button class="pill p-prog" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 입금 ${fmtWon(_pa)} · 미수 ${fmtWon(_rem)}</button>` : `<button class="pill p-wait" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 미결제</button>`);
   /* ★ 확정은 안 눌렀는데 돈이 들어온 건 — 카드에서 바로 보이게 (2026-10-16) */
@@ -11852,7 +11962,12 @@ function quoteCardHtml(q) {
   const puPill = _pu
     ? `<button class="pill" style="border:1.5px solid var(--gd);background:#e8f8f0;color:#0f6e56;cursor:pointer;font-weight:800" onclick="quoteMarkPaid('${q.id}')" title="${esc(_pu.tx.date || '')} ${fmtWon(_pu.amt)}원 입금 — 아직 주문확정을 안 눌렀습니다"><i class="ti ti-cash-banknote"></i> 입금 확인 ${fmtWon(_pu.amt)}${_pu.full ? '' : ' (계약금)'}</button>`
     : '';
-  const paidPill = paidPill0 + puPill;         // 결제 배지 + «입금 확인» 배지
+  /* ★ 환불 딱지 (2026-10-17) — 통장에서 돌려준 돈이 있는 견적 */
+  const _rfA = quoteRefundAmt(q), _rfV = quoteVoided(q);
+  const refundPill = _rfA > 0
+    ? `<button class="pill" style="background:#fdecea;color:#c0341d;border:1.5px solid #f3c6c0;font-weight:800;cursor:pointer" onclick="event.stopPropagation();openQuoteView('${q.id}')" title="통장에서 돌려준 돈입니다 — 매출에서 뺐습니다"><i class="ti ti-arrow-back-up"></i> ${_rfV ? '취소 (환불' : '환불'} ${fmtWon(_rfA)}${_rfV ? ')' : ''}</button>`
+    : '';
+  const paidPill = paidPill0 + puPill + refundPill;   // 결제 배지 + «입금 확인» 배지 + 환불 배지
   const taxPill = taxPillHtml(q, true);
   const _shipD = q.shipped ? quoteShipDate(q) : '';
   const shipBadge = q.shipped ? `<span class="pill p-done"><i class="ti ti-truck-delivery"></i> 출고 완료${_shipD ? ' ' + esc(_shortDate(_shipD)) : ''}</span>` : '';
@@ -11916,6 +12031,8 @@ function openQuoteView(id) {
   const q = (state.quotes || []).find(x => x.id === id); if (!q) { toast('견적을 찾을 수 없습니다'); return; }
   const items = q.items || [];
   const _pa = quotePaid(q), _tt = Math.round(+q.total || 0), _rem = quoteRem(q);
+  const _rfRows = quoteRefundRows(q), _rfA = quoteRefundAmt(q), _rfV = quoteVoided(q);
+  const _rfNet = quoteNetTotal(q);
   const _cRem = clientRemOf(q.client);
   const badge = (on, cls, ic, txt) => on ? `<span class="pill ${cls}"><i class="ti ${ic}"></i> ${txt}</span>` : '';
   const badges = [
@@ -11961,6 +12078,11 @@ function openQuoteView(id) {
       <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:12px;color:var(--t2);font-weight:500">잔금</span><span style="font-size:13px;font-weight:700">${fmtWon(d.rest)}원</span></div>` : ''; })()}
       ${(() => { const b = quoteBalanceDue(q); return b ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;margin-top:4px;border-top:1px dashed var(--bd2)"><span style="font-size:12px;color:#0F6E56;font-weight:700">${esc(quotePrepaidLabel(q))}${b.from ? ' <span style="font-weight:500;color:var(--t3)">' + esc(b.from) + '</span>' : ''}</span><span style="font-size:14px;font-weight:800;color:#0F6E56">- ${fmtWon(b.pre)}원</span></div>
       <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:12.5px;color:var(--t1);font-weight:700">${esc(quoteDueLabel(q))}</span><span style="font-size:15px;font-weight:800;color:var(--gd)">${fmtWon(b.due)}원</span></div>` : ''; })()}
+      ${_rfA > 0 ? `<div style="margin-top:6px;padding:8px 10px;background:#fdf2f0;border:1.5px solid #f3c6c0;border-radius:9px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-size:12px;color:#c0341d;font-weight:800"><i class="ti ti-arrow-back-up"></i> ${_rfV ? '견적 통째 취소 (환불)' : '환불'}</span><span style="font-size:14px;font-weight:800;color:#c0341d">- ${fmtWon(_rfA)}원</span></div>
+        ${_rfRows.map(r => `<div style="font-size:11.5px;color:var(--t2);margin-top:3px">· ${esc(r.d)} 통장 출금 <b>${fmtWon(r.amt)}</b>원 <span style="color:var(--t3)">${esc(r.payer || '')}</span></div>`).join('')}
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:5px;padding-top:5px;border-top:1px dashed #f3c6c0"><span style="font-size:12px;color:var(--t2);font-weight:700">매출로 잡는 금액</span><span style="font-size:14px;font-weight:800">${fmtWon(_rfNet)}원</span></div>
+        <div style="font-size:11px;color:var(--t3);margin-top:4px">총매출·거래처 원장·분류별 매출에서 모두 이 금액으로 셉니다.</div></div>` : ''}
       ${_pa > 0 ? sumRow('입금', fmtWon(_pa) + '원') : ''}
       ${_rem > 0 ? `<div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:12px;color:var(--t2);font-weight:500">미수</span><span style="font-size:14px;font-weight:800;color:var(--red-t)">${fmtWon(_rem)}원</span></div>` : ''}
       ${_cRem > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0 0;margin-top:5px;border-top:1px dashed var(--bd2)"><span style="font-size:11.5px;color:var(--t3)">이 거래처 총 미수 <span style="color:var(--t2)">(원장 기준)</span></span><span style="display:flex;gap:6px;align-items:center"><span style="font-size:14px;font-weight:800;color:var(--red-t)">${fmtWon(_cRem)}원</span>${canLedger() ? `<button class="btn btn-sm" style="padding:2px 7px;font-size:11px" onclick="openLedgerFor(${JSON.stringify(q.client || '').replace(/"/g, '&quot;')})"><i class="ti ti-book"></i>원장</button>` : ''}</span></div>` : ''}
@@ -13217,6 +13339,9 @@ function _ldSheet(XS, aoa, meta, opt) {
       } else if (kind === 'tax') {
         st.fill = { patternType: 'solid', fgColor: { rgb: 'FFFBFAF7' } };
         st.font = { sz: 9.5, color: { rgb: 'FF8A8A8A' } };
+      } else if (kind === 'refund') {                    // 매출 환입 — 돌려준 돈
+        st.fill = { patternType: 'solid', fgColor: { rgb: 'FFFDF2F0' } };
+        st.font = { sz: 10, color: { rgb: 'FFC0341D' }, bold: c === 5 };
       } else if (kind === 'skip') {
         st.fill = { patternType: 'solid', fgColor: { rgb: 'FFF3F4F6' } };
         st.font = { sz: 9.5, color: { rgb: 'FFA0A0A0' }, strike: c === 2 };
@@ -13259,7 +13384,7 @@ async function ledgerXlsx() {
   const payN = rows.filter(r => r.k === 'pay' && !r.skip).length;
   const taxN = rows.filter(r => r.k === 'tax').length;
   const taxAmt = rows.filter(r => r.k === 'tax').reduce((a, r) => a + r.amt, 0);
-  const noTax = (state.quotes || []).filter(q => !!q.ordered && (q.client || '').trim() === client && !taxSettled(q));
+  const noTax = (state.quotes || []).filter(q => !!q.ordered && (q.client || '').trim() === client && !taxSettled(q) && !quoteVoided(q));
   const noTaxAmt = noTax.reduce((a, q) => a + Math.round(+q.total || 0), 0);
   const openAmt = Math.round(+M.opening || 0);
 
@@ -13292,7 +13417,10 @@ async function ledgerXlsx() {
     if (r.k === 'open') { kind = 'open'; g1 = '이월'; g2 = ''; g3 = '앱 이전 잔액' + (r.memo ? ' · ' + r.memo : ''); sale = r.amt; }
     else if (r.k === 'reset') { kind = 'reset'; g1 = '초기화'; g3 = '여기까지 정산 완료 — 아래 잔액부터 다시 시작' + (r.memo ? ' · ' + r.memo : ''); st = r.by || ''; }
     else if (r.k === 'sale') {
-      kind = r.old ? 'oldrow' : 'sale'; g1 = '매출'; g2 = r.docNo || ''; g3 = [r.site || '', r.attn ? ('수신 ' + r.attn) : ''].filter(Boolean).join(' · ');
+      kind = r.old ? 'oldrow' : 'sale'; g1 = '매출'; g2 = r.docNo || '';
+      g3 = [r.site || '', r.attn ? ('수신 ' + r.attn) : '',
+        (r.rfA > 0 ? (r.rfV ? ('★ 환불로 통째 취소 — 원래 ' + fmtWon(r.full) + '원') : ('★ 환불 ' + fmtWon(r.rfA) + '원 뺀 금액 — 원래 ' + fmtWon(r.full) + '원')) : '')
+      ].filter(Boolean).join(' · ');
       sale = r.amt;
       if (r.got != null) {
         const tot = Math.round(+r.amt || 0);
@@ -13301,6 +13429,14 @@ async function ledgerXlsx() {
     } else if (r.k === 'tax') {
       kind = r.old ? 'oldrow' : 'tax'; g1 = '계산서'; g2 = r.docNo || ''; g3 = '세금계산서 발행' + (r.nts ? (' · 승인 ' + r.nts) : '');
       st = fmtWon(r.amt) + ' 발행';
+    } else if (r.k === 'refund') {
+      kind = r.old ? 'oldrow' : 'refund';
+      g1 = r.qid ? (r.vd ? '취소(환불)' : '환불') : '과입반환';
+      g2 = r.payer || '(적요 없음)';
+      g3 = r.qid ? (r.docNo + (r.vd ? ' 통째 취소 — 매출 전액 차감' : ' 환불 — 매출에서 차감'))
+        : '견적에 연결 안 됨 — 더 들어온 돈 반환 (매출은 그대로)';
+      pay = -r.amt;                                                // ★ 받은 돈에서 뺀다
+      st = r.cat || '';
     } else if (r.skip) {
       kind = 'skip'; g1 = '무시'; g2 = r.payer || '(이름 없음)'; g3 = '견적과 무관한 돈으로 빼 둠';
       st = '무시 ' + fmtWon(r.amt) + ' — 미수 계산에서 제외';
@@ -13345,6 +13481,132 @@ async function ledgerXlsx() {
   toast(client + ' 원장 엑셀 다운로드');
 }
 /* 계정과목 목록 편집 */
+/* ══════════════════════════════════════════════════════════
+   ★★ 매출 환입 «대사표» (2026-10-17)
+   사용자: *"입출금 내역에서 매출 환입 과목이랑 맞춰볼 수 있게 해줘야 됨"*
+
+   통장의 「매출 환입 (환불)」 계정 합계가
+     ① 견적에 연결한 환불   (매출에서 뺀 돈)
+   + ② 과입금 반환           (받은 돈에서만 뺀 돈)
+   + ③ 거래처를 못 찾은 줄   (아무 데도 못 뺀 돈 — 고쳐야 한다)
+   와 딱 맞는지 한 화면에서 본다.
+   ══════════════════════════════════════════════════════════ */
+function refundRecon() {
+  const rows = refundIndex().rows;
+  let linked = 0, linkedN = 0, over = 0, overN = 0, noC = 0, noCN = 0, lostN = 0, voidN = 0;
+  rows.forEach(r => {
+    if (r.lost) lostN++;
+    if (r.qid) { linked += r.amt; linkedN++; if (r.vd) voidN++; }
+    else if (r.client) { over += r.amt; overN++; }
+    else { noC += r.amt; noCN++; }
+  });
+  const acctRows = (state.banktx || []).filter(t => txIsOut(t) && /환입|환불/.test(acctCatOf(t) || ''));
+  const acctSum = acctRows.reduce((a, t) => a + txMoney(t), 0);
+  return { rows: rows, linked: linked, linkedN: linkedN, over: over, overN: overN,
+    noC: noC, noCN: noCN, lostN: lostN, voidN: voidN,
+    acctSum: acctSum, acctN: acctRows.length, total: rows.reduce((a, r) => a + r.amt, 0) };
+}
+let _rfOpen = false;
+function refundReconToggle() { _rfOpen = !_rfOpen; renderSettle(); }
+function refundReconHtml() {
+  const R = refundRecon();
+  if (!R.rows.length) return '';
+  const box = (lab, v, n, col, note) => `<div style="padding:9px 10px;background:var(--soft);border-radius:10px">
+    <div style="font-size:11px;color:var(--t2);margin-bottom:3px">${lab}</div>
+    <div style="font-size:15.5px;font-weight:800;color:${col}">${fmtWon(v)}</div>
+    <div style="font-size:10.5px;color:var(--t3);margin-top:2px">${n}건${note ? ' · ' + note : ''}</div></div>`;
+  const row = r => `<tr${r.qid ? '' : ' style="background:#fffdf5"'}>
+    <td style="white-space:nowrap;color:var(--t3)">${esc(r.d.slice(2))}</td>
+    <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.payer)}"><b>${esc(r.payer || '(적요 없음)')}</b></td>
+    <td style="text-align:right;white-space:nowrap;font-weight:700;color:#c0341d">${fmtWon(r.amt)}</td>
+    <td style="white-space:nowrap">${r.client ? esc(r.client) : '<span style="color:#b42318;font-weight:700">거래처 못 찾음</span>'}</td>
+    <td>${r.qid
+      ? `<span class="pill" style="background:#fdecea;color:#c0341d;border:1px solid #f3c6c0;font-size:10px">${esc(r.docNo || '연결됨')}${r.vd ? ' · 통째 취소' : ''}</span> <span style="font-size:10.5px;color:var(--t3)">매출에서 뺌</span>`
+      : (r.lost ? '<span class="pill" style="background:#fde8e8;color:#b42318;border:1px solid #f5c2c2;font-size:10px">연결한 견적이 없어짐</span>'
+        : '<span style="font-size:11px;color:var(--t3)">과입금 반환 — 받은 돈만 차감</span>')}</td>
+    <td style="white-space:nowrap"><button class="btn btn-sm" style="padding:2px 7px;font-size:11px" onclick="openRefundPick('${r.tid}')"><i class="ti ti-link"></i>${r.qid ? '바꾸기' : '견적 연결'}</button></td></tr>`;
+  const diff = R.acctSum - R.total;
+  return `<div class="card" style="margin-bottom:11px;padding:11px 13px;border:1.5px solid #f3c6c0">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:9px">
+      <span style="font-size:12px;font-weight:800;color:#c0341d"><i class="ti ti-arrow-back-up"></i> 매출 환입 (환불) 대사</span>
+      <span style="font-size:11px;color:var(--t3)">전체 기간 · 계정 합계 <b style="color:#c0341d">${fmtWon(R.acctSum)}</b>원 (${R.acctN}건)</span>
+      <button class="btn btn-sm" style="margin-left:auto;padding:2px 9px;font-size:11.5px" onclick="refundReconToggle()"><i class="ti ti-chevron-${_rfOpen ? 'up' : 'down'}"></i>${_rfOpen ? '접기' : '내역 보기'}</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:7px">
+      ${box('① 견적에 연결 <b>(매출 차감)</b>', R.linked, R.linkedN, '#c0341d', R.voidN ? ('통째 취소 ' + R.voidN) : '')}
+      ${box('② 과입금 반환 <span style="color:var(--t3)">(매출 영향 없음)</span>', R.over, R.overN, 'var(--t1)', '받은 돈만 차감')}
+      ${R.noCN ? box('③ <b style="color:#b42318">거래처 못 찾음</b>', R.noC, R.noCN, '#b42318', '아무 데도 반영 안 됨') : ''}
+    </div>
+    ${R.noCN ? `<div class="banner warn" style="margin-top:9px;margin-bottom:0;font-size:12px"><i class="ti ti-alert-triangle"></i><span style="flex:1;min-width:0">
+      거래처를 못 찾은 환불 <b>${R.noCN}건 · ${fmtWon(R.noC)}원</b>은 매출에도 받은 돈에도 반영되지 않습니다 — 아래에서 거래처를 지정해 주세요.</span></div>` : ''}
+    ${R.lostN ? `<div class="banner warn" style="margin-top:9px;margin-bottom:0;font-size:12px"><i class="ti ti-unlink"></i><span style="flex:1;min-width:0">
+      연결해 둔 견적이 지워진 환불이 <b>${R.lostN}건</b> 있습니다 — 다시 연결해 주세요.</span></div>` : ''}
+    ${diff !== 0 ? `<div style="font-size:11.5px;color:var(--t3);margin-top:8px;padding-top:7px;border-top:1px dashed var(--bd2)">
+      계정 합계와 ${fmtWon(Math.abs(diff))}원 차이 — ${diff < 0 ? '계정은 다른데 견적에 환불로 연결해 둔 줄이 있습니다.' : '계정은 매출 환입인데 아직 아무 데도 반영되지 않은 줄이 있습니다.'}</div>` : `<div style="font-size:11.5px;color:#0f6e56;margin-top:8px;padding-top:7px;border-top:1px dashed var(--bd2)"><i class="ti ti-check"></i> 계정 합계와 ① + ② + ③ 이 정확히 맞습니다.</div>`}
+    ${_rfOpen ? `<div class="tbl-wrap" style="margin-top:9px"><table class="tbl" style="font-size:12.5px">
+      <thead><tr><th style="width:64px">날짜</th><th>적요</th><th style="text-align:right;width:100px">금액</th><th style="width:130px">거래처</th><th>연결</th><th style="width:96px"></th></tr></thead>
+      <tbody>${R.rows.map(row).join('')}</tbody></table></div>` : ''}
+  </div>`;
+}
+/* ── 환불 한 건 → 어느 견적인지 지정 ── */
+async function refundSet(tid, qid, vd) {
+  if (!canLedger()) { toast('거래처 원장 권한이 없습니다'); return; }
+  try {
+    await Store.update('banktx', tid, { refundFor: qid || '', refundVoid: !!(qid && vd), refundBy: (me && me.name) || '', refundAt: Date.now() });
+    moneyBust(); closeModal();
+    const q = qid ? (state.quotes || []).find(x => x.id === qid) : null;
+    toast(qid ? (((q && q.docNo) || '그 견적') + (vd ? ' — 통째 취소로 연결' : ' 환불로 연결')) : '연결을 풀었습니다 — 과입금 반환으로 봅니다');
+    setTimeout(() => { try { render(); } catch (e) { } }, 400);
+  } catch (e) { toast('실패: ' + ((e && e.message) || e)); }
+}
+function refundClear(tid) { return refundSet(tid, '', false); }
+async function refundClientSave(tid) {
+  const c = clientPickValue('rf-cli');
+  const typed = ((el('rf-cli-q') || {}).value || '').trim();
+  if (typed && !c) { toast('아래 목록에서 거래처를 눌러 선택하세요'); return; }
+  try {
+    await Store.update('banktx', tid, { client: c || '' });
+    moneyBust(); toast(c ? ('거래처 지정: ' + c) : '지정 해제');
+    setTimeout(() => openRefundPick(tid), 350);
+  } catch (e) { toast('실패: ' + ((e && e.message) || e)); }
+}
+function openRefundPick(tid) {
+  if (!canLedger()) { toast('거래처 원장 권한이 없습니다'); return; }
+  const t = (state.banktx || []).find(x => x.id === tid); if (!t) { toast('출금을 못 찾았습니다'); return; }
+  const amt = txMoney(t);
+  const cur = String(t.refundFor || '').trim();
+  const c = String(txClientOf(t) || '').trim();
+  const qs = c ? (state.quotes || []).filter(q => q.ordered && !q.supersededBy && String(q.client || '').trim() === c)
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))) : [];
+  const line = q => {
+    const tot = Math.round(+q.total || 0), same = (tot === amt), on = (cur === q.id);
+    return `<div class="card" style="padding:9px 11px;margin-bottom:6px;border:1.5px solid ${on ? '#c0341d' : (same ? '#f0c088' : 'var(--bd)')};background:${on ? '#fdf2f0' : (same ? '#fffaf0' : '#fff')}">
+      <div style="display:flex;gap:7px;align-items:baseline;flex-wrap:wrap"><b style="font-size:13px">${esc(q.docNo || '')}</b>
+        <span style="color:var(--t3);font-size:11.5px">${esc(q.date || '')}</span>
+        ${same ? '<span class="pill" style="background:#fff3dc;color:#8a5a00;border:1px solid #f0c088;font-size:10px">금액 일치</span>' : ''}
+        ${on ? '<span class="pill" style="background:#fdecea;color:#c0341d;border:1px solid #f3c6c0;font-size:10px">지금 연결됨</span>' : ''}
+        <span style="margin-left:auto;font-weight:800">${fmtWon(tot)}</span></div>
+      <div style="font-size:11.5px;color:var(--t3);margin:2px 0 6px">${esc(quoteSiteText(q) || '(현장 없음)')} · 입금 ${fmtWon(quotePaid(q))}</div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-sm" style="flex:1;color:#c0341d;border-color:#f3c6c0" onclick="refundSet('${tid}','${q.id}',false)"><i class="ti ti-arrow-back-up"></i>환불 ${fmtWon(amt)} 만 차감</button>
+        <button class="btn btn-sm" style="flex:1;color:#b42318;border-color:#f5c2c2" onclick="refundSet('${tid}','${q.id}',true)"><i class="ti ti-ban"></i>견적 통째 취소</button>
+      </div></div>`;
+  };
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-arrow-back-up"></i>이 환불은 어느 견적인가요?</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="card" style="padding:11px 13px;margin-bottom:11px">
+      <div style="font-size:13px"><b>${esc(t.payer || t.memo || '(적요 없음)')}</b> <span style="color:var(--t3)">· ${esc(t.dt || t.date || '')}${t.bankNm ? ' · ' + esc(t.bankNm) : ''}</span></div>
+      <div style="font-size:17px;font-weight:800;color:#c0341d;margin-top:4px">${fmtWon(amt)}원 <span style="font-size:11.5px;font-weight:600;color:var(--t3)">통장에서 나감 · ${esc(acctCatOf(t) || '미분류')}</span></div></div>
+    <div class="fld full" style="margin-bottom:9px"><label>거래처 <span style="color:var(--t3);font-weight:500">— 바꾸면 아래 견적 목록이 바뀝니다</span></label>${clientPickerHtml('rf-cli', c)}</div>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:11px"><button class="btn btn-sm" onclick="refundClientSave('${tid}')"><i class="ti ti-check"></i>거래처 적용</button></div>
+    <div style="font-size:11.5px;color:var(--t3);background:var(--soft);border-radius:9px;padding:9px 11px;margin-bottom:11px;line-height:1.65">
+      <b>견적에 연결하면</b> 그 견적 매출에서 빠지고 <b>총매출도 그만큼 줄어듭니다.</b><br>
+      <b>연결하지 않으면</b> «과입금 반환»으로 봅니다 — 매출은 그대로 두고 그 거래처의 <b>받은 돈</b>에서만 뺍니다.</div>
+    <div style="max-height:46vh;overflow:auto;padding:0 2px">
+      ${qs.length ? qs.map(line).join('') : `<div class="empty" style="padding:18px"><i class="ti ti-file-off"></i>${c ? '이 거래처의 확정 견적이 없습니다' : '먼저 거래처를 지정하세요'}</div>`}
+    </div>
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">닫기</button>
+      <button class="btn" style="flex:1.4;color:var(--t2)" onclick="refundClear('${tid}')"><i class="ti ti-unlink"></i>과입금 반환으로 (견적 없음)</button></div>`);
+}
 function openAcctCats() {
   if (!isAdmin()) { toast('관리자만'); return; }
   const cats = acctCats();
@@ -13377,7 +13639,7 @@ function acctCard(ym) {
   const chip = (v, label, sum, n, col) => `<button class="chip ${pick === v ? 'active' : ''}" onclick="acctSetCat('${v}')" style="${pick === v ? '' : ''}">${label}${sum != null ? ` <b style="color:${pick === v ? 'inherit' : (col || 'var(--red-t)')}">${fmtWon(sum)}</b><span style="color:${pick === v ? 'inherit' : 'var(--t3)'};font-size:10.5px"> ${n}건</span>` : ''}</button>`;
   const shown = cats.filter(c => T.byCat[c]);
   /* 이 달 확정 매출 — 나간 돈과 나란히 놓고 남는 돈을 본다 */
-  const saleM = (state.quotes || []).filter(q => q.ordered && (q.date || '').startsWith(ym)).reduce((a, q) => a + Math.round(+q.total || 0), 0);
+  const saleM = (state.quotes || []).filter(q => q.ordered && (q.date || '').startsWith(ym)).reduce((a, q) => a + quoteNetTotal(q), 0);
   return `
     <div class="banner info" style="margin-bottom:11px;font-size:12px"><i class="ti ti-info-circle"></i><span style="flex:1;min-width:0">
       <b>통장에서 나간 돈</b>을 계정과목으로 나눈 것입니다. 매입계산서는 돈이 나갈 때 통장에 찍히므로 여기서 또 세지 않습니다.
@@ -13403,6 +13665,7 @@ function acctCard(ym) {
           <div style="font-size:10px;color:var(--t3)">${T.byCat[c].n}건</div></button>`).join('')}
       </div>` : `<div style="font-size:12px;color:var(--t3);text-align:center;padding:8px">이번 달 출금 내역이 없습니다</div>`}
     </div>
+    ${refundReconHtml()}
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:9px">
       ${chip('all', '전체', tot, list.length)}${T.noneN ? chip('none', '미분류', T.noneSum, T.noneN, 'var(--amber-t)') : ''}${_onlyN ? chip('only', '예외', _onlySum, _onlyN, '#6d28d9') : ''}
       ${pick !== 'all' && pick !== 'none' && pick !== 'only' ? `<span class="chip active">${esc(pick)}</span>` : ''}
@@ -14603,7 +14866,7 @@ function salesSum(rows) {
 }
 /* 계산서를 아직 안 끊은 확정 매출 — 신고 전에 꼭 확인해야 할 것 */
 function salesNoTax(ym) {
-  return (state.quotes || []).filter(q => !taxSettled(q) && !!q.ordered && (qDate(q) || '').startsWith(ym))   // ★ 현금영수증 건 제외
+  return (state.quotes || []).filter(q => !taxSettled(q) && !!q.ordered && !quoteVoided(q) && (qDate(q) || '').startsWith(ym))   // ★ 현금영수증·취소 건 제외
     .sort((a, b) => (+b.total || 0) - (+a.total || 0));
 }
 function openLedgerEnc(enc) { openLedgerFor(_uq(enc)); }
