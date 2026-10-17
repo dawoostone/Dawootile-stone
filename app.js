@@ -7483,9 +7483,21 @@ function isGagongItem(it) {
   return true;
 }
 /* 계산서 비고란 — 견적의 현장명 우선, 없으면 현장주소·수신참조, 그것도 없으면 견적번호 */
+/* ══════════════════════════════════════════════════════════
+   세금계산서 «비고» 에 들어갈 현장 정보.
+   ★★ 2026-10-17 — «현장 주소» 를 먼저 쓴다.
+   사용자: *"세금 계산서 이관 할 때는 현장명이 아니라 현장 주소지 나오는 것 맞?"*
+
+   예전에는 현장명을 먼저 썼다. 그런데 현장명에는 자재명·담당자가 섞여 있어서
+   계산서 비고에 「타일판다 - 로마 팬텀 아이보리 12T」, 「반듯 팬텀 6티 + 12티」,
+   「배영준 대리님 양주시 …」 같은 글이 그대로 찍혔다 (실측: 둘 다 적힌 89건 중 60건이
+   현장명과 주소가 달랐다). 계산서에 나가야 하는 건 «어디로 간 물건인가» = 주소다.
+   ★ 순서: 현장 주소 → (주소가 없으면) 현장명 → 수신 → 견적번호
+   ★ 이미 발행한 계산서는 홈택스로 나간 뒤라 바뀌지 않는다. 앞으로 발행하는 건부터다.
+   ══════════════════════════════════════════════════════════ */
 function taxRemarkOf(q) {
   if (!q) return '';
-  const cand = [q.siteName, q.siteAddr, q.attn].map(v => (v || '').trim()).filter(Boolean);
+  const cand = [q.siteAddr, q.siteName, q.attn].map(v => (v || '').trim()).filter(Boolean);
   return cand.length ? cand[0] : ('견적 ' + (q.docNo || ''));
 }
 /* 폼 입력 + 견적 내용 → 세금계산서 payload 초안 만들기 (발행하지 않음) */
@@ -10153,7 +10165,7 @@ function taxPreviewInner() {
       <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:12.5px;color:var(--t2)">세액 합계</span><b style="font-size:13.5px">${fmtWon(d.taxTotal)}원</b></div>
       <div style="display:flex;justify-content:space-between;padding:7px 0 0;border-top:1.5px solid var(--bd2);margin-top:5px"><span style="font-size:13.5px;font-weight:700">합계금액</span><b style="font-size:17px;color:var(--gd)">${fmtWon(d.totalAmount)}원</b></div>
     </div>
-    <div class="fld full" style="margin-bottom:11px"><label>비고 <span style="color:var(--t3);font-weight:500">(계산서에 표시 · 견적서의 현장명이 자동으로 들어갑니다)</span></label><input value="${esc(d.remark1 || '')}" oninput="taxPrevSetTop('remark1',this.value)" placeholder="현장명" style="${inp}"></div>
+    <div class="fld full" style="margin-bottom:11px"><label>비고 <span style="color:var(--t3);font-weight:500">(계산서에 표시 · 견적서의 <b>현장 주소</b>가 자동으로 들어갑니다 — 고칠 수 있습니다)</span></label><input value="${esc(d.remark1 || '')}" oninput="taxPrevSetTop('remark1',this.value)" placeholder="현장 주소" style="${inp}"></div>
     <div class="frm-foot" style="display:flex;gap:6px">
       <button class="btn" style="flex:1" onclick="closeModal()">닫기</button>
       ${d._bundle
