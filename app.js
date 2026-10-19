@@ -6735,7 +6735,58 @@ async function saveManualPay() {
    ══════════════════════════════════════════════════════════ */
 function isCashRcpt(q) { return !!(q && q.cashRcpt); }
 /* 이 건은 «증빙 할 일»이 끝났나 — 계산서를 끊었거나, 현금영수증으로 처리했거나 */
-function taxSettled(q) { return !!(q && (q.taxInvoice || q.cashRcpt)); }
+/* ══════════════════════════════════════════════════════════
+   ★★ 수정세금계산서 (2026-10-19)
+   사용자: *"계산서 수정발행할 때 기재사항 착오 정정 (사업자 변경, 금액 변경 등)으로 하면
+            마이너스 발행 1건, 입력된 발행 1건 이런식으로 진행되어야 하고
+            착오에 의한 이중발급으로 하게되면 마이너스만 발행되면 되는데"*
+
+   ── 국세청·팝빌 규격 (확인함) ──
+     · 기재사항 착오·정정 (modifyCode 1) → **2장**
+         ① 당초분 전액 «마이너스» 1장   ② 올바른 내용 «플러스» 1장
+     · 착오에 의한 이중발급 (modifyCode 6) → **1장** (마이너스만)
+     · 둘 다 작성일자는 «당초 세금계산서의 작성일자» 를 쓴다.
+     · 팝빌은 «발행과 똑같은 API» 에 modifyCode 와 orgNTSConfirmNum(원본 국세청승인번호)
+       두 칸만 더 넣으면 된다.
+
+   ── 앱이 기록하는 것 ──
+     견적 문서에 taxMods 목록을 쌓는다. 원본(taxSupply/taxVat/taxTotal)은 그대로 두고,
+     «지금 유효한 계산서 금액 = 원본 + 수정분 합» 으로 본다 (taxNet).
+     전액 취소되면 그 견적은 다시 «계산서 미발행» 으로 돌아온다.
+   ══════════════════════════════════════════════════════════ */
+const TAX_MOD_REASONS = [
+  { code: 1, nm: '기재사항 착오·정정', n: 2, ic: 'ti-edit',
+    sum: '사업자번호·상호·금액 등을 잘못 적었을 때',
+    desc: '당초분 전액 <b>마이너스 1장</b> + 올바른 내용 <b>플러스 1장</b>, 모두 당초 작성일자로 나갑니다.' },
+  { code: 6, nm: '착오에 의한 이중발급', n: 1, ic: 'ti-copy',
+    sum: '같은 거래를 두 번 발행했을 때',
+    desc: '당초분 전액 <b>마이너스 1장</b>만 나갑니다 (당초 작성일자).' }
+];
+function taxModReason(code) { return TAX_MOD_REASONS.find(r => r.code === (+code || 0)) || null; }
+function taxModRows(q) { return (q && Array.isArray(q.taxMods)) ? q.taxMods : []; }
+/* 수정분 합 — 마이너스는 음수로 들어 있다 */
+function taxModSum(q) {
+  const o = { supply: 0, vat: 0, total: 0, n: 0 };
+  taxModRows(q).forEach(m => {
+    o.supply += Math.round(+m.supply || 0); o.vat += Math.round(+m.vat || 0);
+    o.total += Math.round(+m.total || 0); o.n++;
+  });
+  return o;
+}
+/* 지금 유효한 계산서 금액 = 원본 + 수정분 */
+function taxNet(q) {
+  const on = !!(q && q.taxInvoice);
+  const b = {
+    supply: on ? Math.round(+((q.taxSupply != null ? q.taxSupply : q.supply) || 0)) : 0,
+    vat: on ? Math.round(+((q.taxVat != null ? q.taxVat : q.vat) || 0)) : 0,
+    total: on ? Math.round(+((q.taxTotal != null ? q.taxTotal : q.total) || 0)) : 0
+  };
+  const m = taxModSum(q);
+  return { supply: b.supply + m.supply, vat: b.vat + m.vat, total: b.total + m.total, mods: m.n };
+}
+/* 수정발행으로 전액 취소된 계산서 — 다시 «미발행» 으로 본다 */
+function taxVoided(q) { return !!(q && q.taxInvoice && taxModRows(q).length > 0 && taxNet(q).total <= 0); }
+function taxSettled(q) { return !!(q && ((q.taxInvoice && !taxVoided(q)) || q.cashRcpt)); }
 async function cashRcptMark(qid) {
   const q = (state.quotes || []).find(x => x.id === qid); if (!q) { toast('견적을 찾을 수 없습니다'); return; }
   try {
@@ -6754,7 +6805,10 @@ function taxPillHtml(q, clickable) {
   const go = clickable ? ` style="border:none;cursor:pointer" onclick="event.stopPropagation();openTaxMark('${q.id}')"` : ' style="border:none"';
   const tag = clickable ? 'button' : 'span';
   if (isCashRcpt(q)) return `<${tag} class="pill p-done"${go} title="현금영수증 발행함 · 바꾸려면 누르세요"><i class="ti ti-receipt"></i> 현금영수증${q.cashRcptDate ? ' ' + esc(String(q.cashRcptDate).slice(5)) : ''}</${tag}>`;
-  if (q.taxInvoice) return `<${tag} class="pill p-prog"${go} title="계산서 표시·연결 바꾸기"><i class="ti ti-file-check"></i> 계산서 발행${q.taxDate ? ' ' + esc(String(q.taxDate).slice(5)) : ''}${q.taxExtId ? ' <i class="ti ti-link" style="font-size:11px"></i>' : ''}</${tag}>`;
+  /* ★ 수정발행으로 전액 취소된 건 (2026-10-19) */
+  if (taxVoided(q)) return `<${tag} class="pill" style="background:#fdecea;color:#c0341d;border:1px solid #f3c6c0${clickable ? ';cursor:pointer' : ''}"${clickable ? ` onclick="event.stopPropagation();openTaxResult('${q.id}')"` : ''} title="수정발행으로 전액 취소됐습니다"><i class="ti ti-file-off"></i> 계산서 취소됨</${tag}>`;
+  if (q.taxInvoice) { const _mn = taxModRows(q).length;
+    return `<${tag} class="pill p-prog"${go} title="계산서 표시·연결 바꾸기"><i class="ti ti-file-check"></i> 계산서 발행${q.taxDate ? ' ' + esc(String(q.taxDate).slice(5)) : ''}${_mn ? ' <b style="color:#c0341d">· 수정 ' + _mn + '</b>' : ''}${q.taxExtId ? ' <i class="ti ti-link" style="font-size:11px"></i>' : ''}</${tag}>`; }
   return `<${tag} class="pill p-gray"${go} title="발행으로 표시 · 현금영수증 표시 · 홈택스 계산서 연결"><i class="ti ti-file-off"></i> 계산서 미발행</${tag}>`;
 }
 async function quoteMarkTax(id) { const q = (state.quotes || []).find(x => x.id === id); if (!q) return; const t = !q.taxInvoice; await Store.update('quotes', id, { taxInvoice: t, taxDate: t ? todayStr() : '' }); toast(t ? '세금계산서 발행 표시' : '표시 해제'); }
@@ -7300,15 +7354,18 @@ function taxPrevSetPurpose(v) {
   if (r) r.setAttribute('style', _ppStyle(v === '영수', true));
   if (c) c.setAttribute('style', _ppStyle(v === '청구', true));
 }
-function taxCancel() { filters.taxEdit = ''; renderQuote(); qListRestore(); }
+function taxCancel() { taxModClear(); filters.taxEdit = ''; renderQuote(); qListRestore(); }
 function renderTaxForm() {
   const id = filters.taxEdit; const q = (state.quotes || []).find(x => x.id === id); if (!q) { filters.taxEdit = ''; renderQuote(); return; }
   const co = companyInfo(); const ti = clientTaxInfo(q.client);
   const inp = 'width:100%;font-size:14px;padding:8px 10px;border:1.5px solid var(--bd2);border-radius:9px';
   const fld = (fid, label, val, ph) => `<div class="fld" style="flex:1;min-width:150px;margin:0"><label>${label}</label><input id="${fid}" lang="ko" value="${esc(val || '')}" placeholder="${ph || ''}" onchange="taxBuyerTouch()" style="${inp}"></div>`;
   el('pg-quote').innerHTML = `
-    <div class="ph"><div><h2><i class="ti ti-file-invoice"></i>세금계산서 발행</h2><p>${esc(q.docNo || '')} · ${esc(q.client || '')}</p></div>
+    <div class="ph"><div><h2><i class="ti ti-file-invoice"></i>${(_taxModPlus && _taxModPlus.qid === id) ? '수정세금계산서 — 정정분' : '세금계산서 발행'}</h2><p>${esc(q.docNo || '')} · ${esc(q.client || '')}</p></div>
       <button class="btn btn-sm" onclick="taxCancel()"><i class="ti ti-arrow-left"></i> 목록</button></div>
+    ${(_taxModPlus && _taxModPlus.qid === id) ? `<div class="banner warn" style="margin-bottom:11px;font-size:12.5px"><i class="ti ti-file-diff"></i><span style="flex:1;min-width:0">
+      <b>정정분을 쓰는 중입니다</b> — 당초분 마이너스는 이미 나갔습니다. 여기서 <b>잘못된 내용(사업자번호·금액 등)을 바로잡아</b> 발행하세요.<br>
+      작성일자는 당초 작성일자 <b>${esc(String(_taxModPlus.writeDate || '').replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3'))}</b> 로 고정됩니다.</span></div>` : ''}
     ${taxLedgerHtml(q.client, q.id)}
     <div id="taxform-root" class="card" style="padding:15px 17px">
       <div style="font-weight:800;font-size:13px;color:var(--gd);margin-bottom:9px">공급받는자 (거래처)</div>
@@ -7538,7 +7595,9 @@ function buildTaxPayload(id) {
   if (!bizNo) { toast('공급받는자 사업자등록번호를 입력하세요'); return null; }
   if (!email) { toast('발행 안내메일 수신 이메일을 입력하세요'); return null; }
   const buyer = taxBuyerFromForm(q.client);
-  const writeDate = (el('tx-date').value || todayStr()).replace(/-/g, '');
+  /* ★ 수정발행 «정정분»(2026-10-19) — 작성일자는 반드시 당초 작성일자 */
+  const _mp = (_taxModPlus && _taxModPlus.qid === id) ? _taxModPlus : null;
+  const writeDate = _mp ? _mp.writeDate : (el('tx-date').value || todayStr()).replace(/-/g, '');
   const purposeType = (el('tx-purpose') && el('tx-purpose').value) || TAX_PURPOSE_DEFAULT;
   // 공급자 업태/종목: '제조업 | 건축 자재' 처럼 | 로 구분된 경우 우선, 없으면 공백 기준
   const _btRaw = (co.biztype || '').trim();
@@ -7554,7 +7613,9 @@ function buildTaxPayload(id) {
   const _reN = q.taxMgtKey ? ((+q.taxReissue || 0) + 1) : 0;
   // 재발행이면 이 견적이 쓰던 번호를 그대로 이어서 -R2, -R3 … / 첫 발행이면 안 겹치는 번호를 고른다
   const _mgtBase = _reN ? String(q.taxMgtKey).replace(/-R\d+$/, '') : taxFreeMgtKey(_rawBase, q.id);
-  const _mgtKey = _reN ? (_mgtBase + '-R' + _reN) : _mgtBase;
+  /* ★ 수정발행은 -M1, -M2 … 로 따로 번호를 쓴다 (원본 번호는 그대로 둔다) */
+  const _mgtKey = _mp ? (String(q.taxMgtKey || _mgtBase).replace(/-[RM]\d+$/, '') + '-M' + (taxModRows(q).length + 1))
+    : (_reN ? (_mgtBase + '-R' + _reN) : _mgtBase);
   const items = (q.items || []).filter(it => (+it.amt || 0) !== 0 || (+it.qty || 0) !== 0);   // 환불(마이너스) 행도 그대로 넣는다
   const _gag = items.filter(isGagongItem), _rest = items.filter(it => !isGagongItem(it));
   /* ★ 품목 금액(amt)은 보통 '공급가액'인데, 단가를 부가세 포함으로 넣은 견적이 간혹 있다.
@@ -7594,8 +7655,214 @@ function buildTaxPayload(id) {
     invoiceeContactName1: buyer.contact, invoiceeEmail1: buyer.email, invoiceeTEL1: buyer.tel || '', invoiceeHP1: buyer.hp || '',
     invoiceeContactName: buyer.contact, invoiceeEmail: buyer.email,
     supplyCostTotal: supplyTotal, taxTotal: taxTotal, totalAmount: totalAmount, detailList: detailList,
-    remark1: remark1, memo: '견적 ' + (q.docNo || '')
+    remark1: remark1, memo: '견적 ' + (q.docNo || ''),
+    /* ★ 수정발행 정정분이면 두 칸이 더 붙는다 — 없으면 평소 발행과 똑같다 */
+    modifyCode: _mp ? _mp.code : undefined,
+    orgNTSConfirmNum: _mp ? _mp.orgNts : undefined,
+    _mod: _mp ? { code: _mp.code, kind: 'plus' } : null
   };
+}
+/* ══════════════════════════════════════════════════════════
+   ★★ 수정세금계산서 발행 (2026-10-19)
+   · 마이너스분은 «원본 그대로» 금액만 음수로 보낸다.
+     원본의 작성일자·공급받는자 사업자번호·금액은 **팝빌에서 직접 읽어온다**
+     (taxdoc mode:'info'). 앱에 저장된 값을 믿지 않는다 — 사업자번호를 잘못 적어서
+     고치는 경우, 마이너스는 «잘못 적은 그 번호» 로 나가야 상계되기 때문이다.
+   · 정정분(플러스)은 평소 쓰던 계산서 작성 폼을 그대로 쓴다. 거기서 사업자번호·금액을
+     고치고 [이 내용으로 발행] 을 누르면 modifyCode 가 붙어서 나간다.
+   ══════════════════════════════════════════════════════════ */
+let _taxModPlus = null;      // 정정분 발행 대기 { qid, code, orgNts, writeDate }
+let _taxMod = null;          // 수정발행 화면 상태
+function taxModClear() { _taxModPlus = null; }
+/* 정정분을 아직 안 낸 견적인지 — 마이너스만 나가고 멈춘 상태 */
+function taxModPending(q) {
+  const rs = taxModRows(q);
+  if (!rs.length) return false;
+  const last = rs[rs.length - 1];
+  return (+last.code === 1) && last.kind === 'minus';
+}
+function openTaxMod(qid) {
+  if (!canTax()) { toast('세금계산서 발행 권한이 없습니다 — 관리자에게 문의하세요'); return; }
+  const q = (state.quotes || []).find(x => x.id === qid); if (!q) return;
+  if (!q.taxInvoice) { toast('아직 발행하지 않은 건입니다'); return; }
+  if (!String(q.ntsConfirmNum || '').trim()) { toast('국세청 승인번호가 없어 수정발행을 할 수 없습니다 — 먼저 «전송 상태 새로고침» 을 눌러 주세요'); return; }
+  if (!String(q.taxMgtKey || '').trim()) { toast('앱에서 발행한 기록이 아닙니다 — 팝빌 문서함에서 직접 수정발행해 주세요'); return; }
+  _taxMod = { qid: qid, code: 0, org: null, err: '', loading: true };
+  openModal(taxModShellHtml(q));
+  (async () => {
+    try { const j = await _taxDocCall({ mode: 'info', mgtKey: q.taxMgtKey }); _taxMod.org = j.info || {}; }
+    catch (e) { _taxMod.err = (e && e.message) || String(e); }
+    _taxMod.loading = false;
+    const b = el('txm-body'); if (b) b.innerHTML = taxModBodyHtml();
+  })();
+}
+function taxModShellHtml(q) {
+  return `<div class="sheet-h"><h3><i class="ti ti-file-diff" style="color:#a2560f"></i>수정세금계산서 발행</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="background:var(--soft);border-radius:11px;padding:10px 12px;margin-bottom:11px;font-size:12.5px;line-height:1.7">
+      <b>${esc(q.client || '')}</b> <span style="color:var(--t3)">· ${esc(q.docNo || '')}</span><br>
+      <span style="color:var(--t3)">당초 발행 ${esc(q.taxDate || '')} · 승인 ${esc(q.ntsConfirmNum || '')}</span>
+    </div>
+    <div id="txm-body">${taxModBodyHtml()}</div>`;
+}
+function taxModBodyHtml() {
+  const m = _taxMod; if (!m) return '';
+  const q = (state.quotes || []).find(x => x.id === m.qid); if (!q) return '';
+  if (m.loading) return `<div style="text-align:center;padding:26px;color:var(--t3);font-size:13px"><i class="ti ti-loader-2"></i> 원본 계산서를 팝빌에서 읽어오는 중…</div>`;
+  if (m.err) return `<div class="banner warn" style="font-size:12.5px"><i class="ti ti-alert-triangle"></i><span style="flex:1;min-width:0">원본을 읽지 못했습니다 — ${esc(m.err)}<br>팝빌 문서함에서 직접 수정발행해 주세요.</span></div>
+    <div class="frm-foot"><button class="btn btn-block" onclick="closeModal()">닫기</button></div>`;
+  const o = m.org || {};
+  const sup = Math.round(+o.supplyCostTotal || 0), vat = Math.round(+o.taxTotal || 0);
+  const wd = String(o.writeDate || '').replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+  const mine = Math.round(+(q.taxSupply || 0));
+  const diff = (mine > 0 && mine !== sup);
+  const already = taxModRows(q);
+  const card = r => `<button class="card" style="width:100%;text-align:left;padding:11px 13px;margin-bottom:7px;display:block;border:1.5px solid ${m.code === r.code ? '#a2560f' : 'var(--bd)'};background:${m.code === r.code ? '#fdf6ee' : '#fff'};cursor:pointer" onclick="taxModPick(${r.code})">
+      <div style="display:flex;gap:7px;align-items:baseline;flex-wrap:wrap">
+        <i class="ti ${r.ic}" style="color:#a2560f"></i><b style="font-size:13.5px">${esc(r.nm)}</b>
+        <span class="pill" style="background:#fdecea;color:#c0341d;border:1px solid #f3c6c0;font-size:10px">${r.n}장</span>
+        <span style="color:var(--t3);font-size:11.5px;margin-left:auto">${esc(r.sum)}</span></div>
+      <div style="font-size:11.5px;color:var(--t2);margin-top:4px;line-height:1.6">${r.desc}</div></button>`;
+  const rw = (k, v, col) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0"><span style="font-size:12px;color:var(--t3)">${k}</span><b style="font-size:12.5px;text-align:right;color:${col || 'var(--tx)'}">${v}</b></div>`;
+  return `
+    <div style="background:#fff;border:1.5px solid var(--bd2);border-radius:11px;padding:10px 12px;margin-bottom:11px">
+      <div style="font-size:11.5px;color:var(--t3);font-weight:700;margin-bottom:5px"><i class="ti ti-file-text"></i> 팝빌에 있는 <b>원본</b> 내용 — 마이너스분은 이 내용 그대로 나갑니다</div>
+      ${rw('작성일자', esc(wd || '-'))}
+      ${rw('공급받는자', esc(o.invoiceeCorpName || '-') + ' <span style="color:var(--t3);font-weight:500">' + esc(o.invoiceeCorpNum || '') + '</span>')}
+      ${rw('공급가액', fmtWon(sup) + '원')}
+      ${rw('세액', fmtWon(vat) + '원')}
+      ${rw('합계', fmtWon(sup + vat) + '원', 'var(--gd)')}
+      ${diff ? `<div style="font-size:11.5px;color:#b45309;margin-top:5px;line-height:1.6"><i class="ti ti-alert-triangle"></i> 앱에 적힌 금액(${fmtWon(mine)})과 다릅니다 — <b>팝빌 원본 금액으로 나갑니다</b> (맞습니다).</div>` : ''}
+    </div>
+    ${already.length ? `<div class="banner warn" style="margin-bottom:10px;font-size:12px"><i class="ti ti-history"></i><span style="flex:1;min-width:0">이 건은 이미 <b>${already.length}장</b> 수정발행했습니다 — ${already.map(x => (x.kind === 'minus' ? '마이너스 ' : '정정 ') + fmtWon(Math.abs(x.total))).join(' · ')}</span></div>` : ''}
+    ${taxModPending(q) ? `<div class="banner warn" style="margin-bottom:10px;font-size:12.5px"><i class="ti ti-alert-triangle"></i><span style="flex:1;min-width:0"><b>정정분을 아직 안 냈습니다.</b> 마이너스만 나간 상태입니다 — 아래 «정정분 이어서 발행» 을 눌러 마무리해 주세요.
+      <button class="btn btn-sm btn-pri" style="margin-left:8px" onclick="taxModResume('${q.id}')"><i class="ti ti-arrow-right"></i>정정분 이어서 발행</button></span></div>` : ''}
+    <div style="font-size:11.5px;color:var(--t3);font-weight:700;margin-bottom:6px">수정 사유를 고르세요</div>
+    ${TAX_MOD_REASONS.map(card).join('')}
+    <div style="font-size:11.5px;color:var(--t3);background:var(--soft);border-radius:9px;padding:9px 11px;margin:10px 0;line-height:1.65">
+      수정발행은 <b style="color:#c0341d">국세청으로 바로 나가고 되돌릴 수 없습니다.</b> 사유와 금액을 꼭 확인하세요.<br>
+      작성일자는 두 사유 모두 <b>당초 작성일자(${esc(wd || '-')})</b> 로 나갑니다.</div>
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button>
+      <button class="btn btn-pri" style="flex:1.8;${m.code ? '' : 'opacity:.45;pointer-events:none'}" onclick="taxModGo()">
+        <i class="ti ti-file-diff"></i>${m.code === 1 ? '① 마이너스 1장 먼저 발행' : (m.code === 6 ? '마이너스 1장 발행 (끝)' : '사유를 고르세요')}</button></div>`;
+}
+function taxModPick(code) {
+  if (!_taxMod) return;
+  _taxMod.code = (_taxMod.code === code) ? 0 : code;
+  const b = el('txm-body'); if (b) b.innerHTML = taxModBodyHtml();
+}
+/* 마이너스분 payload — 원본(팝빌) 그대로, 금액만 음수 */
+function taxModMinusPayload(q, org, code) {
+  const co = companyInfo();
+  const sup = Math.round(+org.supplyCostTotal || 0), vat = Math.round(+org.taxTotal || 0);
+  const _btRaw = (co.biztype || '').trim();
+  let _btType = '', _btClass = '';
+  if (_btRaw.indexOf('|') >= 0) { const _p = _btRaw.split('|'); _btType = (_p[0] || '').trim(); _btClass = _p.slice(1).join(' ').trim(); }
+  else { const _p = _btRaw.split(/\s+/); _btType = _p[0] || ''; _btClass = _p.slice(1).join(' ').trim(); }
+  if (!_btClass) _btClass = _btType;
+  const _telM = String(co.tel || '').match(/0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4}/);
+  const ti = clientTaxInfo(q.client) || {};
+  const r = taxModReason(code);
+  return {
+    invoicerCorpNum: co.bizno,
+    mgtKey: String(q.taxMgtKey || '').replace(/-[RM]\d+$/, '') + '-M' + (taxModRows(q).length + 1),
+    writeDate: String(org.writeDate || String(q.taxDate || '').replace(/-/g, '')),
+    purposeType: String(org.purposeType || '청구'),
+    modifyCode: code, orgNTSConfirmNum: String(q.ntsConfirmNum || ''),
+    invoicerCorpName: co.name, invoicerCEOName: co.ceo, invoicerAddr: co.addr,
+    invoicerBizType: _btType, invoicerBizClass: _btClass,
+    invoicerContactName: (me && me.name) || '', invoicerTEL: _telM ? _telM[0].replace(/\s/g, '') : '', invoicerEmail: co.email,
+    /* ★ 공급받는자는 «원본 그대로» — 사업자번호를 잘못 적어 고치는 경우에도
+       마이너스는 그 잘못된 번호로 나가야 당초분이 상계된다. */
+    invoiceeCorpNum: String(org.invoiceeCorpNum || ''), invoiceeCorpName: String(org.invoiceeCorpName || ''),
+    invoiceeCEOName: ti.ceo || '', invoiceeAddr: ti.addr || '', invoiceeBizType: ti.bizType || '', invoiceeBizClass: ti.bizClass || '',
+    invoiceeContactName1: ti.contact || '', invoiceeEmail1: ti.email || '', invoiceeTEL1: ti.tel || '', invoiceeHP1: ti.hp || '',
+    invoiceeContactName: ti.contact || '', invoiceeEmail: ti.email || '',
+    supplyCostTotal: -sup, taxTotal: -vat, totalAmount: -(sup + vat),
+    detailList: [{ itemName: '당초 세금계산서 취소', spec: (r ? r.nm : ''), qty: '', unitCost: -sup, supplyCost: -sup, tax: -vat, remark: '' }],
+    remark1: '당초 승인번호 ' + String(q.ntsConfirmNum || ''),
+    memo: '수정발행(' + (r ? r.nm : code) + ') 견적 ' + (q.docNo || '')
+  };
+}
+/* 팝빌로 한 건 보내기 — 문서번호가 이미 쓰였으면 -M2, -M3 … 로 자동 재시도 */
+async function _taxSendOne(payload) {
+  const token = await auth.currentUser.getIdToken();
+  const send = async pl => {
+    const rr = await fetch(PUSH_FN + '?action=taxinvoice', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify(pl) });
+    return { r: rr, j: await rr.json().catch(() => ({})) };
+  };
+  let { r, j } = await send(payload);
+  const dup = x => /동일한\s*문서번호|이미\s*등록된\s*문서번호|11000009/.test(String((x && x.error) || ''));
+  if (!(r.ok && j.ok) && dup(j)) {
+    const base = String(payload.mgtKey || '').replace(/-M\d+$/, '');
+    for (let i = 2; i <= 9 && !(r.ok && j.ok) && dup(j); i++) {
+      payload.mgtKey = base + '-M' + i;
+      toast('문서번호가 이미 쓰였습니다 — ' + payload.mgtKey + ' 로 다시 시도 중…');
+      ({ r, j } = await send(payload));
+    }
+  }
+  return { ok: !!(r.ok && j.ok), j: j, status: r.status };
+}
+/* 수정발행 시작 — 두 사유 모두 «마이너스분» 부터 */
+async function taxModGo() {
+  const m = _taxMod; if (!m || !m.code) return;
+  const q = (state.quotes || []).find(x => x.id === m.qid); if (!q) return;
+  const r = taxModReason(m.code); if (!r) return;
+  const o = m.org || {};
+  const sup = Math.round(+o.supplyCostTotal || 0), vat = Math.round(+o.taxTotal || 0);
+  if (!(sup + vat)) { toast('원본 금액을 읽지 못했습니다'); return; }
+  if (!confirm('「' + r.nm + '」 으로 수정발행합니다.\n\n당초분 전액 마이너스 ' + fmtWon(sup + vat) + '원 1장이 국세청으로 나갑니다.'
+    + (r.code === 1 ? '\n그 다음 정정분(플러스) 작성 화면이 열립니다.' : '\n이 사유는 마이너스 1장으로 끝입니다.')
+    + '\n\n되돌릴 수 없습니다. 진행할까요?')) return;
+  if (_busy) return; _busy = true;
+  try {
+    toast('마이너스분 발행 중…');
+    const pl = taxModMinusPayload(q, o, m.code);
+    const { ok, j, status } = await _taxSendOne(pl);
+    if (!ok) { toast('마이너스분 발행 실패: ' + ((j && j.error) || ('HTTP ' + status))); return; }
+    /* ══════════════════════════════════════════════════════
+       ★★ 되읽어 확인 (2026-10-19)
+       팝빌은 «발행과 똑같은 API» 에 modifyCode 를 얹는 구조라, 중간 서버가 그 칸을
+       빼고 보내면 «그냥 발행» 이 돼 버린다. 그러면 당초분이 상계되지 않는다.
+       그래서 발행 직후 그 문서를 팝빌에서 다시 읽어 modifyCode 가 붙어 있는지 본다.
+       안 붙어 있으면 **정정분으로 넘어가지 않고 멈추고 알린다** (더 틀어지지 않게).
+       ★ 마이너스분을 «먼저» 보내는 순서 자체가 안전장치다 — 여기서 걸리면
+         정정분(플러스)은 아예 나가지 않는다. */
+    let _verify = '';
+    try {
+      const chk = await _taxDocCall({ mode: 'info', mgtKey: j.mgtKey || pl.mgtKey });
+      const ci = chk.info || {};
+      const mc = +(ci.modifyCode || 0);
+      if (!mc) _verify = '서버가 «수정사유»를 팝빌로 넘기지 않은 것 같습니다 (modifyCode 가 비어 있음)';
+      else if (mc !== m.code) _verify = '수정사유가 다르게 들어갔습니다 (' + mc + ')';
+    } catch (e) { _verify = ''; }      // 조회가 안 되면 판단하지 않는다 (막지 않음)
+    const row = { code: m.code, kind: 'minus', mgtKey: j.mgtKey || pl.mgtKey, ntsConfirmNum: j.ntsConfirmNum || '',
+      writeDate: pl.writeDate, supply: -sup, vat: -vat, total: -(sup + vat), orgNts: String(q.ntsConfirmNum || ''),
+      verify: _verify || 'ok', by: (me && me.name) || '', at: Date.now() };
+    const _qNow = (state.quotes || []).find(x => x.id === m.qid) || q;
+    await Store.update('quotes', m.qid, { taxMods: taxModRows(_qNow).concat([row]) });
+    closeModal(); _taxMod = null;
+    if (_verify) {
+      /* ★ 수정세금계산서가 아닌 채로 나갔다 — 여기서 멈춘다 */
+      alert('⚠ 발행은 됐지만 «수정세금계산서» 로 안 나갔을 수 있습니다.\n\n' + _verify
+        + '\n\n문서번호: ' + (j.mgtKey || pl.mgtKey)
+        + '\n\n정정분은 보내지 않았습니다. 팝빌 문서함에서 이 문서를 확인하시고,\n서버(클라우드 함수)가 modifyCode 와 orgNTSConfirmNum 을 그대로 넘기도록\n고친 뒤에 다시 해 주세요.');
+      renderQuote(); return;
+    }
+    toast('마이너스분 발행 완료' + (j.ntsConfirmNum ? (' · 승인 ' + j.ntsConfirmNum) : ''));
+    if (m.code === 1) setTimeout(() => taxModResume(q.id), 500);
+    else { renderQuote(); }
+  } catch (e) { toast('발행 오류: ' + ((e && e.message) || e)); }
+  finally { setTimeout(() => { _busy = false; }, 700); }
+}
+/* 정정분(플러스) — 평소 쓰던 계산서 작성 폼을 그대로 연다 */
+function taxModResume(qid) {
+  const q = (state.quotes || []).find(x => x.id === qid); if (!q) return;
+  const rs = taxModRows(q); const last = rs.length ? rs[rs.length - 1] : null;
+  if (!last || +last.code !== 1) { toast('정정분을 낼 건이 아닙니다'); return; }
+  _taxModPlus = { qid: qid, code: 1, orgNts: last.orgNts || String(q.ntsConfirmNum || ''), writeDate: last.writeDate };
+  closeModal();
+  openTaxForm(qid);
+  setTimeout(() => toast('정정분 작성 — 고칠 내용(사업자번호·금액 등)을 바로잡고 발행하세요'), 400);
 }
 /* ══════════════════════════════════════════════════════════
    팝빌 계좌조회 → 입금 내역을 견적 입금액에 반영 (관리자)
@@ -8911,7 +9178,12 @@ function ledgerRows(client, cat) {
     rows.push({ d: q.date || '', k: 'sale', amt: amt, full: CAT ? tot : _full, part: mixed, docNo: q.docNo || '', site: quoteSiteText(q), attn: quoteAttnText(q), id: q.id,
       rfA: _rfA, rfV: _rfV,                                               // ★ 환불이 반영된 줄인지
       got: CAT ? null : quotePaid(q), left: CAT ? null : quoteRem(q) });   // ★ 이 견적이 얼마나 메워졌나
-    if (q.taxInvoice) rows.push({ d: q.taxDate || q.date || '', k: 'tax', amt: taxA, part: mixed, docNo: q.docNo || '', id: q.id, nts: q.ntsConfirmNum || '', mgt: q.taxMgtKey || '' });
+    if (q.taxInvoice) {
+      /* ★ 수정발행이 있으면 «원본 + 수정분» 으로 (2026-10-19) */
+      const _mn = taxModRows(q).length;
+      const _ta = _mn ? (CAT ? taxA : taxNet(q).total) : taxA;
+      rows.push({ d: q.taxDate || q.date || '', k: 'tax', amt: _ta, part: mixed, docNo: q.docNo || '', id: q.id, nts: q.ntsConfirmNum || '', mgt: q.taxMgtKey || '', mods: _mn, voided: taxVoided(q) });
+    }
   });
   if (CAT) { rows.sort((a, b) => (a.d || '').localeCompare(b.d || '') || ((a.k === 'sale' ? 0 : 1) - (b.k === 'sale' ? 0 : 1)) || (a.docNo || '').localeCompare(b.docNo || '')); return rows; }
   /* ★ 입금 줄 = 이 거래처로 들어온 통장 입금 전부.
@@ -8971,7 +9243,9 @@ function ledgerAgg() {
   (state.quotes || []).forEach(q => {
     if (!q.ordered) return; const c = (q.client || '').trim(); if (!c) return;
     const o = get(c), tot = Math.round(+q.total || 0);
-    if (q.taxInvoice) o.taxAmt += (+q.taxTotal || tot); else if (isCashRcpt(q)) { o.cashAmt = (o.cashAmt || 0) + tot; o.cashN = (o.cashN || 0) + 1; } else if (!quoteVoided(q)) { o.noTaxAmt += tot; o.noTaxN++; }
+    if (q.taxInvoice && !taxVoided(q)) o.taxAmt += (taxModRows(q).length ? taxNet(q).total : (+q.taxTotal || tot));
+    else if (isCashRcpt(q)) { o.cashAmt = (o.cashAmt || 0) + tot; o.cashN = (o.cashN || 0) + 1; }
+    else if (!quoteVoided(q)) { o.noTaxAmt += tot; o.noTaxN++; }
     const d = q.date || ''; if (d > o.last) o.last = d;
   });
   let unassigned = 0, unassignedSum = 0;
@@ -10115,6 +10389,17 @@ function openTaxResult(qid) {
       ${row('세액', fmtWon(q.taxVat != null ? q.taxVat : q.vat) + '원')}
       ${row('합계', fmtWon(q.taxTotal != null ? q.taxTotal : q.total) + '원', 'var(--gd)')}
     </div>
+    ${taxModRows(q).length ? `<div style="background:#fdf2f0;border:1.5px solid #f3c6c0;border-radius:11px;padding:10px 12px;margin-bottom:11px">
+      <div style="font-size:11.5px;color:#c0341d;font-weight:800;margin-bottom:5px"><i class="ti ti-file-diff"></i> 수정발행 ${taxModRows(q).length}장</div>
+      ${taxModRows(q).map(x => `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;font-size:12px">
+        <span style="color:var(--t2)">${esc((taxModReason(x.code) || {}).nm || ('사유 ' + x.code))} · <b>${x.kind === 'minus' ? '마이너스' : '정정'}</b> <span style="color:var(--t3)">${esc(String(x.writeDate || '').replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3'))}${x.ntsConfirmNum ? ' · 승인 ' + esc(x.ntsConfirmNum) : ''}</span></span>
+        <b style="white-space:nowrap;color:${x.total < 0 ? '#c0341d' : 'var(--gd)'}">${x.total < 0 ? '- ' : '+ '}${fmtWon(Math.abs(x.total))}</b></div>`).join('')}
+      <div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0 0;margin-top:4px;border-top:1px dashed #f3c6c0">
+        <span style="font-size:12.5px;font-weight:700">지금 유효한 계산서 금액</span>
+        <b style="font-size:14px;color:${taxVoided(q) ? '#c0341d' : 'var(--gd)'}">${taxVoided(q) ? '0원 (전액 취소)' : (fmtWon(taxNet(q).total) + '원')}</b></div>
+    </div>` : ''}
+    ${taxModPending(q) ? `<div class="banner warn" style="margin-bottom:11px;font-size:12.5px"><i class="ti ti-alert-triangle"></i><span style="flex:1;min-width:0"><b>정정분을 아직 안 냈습니다</b> — 마이너스만 나간 상태입니다.
+      <button class="btn btn-sm btn-pri" style="margin-left:8px" onclick="taxModResume('${q.id}')"><i class="ti ti-arrow-right"></i>정정분 이어서 발행</button></span></div>` : ''}
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px">
       <button class="btn btn-pri btn-sm" style="flex:1;min-width:130px" onclick="taxViewDoc('${esc(mk)}','print')"><i class="ti ti-file-search"></i>발행 내용 보기</button>
       <button class="btn btn-sm" style="flex:1;min-width:130px" onclick="taxViewDoc('${esc(mk)}','eprint')"><i class="ti ti-printer"></i>공급받는자 보관용</button>
@@ -10123,8 +10408,9 @@ function openTaxResult(qid) {
       <button class="btn btn-sm" style="flex:1;min-width:110px" onclick="taxRefreshInfo('${q.id}');"><i class="ti ti-refresh"></i>전송 상태 새로고침</button>
       <button class="btn btn-sm" style="flex:1;min-width:110px" onclick="closeModal();openTaxList()"><i class="ti ti-list"></i>발행 내역 전체</button>
     </div>
-    <button class="btn btn-sm btn-block" style="color:#a2560f;border-color:#e6bf93" onclick="closeModal();openTaxForm('${q.id}')"><i class="ti ti-edit"></i>내용 고쳐서 다시 발행 (수정 발행)</button>
-    <div style="font-size:11px;color:var(--t3);margin-top:9px;line-height:1.6">· <b>수정 발행</b>은 새 문서번호(-R1, -R2 …)로 다시 나갑니다. <b>먼저 발행한 건은 팝빌 매출문서함에서 취소</b>해야 중복되지 않습니다.<br>· 승인번호는 국세청 전송이 끝나야 붙습니다. 안 보이면 잠시 뒤 <b>전송 상태 새로고침</b>을 눌러보세요.</div>
+    <button class="btn btn-sm btn-block" style="color:#a2560f;border-color:#e6bf93;font-weight:800" onclick="closeModal();openTaxMod('${q.id}')"><i class="ti ti-file-diff"></i>수정세금계산서 발행 (착오 정정 · 이중발급)</button>
+    <button class="btn btn-sm btn-block" style="margin-top:6px;color:var(--t3)" onclick="closeModal();openTaxForm('${q.id}')"><i class="ti ti-edit"></i>같은 내용으로 다시 발행 (새 문서번호)</button>
+    <div style="font-size:11px;color:var(--t3);margin-top:9px;line-height:1.6">· <b>수정세금계산서</b>는 국세청 규격대로 나갑니다 — <b>착오 정정</b>은 마이너스 1장 + 정정 1장, <b>이중발급</b>은 마이너스 1장. 작성일자는 당초 작성일자입니다.<br>· <b>다시 발행</b>은 새 문서번호(-R1, -R2 …)로 한 장 더 나가는 것뿐입니다 — <b>당초분이 취소되지 않아 이중발급이 됩니다.</b> 보통은 위의 «수정세금계산서» 를 쓰세요.<br>· 승인번호는 국세청 전송이 끝나야 붙습니다. 안 보이면 잠시 뒤 <b>전송 상태 새로고침</b>을 눌러보세요.</div>
     <div class="frm-foot"><button class="btn btn-block" onclick="closeModal()">닫기</button></div>`);
 }
 /* 국세청 전송 상태 새로고침 */
@@ -10217,7 +10503,11 @@ let _taxDraft = null;
 function openTaxPreview(id) {
   const p = buildTaxPayload(id); if (!p) return;
   _taxDraft = p; taxPrevSum();
-  openModal(`<div class="sheet-h"><h3><i class="ti ti-file-search"></i>발행 내용 확인</h3><button class="x" onclick="closeModal()">×</button></div><div id="taxprev-body">${taxPreviewInner()}</div>`);
+  const _mb = p._mod ? `<div class="banner warn" style="margin-bottom:11px;font-size:12.5px"><i class="ti ti-file-diff"></i><span style="flex:1;min-width:0">
+    <b>수정세금계산서 «정정분»</b> 입니다 — ${esc((taxModReason(p._mod.code) || {}).nm || '')}<br>
+    작성일자는 당초 작성일자 <b>${esc(String(p.writeDate || '').replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3'))}</b> 로 나갑니다 (아래 날짜칸과 상관없이 고정).
+    당초 승인번호 <b>${esc(p.orgNTSConfirmNum || '')}</b> 에 연결됩니다.</span></div>` : '';
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-file-search"></i>${p._mod ? '정정분 발행 내용 확인' : '발행 내용 확인'}</h3><button class="x" onclick="closeModal()">×</button></div>${_mb}<div id="taxprev-body">${taxPreviewInner()}</div>`);
 }
 function taxPrevSum() {
   const d = _taxDraft; if (!d) return;
@@ -10341,7 +10631,20 @@ async function submitTaxInvoice(id) {
         ({ r, j } = await send(payload));
       }
     }
-    if (r.ok && j.ok) { await Store.update('quotes', id, { taxInvoice: true, taxDate: todayStr(), ntsConfirmNum: j.ntsConfirmNum || '', taxMgtKey: j.mgtKey || payload.mgtKey, taxReissue: _reN, taxTestMode: !!j.test, taxSupply: payload.supplyCostTotal, taxVat: payload.taxTotal, taxTotal: payload.totalAmount, taxIssuedAt: Date.now() }); _taxDraft = null; closeModal(); toast('세금계산서 발행 완료' + (j.ntsConfirmNum ? (' · 승인 ' + j.ntsConfirmNum) : '')); filters.taxEdit = ''; renderQuote(); qListRestore(); setTimeout(() => openTaxResult(id), 350); }   // 발행된 내용을 바로 확인할 수 있게
+    if (r.ok && j.ok && payload._mod) {
+      /* ★ 수정발행 «정정분» — 원본 기록은 그대로 두고 수정분으로 한 줄 쌓는다 (2026-10-19) */
+      const row = { code: payload._mod.code, kind: 'plus', mgtKey: j.mgtKey || payload.mgtKey, ntsConfirmNum: j.ntsConfirmNum || '',
+        writeDate: payload.writeDate, supply: Math.round(+payload.supplyCostTotal || 0), vat: Math.round(+payload.taxTotal || 0),
+        total: Math.round(+payload.totalAmount || 0), orgNts: String(payload.orgNTSConfirmNum || ''),
+        by: (me && me.name) || '', at: Date.now() };
+      /* ★ 저장 직전에 다시 읽는다 — 마이너스분 기록을 덮어쓰지 않게 */
+      const _qNow = (state.quotes || []).find(x => x.id === id) || q;
+      await Store.update('quotes', id, { taxMods: taxModRows(_qNow).concat([row]) });
+      _taxDraft = null; taxModClear(); closeModal();
+      toast('정정분 발행 완료' + (j.ntsConfirmNum ? (' · 승인 ' + j.ntsConfirmNum) : ''));
+      filters.taxEdit = ''; renderQuote(); qListRestore(); setTimeout(() => openTaxResult(id), 350);
+    }
+    else if (r.ok && j.ok) { await Store.update('quotes', id, { taxInvoice: true, taxDate: todayStr(), ntsConfirmNum: j.ntsConfirmNum || '', taxMgtKey: j.mgtKey || payload.mgtKey, taxReissue: _reN, taxTestMode: !!j.test, taxSupply: payload.supplyCostTotal, taxVat: payload.taxTotal, taxTotal: payload.totalAmount, taxIssuedAt: Date.now() }); _taxDraft = null; closeModal(); toast('세금계산서 발행 완료' + (j.ntsConfirmNum ? (' · 승인 ' + j.ntsConfirmNum) : '')); filters.taxEdit = ''; renderQuote(); qListRestore(); setTimeout(() => openTaxResult(id), 350); }   // 발행된 내용을 바로 확인할 수 있게
     else if (_dupErr(j)) { toast('문서번호가 모두 사용중입니다 — 견적번호를 바꾸고 다시 시도해 주세요'); }
     else { toast('발행 실패: ' + ((j && j.error) || ('HTTP ' + r.status))); }
   } catch (e) { toast('발행 오류: ' + ((e && e.message) || e)); }
@@ -12011,6 +12314,10 @@ function quoteCardHtml(q) {
   const _cRem = clientRemOf(q.client);        // 이 거래처가 우리한테 갚아야 할 총액 (원장 기준)
   const paidPill0 = quoteSuperseded(q) ? '' : (_tt > 0 && _pa >= _tt) ? `<button class="pill p-done" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 결제완료</button>` : (_pa > 0 ? `<button class="pill p-prog" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 입금 ${fmtWon(_pa)} · 미수 ${fmtWon(_rem)}</button>` : `<button class="pill p-wait" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${q.id}')" title="이 거래처 원장 보기"><i class="ti ti-cash"></i> 미결제</button>`);
   /* ★ 확정은 안 눌렀는데 돈이 들어온 건 — 카드에서 바로 보이게 (2026-10-16) */
+  /* ★ 수정발행 마이너스만 나가고 정정분을 안 낸 건 — 눈에 띄게 (2026-10-19) */
+  const taxModPill = taxModPending(q)
+    ? `<button class="pill" style="background:#fff3dc;color:#8a5a00;border:1.5px solid #f0c088;font-weight:800;cursor:pointer" onclick="event.stopPropagation();taxModResume('${q.id}')" title="수정발행 마이너스만 나갔습니다 — 정정분을 내야 합니다"><i class="ti ti-alert-triangle"></i> 정정분 미발행</button>`
+    : '';
   const _pu = paidUnconfOf(q);
   const puPill = _pu
     ? `<button class="pill" style="border:1.5px solid var(--gd);background:#e8f8f0;color:#0f6e56;cursor:pointer;font-weight:800" onclick="quoteMarkPaid('${q.id}')" title="${esc(_pu.tx.date || '')} ${fmtWon(_pu.amt)}원 입금 — 아직 주문확정을 안 눌렀습니다"><i class="ti ti-cash-banknote"></i> 입금 확인 ${fmtWon(_pu.amt)}${_pu.full ? '' : ' (계약금)'}</button>`
@@ -12020,7 +12327,7 @@ function quoteCardHtml(q) {
   const refundPill = _rfA > 0
     ? `<button class="pill" style="background:#fdecea;color:#c0341d;border:1.5px solid #f3c6c0;font-weight:800;cursor:pointer" onclick="event.stopPropagation();openQuoteView('${q.id}')" title="통장에서 돌려준 돈입니다 — 매출에서 뺐습니다"><i class="ti ti-arrow-back-up"></i> ${_rfV ? '취소 (환불' : '환불'} ${fmtWon(_rfA)}${_rfV ? ')' : ''}</button>`
     : '';
-  const paidPill = paidPill0 + puPill + refundPill;   // 결제 배지 + «입금 확인» 배지 + 환불 배지
+  const paidPill = paidPill0 + puPill + refundPill + taxModPill;   // 결제 + «입금 확인» + 환불 + 정정분 미발행
   const taxPill = taxPillHtml(q, true);
   const _shipD = q.shipped ? quoteShipDate(q) : '';
   const shipBadge = q.shipped ? `<span class="pill p-done"><i class="ti ti-truck-delivery"></i> 출고 완료${_shipD ? ' ' + esc(_shortDate(_shipD)) : ''}</span>` : '';
