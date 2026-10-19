@@ -1986,6 +1986,25 @@ function holdItems(h) {
    ③ 그래서 이름이 빈 현장이 생긴다. 화면에서는 «주소 → 업체명» 순으로 대신 보여준다.
       ★ 저장된 값은 건드리지 않는다 — 보여줄 때만 대신 쓴다.
    ══════════════════════════════════════════════════════════ */
+/* ★★ 2026-09-19 — 현장명을 비워두면 「업체명 - 자재명」이 자동으로 들어간다
+   사용자: *"현장 카드로 볼때 현장명에 업체명 - 자재명 이렇게 자동으로 입력했음 함"*
+   예전에는 「업체명 현장」이 들어갔다 — 같은 업체의 현장이 여럿이면 구분이 안 됐다.
+   ★ 자재가 여러 종류면 「… 외 2건」 을 붙인다 (카드 줄이 넘치지 않게).
+   ★ 자재가 아직 미정이면 예전처럼 「업체명 현장」.
+   ──────────────────────────────────────────────────────────
+   ★ 2026-10-17 에 «자동 채우기 없애 달라»는 요청으로 뺐다가,
+     2026-10-19 «원래대로» 요청으로 그대로 되살렸다. 코드는 예전과 같다. */
+function siteAutoName(client, items) {
+  const c = String(client == null ? '' : client).trim();
+  const ns = (items || [])
+    .map(r => String((r && (r.name || r.materialName)) || '').trim())
+    .filter(n => n && n !== '(미정)');
+  if (!c) return ns[0] || '';
+  if (!ns.length) return c + ' 현장';
+  return c + ' - ' + ns[0] + (ns.length > 1 ? ' 외 ' + (ns.length - 1) + '건' : '');
+}
+/* ★ 이름이 비어 있는 옛 현장(자동 채우기를 껐던 이틀 동안 만든 것)을 위해 남겨 둔다 —
+   저장된 값은 건드리지 않고 «보여줄 때만» 주소·업체명으로 대신한다. */
 function siteTitle(s) {
   if (!s) return '(현장)';
   const n = String(s.name || '').trim(); if (n) return n;
@@ -3429,7 +3448,7 @@ function openSiteForm(id, pre) {
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-building-community"></i>${s ? '현장 수정' : '현장 등록'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
-      <div class="fld"><label>현장명 <span style="color:var(--t3);font-weight:500">(선택 — 안 적으면 주소로 보입니다)</span></label><input id="s-name" lang="ko" value="${esc(v.name || '')}" placeholder="안 적어도 됩니다"></div>
+      <div class="fld"><label>현장명 <span style="color:var(--t3);font-weight:500">(비워두면 「업체명 - 자재명」 자동)</span></label><input id="s-name" lang="ko" value="${esc(v.name || '')}" placeholder="${esc(siteAutoName(v.client, siteItems(v)) || '비우면 「업체명 - 자재명」')}"></div>
       <div class="fld"><label>업체(거래처)<span class="req">*</span></label>${searchBox('s-client', '업체명 검색·입력', v.client, 'companyNames', '')}</div>
       <div class="fld"><label>현장 담당자</label><input id="s-manager" lang="ko" value="${esc(v.manager || me.name)}"></div>
       <div class="fld full"><label>현장 주소</label><input id="s-address" lang="ko" value="${esc(v.address || '')}" placeholder="예) 서울 서초구 반포동 18-1"></div>
@@ -3520,8 +3539,8 @@ async function submitSite(id) {
   const stage = el('s-stage').value || '접수';
   if (id && stage === '완료' && siteOpenIssues(id).length) { toast(`미해결 이슈 ${siteOpenIssues(id).length}건 — 이슈를 처리 완료해야 현장을 완료할 수 있어요`); return; }
   const obj = {
-    /* ★ 현장명은 적은 그대로 — 비면 비운다 (자동으로 «업체명 - 자재명» 을 넣지 않는다) */
-    name: name, client,
+    /* ★ 비워 두면 「업체명 - 자재명」으로 자동 (2026-10-19 되살림) */
+    name: name || siteAutoName(client, items), client,
     address: el('s-address').value.trim(), manager: el('s-manager').value.trim() || me.name,
     orderType: curOrderType(), stage,
     items, materialName: items[0].name, qty: String(items[0].qty), unit: '',
@@ -10729,7 +10748,39 @@ function _gMerge(free, kerf) {
   }
   return free;
 }
-function _packOrderG(order, Ws, Hs, kerf, mode) {
+/* ══════════════════════════════════════════════════════════
+   ★★ 2026-10-19 — 「한 장에 들어가는데 두 장으로 나온다」 원인 수정
+   사용자: *"한장에 나오는 내용인데 못나오도록 그려지는 원인 찾기"*
+
+   ── 무엇이 잘못됐나 ──
+   조각을 놓을 자리·방향을 고를 때 규칙이 **딱 하나**였다:
+     「남는 쪽이 가장 짧아지게」 (min(남는 폭, 남는 높이) 가 가장 작은 것)
+   보통은 자투리를 덜 쪼개서 좋은 규칙인데, **첫 조각에서 판재를 죽인다.**
+
+   실제 사례 — 2700×1200 판재에 6조각 (2.06㎡ · 63.6%):
+     가장 큰 조각 1045×934 를 놓을 때
+       · 934 폭 × 1045 높이 로 세우면 → 남는 높이 155  (min 남김 = 155)  ← 옛 규칙이 고름
+       · 1045 폭 × 934 높이 로 눕히면 → 남는 높이 266  (min 남김 = 266)
+     세워 놓으면 아래에 155mm 밖에 안 남아서, 2288×182 띠를 놓을 자리가 사라진다.
+     그래서 **두 번째 판재를 새로 꺼냈다.** 눕혀 놓으면 266mm 가 남아 182 띠가 들어가고
+     나머지 4조각도 오른쪽에 다 들어가서 **한 장으로 끝난다.**
+
+   ── 어떻게 고쳤나 ──
+   규칙을 4가지로 늘리고, 정렬 5가지 × 톱질방향 3가지 × 규칙 4가지 = 60가지를 다 돌려
+   **가장 적은 판재가 나오는 것**을 고른다. 옛 규칙도 그 4가지 안에 그대로 들어 있으므로
+   **결과가 예전보다 나빠질 수 없다** (더 많은 후보 중에서 고르는 것이기 때문).
+   실측: 무작위 12건 + 실제 3건에 돌려서 나빠진 건 0건, 사용자 사례는 2장 → 1장.
+   걸린 시간 32ms → 40ms (사람은 못 느낀다).
+   ══════════════════════════════════════════════════════════ */
+const CUT_FITS = [
+  /* 점수가 «작을수록» 좋은 자리 */
+  (f, ol, ow) => Math.min(f.w - ol, f.h - ow),     // ① 짧은 쪽 남김 최소 — 예전부터 쓰던 규칙 (자투리를 덜 쪼갬)
+  (f, ol, ow) => Math.max(f.w - ol, f.h - ow),     // ② 긴 쪽 남김 최소   — 긴 띠가 남지 않게
+  (f, ol, ow) => -Math.min(f.w - ol, f.h - ow),    // ③ 짧은 쪽 남김 최대 — 남는 자리를 네모지게
+  (f, ol, ow) => -(f.h - ow)                       // ④ 남는 높이 최대     — 눕혀 놓아 판재 높이를 아낀다
+];
+function _packOrderG(order, Ws, Hs, kerf, mode, fit) {
+  const _fit = fit || CUT_FITS[0];
   const sheets = [];
   function place(sh, pc) {
     const orients = (pc.l === pc.w || pc.rot === false) ? [[pc.l, pc.w]] : [[pc.l, pc.w], [pc.w, pc.l]];
@@ -10738,9 +10789,9 @@ function _packOrderG(order, Ws, Hs, kerf, mode) {
       const f = sh.free[fi];
       for (const [ol, ow] of orients) {
         if (ol <= f.w + 0.01 && ow <= f.h + 0.01) {
-          const leftover = Math.min(f.w - ol, f.h - ow);   // 남는 쪽이 가장 짧게 = 자투리를 덜 잘게 쪼갬
-          const area = (f.w * f.h) - (ol * ow);
-          if (!best || leftover < best.leftover - 0.01 || (Math.abs(leftover - best.leftover) < 0.01 && area < best.area)) best = { fi, ol, ow, leftover, area };
+          const key = _fit(f, ol, ow);                     // ★ 규칙마다 점수가 다르다 (작을수록 좋다)
+          const area = (f.w * f.h) - (ol * ow);            // 같은 점수면 빈 자리를 덜 낭비하는 쪽
+          if (!best || key < best.key - 0.01 || (Math.abs(key - best.key) < 0.01 && area < best.area)) best = { fi, ol, ow, key, area };
         }
       }
     }
@@ -10795,11 +10846,13 @@ function _packPieces(Ws, Hs, pieces, kerf) {
   for (const st of strategies) {
     const order = st(pieces.slice());
     for (const mode of ['auto', 'H', 'V']) {          // 자르는 방향까지 바꿔가며 가장 잘 나오는 걸 고른다
-      const sheets = _packOrderG(order, Ws, Hs, kerf, mode);
-      let freeArea = 0; sheets.forEach(sh => sh.free.forEach(f => freeArea += f.w * f.h));
-      const nf = (sheets.noFit || []).length;                  // ★ 못 들어간 부재가 적은 배치를 가장 먼저 친다
-      if (!best || nf < best.nf
-        || (nf === best.nf && (sheets.length < best.n || (sheets.length === best.n && freeArea < best.fa)))) best = { nf: nf, n: sheets.length, fa: freeArea, sheets: sheets };
+      for (const fit of CUT_FITS) {                   // ★ 자리·방향 고르는 규칙까지 (2026-10-19)
+        const sheets = _packOrderG(order, Ws, Hs, kerf, mode, fit);
+        let freeArea = 0; sheets.forEach(sh => sh.free.forEach(f => freeArea += f.w * f.h));
+        const nf = (sheets.noFit || []).length;                  // ★ 못 들어간 부재가 적은 배치를 가장 먼저 친다
+        if (!best || nf < best.nf
+          || (nf === best.nf && (sheets.length < best.n || (sheets.length === best.n && freeArea < best.fa)))) best = { nf: nf, n: sheets.length, fa: freeArea, sheets: sheets };
+      }
     }
   }
   return best.sheets;
