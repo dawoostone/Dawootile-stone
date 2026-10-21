@@ -6110,7 +6110,9 @@ const QUOTE_EXTRAS = [
 ];
 /* 세면대 주문제작 견적 특이사항 (세면대 항목 포함 시 견적서에 강조 표기) */
 const BASIN_NOTICE = [
-  '발주 후 수정 불가',
+  '※발주 후 수정 불가※',
+  '※수정 시 비용 개당 10만원 발생※',
+  '※공정 시점에 따라 수정이 불가할 수 있습니다※',
   '주문 제작 건은 납기까지 30~33일 정도 소요됩니다.',
   '세면대 발주 1개 당 브라켓 1SET 포함되어 있으며, 이외 부속품은 별도 구매입니다. (별도 : 폽업, 수전, 트랩 등)',
   '시공비, 운송비는 별도입니다.',
@@ -6118,6 +6120,24 @@ const BASIN_NOTICE = [
   '제작 방식 상 모든 세면대가 완벽히 동일한 컬러로 나올 수 없으며 (굽는 시간에 따라 색상에 다소 차이가 있음)',
   '내부 볼의 깊이는 150MM 기준 +- 30MM의 오차가 발생할 수 있습니다.'
 ];
+/* ══════════════════════════════════════════════════════════
+   ★★ 2026-10-21 — 유의사항 «강조» 줄
+   사용자: *"세면대 발주 유의사항에 발주 후 수정불가 빨간글씨로 강조해주고
+            수정 시 비용 개당 10만원 발생 / 공정 시점에 따라 수정 불가할 수 있음"*
+
+   ── 어떤 줄이 강조되나 ──
+     · ※ … ※  로 감싼 줄      → 빨간 굵은 글씨 (※ 표시는 그대로 둔다 —
+                                 2026-09-28에 손으로 그렇게 적어 두셨기 때문)
+     · !  로 시작하는 줄       → 빨간 굵은 글씨 (! 는 화면에 안 나온다)
+   ★ 견적 설정에서 줄을 고쳐도 같은 규칙이 그대로 적용된다.
+   ★ 견적서 화면·인쇄본·엑셀 세 곳 모두 같이 강조된다.
+   ══════════════════════════════════════════════════════════ */
+function basinNoticeEm(l) {
+  const t = String(l == null ? '' : l).trim();
+  if (/^※[\s\S]*※$/.test(t) && t.length > 2) return { em: true, t: t };     // ※ 는 남겨 둔다
+  if (t.charAt(0) === '!') return { em: true, t: t.slice(1).trim() };        // ! 는 떼고 보여준다
+  return { em: false, t: t };
+}
 /* 세면대 특이사항 — 위 기본 문구를 견적 설정에서 고쳐 쓸 수 있다.
    고친 적이 없으면(또는 되돌리면) 위 BASIN_NOTICE 기본 문구가 그대로 나간다. */
 function basinNoticeDoc() { return (state.appmeta || []).find(x => x.key === 'basinNotice') || null; }
@@ -6289,7 +6309,7 @@ function renderQuoteForm() {
         </div>
         <div id="q-basin-note" style="display:none;margin-bottom:10px;border:2px solid #c0341d;border-radius:10px;background:#fff5f5;padding:10px 12px">
           <div style="font-weight:800;color:#c0341d;font-size:13px;margin-bottom:5px">⚠ 세면대 주문제작 특이사항 — 견적서에 자동으로 강조 표기됩니다</div>
-          <ul style="margin:0;padding-left:20px;font-size:12px;line-height:1.65;color:#8a1c10">${basinNoticeList().map(l => `<li>${esc(l)}</li>`).join('')}</ul>
+          <ul style="margin:0;padding-left:20px;font-size:12px;line-height:1.65;color:#8a1c10">${basinNoticeList().map(l => { const e0 = basinNoticeEm(l); return `<li${e0.em ? ' style="color:#c0341d;font-weight:800;font-size:13px"' : ''}>${esc(e0.t)}</li>`; }).join('')}</ul>
         </div>
         <div class="fld full" style="margin-bottom:10px"><label>비고 <span style="color:var(--t3);font-weight:500">(기본 양식은 견적 설정에서 관리)</span></label><textarea id="q-memo" lang="ko" placeholder="결제조건·납기 등" style="min-height:64px">${esc(editing ? (v.memo || '') : (v.memo || quoteMemoTemplate()))}</textarea></div>
         <div style="background:var(--soft);border-radius:11px;padding:12px 14px;max-width:360px;margin-left:auto">
@@ -12056,7 +12076,8 @@ function renderQuoteSettings() {
 
       <div class="card" style="margin-bottom:12px;padding:13px 15px">
         <div class="card-h"><h3><i class="ti ti-alert-triangle"></i>세면대 주문제작 특이사항</h3><span class="more" style="font-size:11px;color:var(--t3)">세면대 견적서에 자동 표시</span></div>
-        <div style="font-size:11.5px;color:var(--t3);margin-bottom:7px">세면대가 들어간 견적서(인쇄 · 이미지 · 엑셀) 아래에 빨간 칸으로 나가는 문구입니다. <b>한 줄에 한 항목</b>씩 적어주세요. 빈 줄은 저장할 때 자동으로 빠집니다.</div>
+        <div style="font-size:11.5px;color:var(--t3);margin-bottom:7px">세면대가 들어간 견적서(인쇄 · 이미지 · 엑셀) 아래에 빨간 칸으로 나가는 문구입니다. <b>한 줄에 한 항목</b>씩 적어주세요. 빈 줄은 저장할 때 자동으로 빠집니다.<br>
+          <span style="color:#c0341d;font-weight:700">★ 꼭 봐야 하는 줄은 <b>※ 문구 ※</b> 처럼 ※ 로 감싸면 <b style="font-size:12.5px">빨간 굵은 글씨</b>로 크게 나갑니다.</span> (느낌표 <b>!</b> 로 시작해도 같습니다 — 이때 ! 는 안 보입니다)</div>
         <textarea id="qs-bnotice" lang="ko" style="width:100%;min-height:158px;font-size:13.5px;line-height:1.65;padding:10px;border:1.5px solid var(--bd2);border-radius:10px">${esc(bnote)}</textarea>
         <div style="display:flex;gap:6px;margin-top:8px">
           <button class="btn btn-pri btn-sm" style="flex:1" onclick="saveBasinNotice()"><i class="ti ti-check"></i>특이사항 저장</button>
@@ -16163,6 +16184,7 @@ function quoteDocHtml(q) {
 .notice{margin-top:15px;border:1px solid #cbb089;border-radius:2px;overflow:hidden}
 .notice .nh{background:#8a7350;color:#fff;font-weight:700;font-size:11.5px;padding:8px 13px;letter-spacing:1px}
 .notice ul{margin:0;padding:10px 12px 10px 30px;font-size:11px;line-height:1.75;color:#6b5a3c;font-weight:500;background:#faf6ee}
+.notice li.em{color:#c0341d;font-weight:800;font-size:12.5px}
 .foot{margin-top:18px;border-top:1px solid #e6ddcf;padding-top:10px;font-size:9.5px;color:#b0a795;display:flex;justify-content:space-between;letter-spacing:.3px}
 @media print{html,body{background:#fff}#page{margin:0}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>
   <div id="page"><div id="sheet">
@@ -16190,7 +16212,7 @@ function quoteDocHtml(q) {
       <tr class="tot"><td>${e(quoteDueLabel(q))}</td><td style="text-align:right">${fmtWon(b.due)} 원</td></tr>` : ''; })()}
     </table>
   </div>
-  ${hasBasinItems(items) ? `<div class="notice"><div class="nh">⚠ 세면대 주문제작 특이사항 (필독)</div><ul>${basinNoticeList().map(l => `<li>${e(l)}</li>`).join('')}</ul></div>` : ''}
+  ${hasBasinItems(items) ? `<div class="notice"><div class="nh">⚠ 세면대 주문제작 특이사항 (필독)</div><ul>${basinNoticeList().map(l => { const e0 = basinNoticeEm(l); return `<li${e0.em ? ' class="em"' : ''}>${e(e0.t)}</li>`; }).join('')}</ul></div>` : ''}
   <div class="foot"><span>※ 본 견적은 유효기간 내에서만 유효하며, 부가세 별도(공급가액 기준)로 산정되었습니다.</span><span>${e(co.name)}</span></div>
   </div></div>
   <script>window.addEventListener('load',function(){var s=document.getElementById('sheet');var a=1047;if(s&&s.scrollHeight>a){s.style.transform='scale('+(a/s.scrollHeight)+')';}});</script>
@@ -16946,6 +16968,7 @@ function combinedBillDocHtml(qs, picked, extraDc) {
 .notice{margin-top:15px;border:1px solid #cbb089;border-radius:2px;overflow:hidden}
 .notice .nh{background:#8a7350;color:#fff;font-weight:700;font-size:11.5px;padding:8px 13px;letter-spacing:1px}
 .notice ul{margin:0;padding:10px 12px 10px 30px;font-size:11px;line-height:1.75;color:#6b5a3c;font-weight:500;background:#faf6ee}
+.notice li.em{color:#c0341d;font-weight:800;font-size:12.5px}
 .foot{margin-top:18px;border-top:1px solid #e6ddcf;padding-top:10px;font-size:9.5px;color:#b0a795;display:flex;justify-content:space-between;letter-spacing:.3px}
 @media print{html,body{background:#fff}#page{margin:0}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>
   <div id="page"><div id="sheet">
@@ -16970,7 +16993,7 @@ function combinedBillDocHtml(qs, picked, extraDc) {
       <tr class="tot"><td>청구 합계</td><td style="text-align:right">${(disc + _xdc) > 0 ? `<span class="was">할인 전 <s>${fmtWon(supply + vat)} 원</s></span>` : ''}${fmtWon(total - _xdc)} 원</td></tr>
     </table>
   </div>
-  ${hasBasin ? `<div class="notice"><div class="nh">⚠ 세면대 주문제작 특이사항 (필독)</div><ul>${basinNoticeList().map(l => `<li>${e(l)}</li>`).join('')}</ul></div>` : ''}
+  ${hasBasin ? `<div class="notice"><div class="nh">⚠ 세면대 주문제작 특이사항 (필독)</div><ul>${basinNoticeList().map(l => { const e0 = basinNoticeEm(l); return `<li${e0.em ? ' class="em"' : ''}>${e(e0.t)}</li>`; }).join('')}</ul></div>` : ''}
   <div class="foot"><span>※ 본 청구서는 상기 견적 ${qs.length}건(${e(docNos)})을 합산한 것이며, 부가세 별도(공급가액 기준)로 산정되었습니다.${picked ? ' 견적 중 일부 품목만 청구한 건입니다.' : ''}</span><span>${e(co.name)}</span></div>
   </div></div>
 </body></html>`;
@@ -17026,7 +17049,7 @@ function _ensureLib(g, src) {
 function _quoteStylesXml() {
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
     '<numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0"/></numFmts>' +
-    '<fonts count="8">' +
+    '<fonts count="9">' +
     '<font><sz val="11"/><color rgb="FF201C17"/><name val="맑은 고딕"/></font>' +
     '<font><b/><sz val="11"/><color rgb="FF201C17"/><name val="맑은 고딕"/></font>' +
     '<font><b/><sz val="26"/><color rgb="FF201C17"/><name val="맑은 고딕"/></font>' +
@@ -17035,6 +17058,7 @@ function _quoteStylesXml() {
     '<font><sz val="10.5"/><color rgb="FF6B5A3C"/><name val="맑은 고딕"/></font>' +
     '<font><b/><sz val="12"/><color rgb="FFFFFFFF"/><name val="맑은 고딕"/></font>' +
     '<font><b/><sz val="12"/><color rgb="FFE2C48C"/><name val="맑은 고딕"/></font>' +
+    '<font><b/><sz val="11"/><color rgb="FFC0341D"/><name val="맑은 고딕"/></font>' +   /* 8 — 유의사항 강조 (빨강) */
     '</fonts>' +
     '<fills count="7">' +
     '<fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' +
@@ -17047,7 +17071,7 @@ function _quoteStylesXml() {
     '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>' +
     '<border><left style="thin"><color rgb="FFDCD3C3"/></left><right style="thin"><color rgb="FFDCD3C3"/></right><top style="thin"><color rgb="FFDCD3C3"/></top><bottom style="thin"><color rgb="FFDCD3C3"/></bottom><diagonal/></border></borders>' +
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-    '<cellXfs count="20">' +
+    '<cellXfs count="21">' +
     '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
     '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>' +
     '<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>' +
@@ -17068,6 +17092,8 @@ function _quoteStylesXml() {
     '<xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
     '<xf numFmtId="0" fontId="1" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>' +
     '<xf numFmtId="164" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>' +
+    /* 20 — 세면대 유의사항 «강조» 줄 (2026-10-21) : 유의사항 바탕 그대로, 글씨만 빨간 굵게 */
+    '<xf numFmtId="0" fontId="8" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>' +
     '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
 }
 function _quoteSheetXml(q) {
@@ -17101,7 +17127,10 @@ function _quoteSheetXml(q) {
   { const b = quoteBalanceDue(q); if (b) { span(rr, 0, 4, 10, quotePrepaidLabel(q) + (b.from ? ' (' + b.from + ')' : ''), 's'); put(rr, 5, 11, -b.pre, 'n'); rr++; span(rr, 0, 4, 12, quoteDueLabel(q), 's'); put(rr, 5, 13, b.due, 'n'); rowH[rr] = 26; rr++; } }
   rr++;
   if (q.memo) { span(rr, 0, 5, 14, '비고 : ' + q.memo, 's'); rowH[rr] = 44; rr++; }
-  if (hasBasinItems(items)) { span(rr, 0, 5, 15, '⚠ 세면대 주문제작 특이사항 (필독)', 's'); rowH[rr] = 22; rr++; (typeof basinNoticeList === 'function' ? basinNoticeList() : []).forEach(l => { span(rr, 0, 5, 16, '· ' + l, 's'); rr++; }); }
+  if (hasBasinItems(items)) { span(rr, 0, 5, 15, '⚠ 세면대 주문제작 특이사항 (필독)', 's'); rowH[rr] = 22; rr++; (typeof basinNoticeList === 'function' ? basinNoticeList() : []).forEach(l => {
+    const e0 = (typeof basinNoticeEm === 'function') ? basinNoticeEm(l) : { em: false, t: l };
+    span(rr, 0, 5, e0.em ? 20 : 16, (e0.em ? '■ ' : '· ') + e0.t, 's'); if (e0.em) rowH[rr] = 20; rr++;
+  }); }
   const maxRow = rr;
   const cell = (ref, sty, v, t) => t === 'n' ? ('<c r="' + ref + '" s="' + sty + '"><v>' + v + '</v></c>') : (t === 's' ? ('<c r="' + ref + '" s="' + sty + '" t="inlineStr"><is><t xml:space="preserve">' + esc(v == null ? '' : String(v)) + '</t></is></c>') : ('<c r="' + ref + '" s="' + sty + '"/>'));
   let sheetData = '';
