@@ -674,7 +674,43 @@ function onData(coll) {
   if (['priceList', 'members'].includes(coll) && me && !isCustomerRole()) scheduleCustPriceSync();   // 거래처 화면에 보일 단가 미리 계산해서 거래처 문서에 기재(디바운스)
   if (coll === 'chulgoReqs') { refreshChulgoChatIfOpen(); if (me && !isCustomerRole()) chulgoAlertNew(); }   // 채팅 실시간 갱신 + 새 지시 소리 알림
   if (coll === 'cutPlans') cutPlanListRefresh();   // 최근 커팅플랜 목록만 살짝 갱신 (입력 중인 칸은 안 건드린다)
-  if (me && !_bulkBusy) render();                 // ★ 묶음 저장 중에는 안 그린다 (끝나고 한 번만)
+  if (me && !_bulkBusy) scheduleRender();         // ★ 묶음 저장 중에는 안 그린다 (끝나고 한 번만) · ★ 몰려오면 묶어서 (2026-10-22)
+}
+/* ══════════════════════════════════════════════════════════
+   ★★ 2026-10-22 속도 — 자료가 «몰려올 때» 화면을 한 번만 그린다
+   사용자: *"딜레이 줄이고 가볍게 할 수 있는지 검증해줘"*
+
+   ── 무엇이 느렸나 (실측) ──
+   자료 묶음 25종 중 하나라도 바뀌면 그때마다 지금 화면 «전체»를 다시 그렸다.
+   앱이 켜질 때는 25종이 차례로 도착하니 화면을 25번 통째로 다시 그린다.
+     · 재고 탭  7.8초 (한 번만 그리면 0.3초 — 24배)
+     · 견적서   3.2초 (0.2초 — 19배)
+     · 출고     2.3초 (0.1초 — 27배)
+   (제 컴퓨터 기준 — 휴대폰은 몇 배 더 걸린다)
+
+   ── 어떻게 묶나 ──
+   · 조용하다가 «하나» 오면 → 지금처럼 «바로» 그린다 (평소 쓰는 동안은 예전과 똑같다)
+   · 0.15초 안에 또 오면 → 모아 뒀다가 0.15초 뒤에 «한 번만» 더 그린다
+   ★ 그리는 횟수는 예전보다 절대 늘지 않는다. 첫 화면이 뜨는 시점도 그대로다.
+   ★ 사람이 버튼을 눌러서 그리는 것(render() 직접 호출)은 건드리지 않는다 — 그건 늘 바로 그린다.
+   ══════════════════════════════════════════════════════════ */
+const RENDER_GAP = 150;
+let _rsTimer = 0, _rsLast = 0, _rsPending = false;
+function scheduleRender() {
+  const now = Date.now();
+  if (!_rsTimer && now - _rsLast >= RENDER_GAP) {          // 조용하다가 처음 온 것 → 바로
+    _rsLast = now;
+    render();
+    return;
+  }
+  _rsPending = true;                                         // 몰려오는 중 → 모아 둔다
+  if (_rsTimer) return;
+  _rsTimer = setTimeout(() => {
+    _rsTimer = 0;
+    if (!_rsPending) return;
+    _rsPending = false; _rsLast = Date.now();
+    if (me && !_bulkBusy) render();
+  }, Math.max(0, RENDER_GAP - (now - _rsLast)));
 }
 /* 예정홀딩(및 일부 예정 품목)을 재고 여유가 생길 때 일정 빠른 순으로 자동 확보 — 재진입 방지 */
 let _actPlanRun = false;
@@ -2017,7 +2053,7 @@ function siteItems(s) {
   return (s && s.materialName) ? [{ name: s.materialName, qty: s.qty || '', lot: s.lot || '' }] : [];
 }
 /* 활성 홀딩(예약 중 '홀딩')으로 잡힌 장수 합계 — 자재명 기준(다자재 합산) */
-function stockIxBust() { _heldIx = null; _dmgIx = null; depotBust(); }
+function stockIxBust() { _heldIx = null; _dmgIx = null; _patIx = null; depotBust(); }
 /* ★ 2026-09-07 속도 — 자재 하나의 «홀딩 잡힌 수량»을 물어볼 때마다 홀딩 301건을
    통째로 다시 훑고 있었다. 재고가 182품목이라 홈 화면 한 번에 5만 번.
    자재명별 합계를 한 번만 만들어 두고 쓴다 (자료가 바뀌면 stockIxBust() 가 버린다). */
@@ -2108,15 +2144,31 @@ function patternList(name) {
   });
   return Object.keys(m).map(k => ({ pattern: k, qty: m[k] })).sort((a, b) => b.qty - a.qty);
 }
-/* 패턴별 잔여 재고 (입고 patterns − 출고 pattern) */
-function patternStock(name) {
-  if (!name) return []; const key = _normName(name); const m = {};
-  state.transactions.forEach(t => {
-    if (_normName(t.itemName) !== key) return;
+/* 패턴별 잔여 재고 (입고 patterns − 출고 pattern)
+   ★★ 2026-10-22 속도 — 품목 하나를 물어볼 때마다 입출고 기록 1,609건을 처음부터 다시 훑었다.
+   재고 탭 한 번 그릴 때 185품목 × 1,609건 ≈ 30만 번 이름 비교 · 실측 134ms (재고 탭 시간의 43%).
+   게다가 캐시가 없어서 «이미 계산한 상태»에서도 매번 134ms 를 다시 썼다.
+   이제 «품목 → 패턴별 잔량» 표를 한 번만 만들어 두고 꺼내 쓴다. 계산 규칙은 예전과 똑같다.
+   ★ 입출고 목록이 바뀌면(서버에서 새 목록이 오면 배열 자체가 바뀐다) 알아서 다시 만든다.
+     앱 안에서 입출고 목록을 직접 고치는 곳은 없다 (확인함) — 그래서 낡은 값이 남지 않는다. */
+let _patIx = null, _patIxSrc = null;
+function _patternIndex() {
+  const tx = state.transactions || [];
+  if (_patIx && _patIxSrc === tx) return _patIx;
+  const ix = new Map();
+  tx.forEach(t => {
+    const key = _normName(t.itemName);
+    let m = ix.get(key); if (!m) { m = {}; ix.set(key, m); }
     if (t.type === 'in') { (t.patterns || []).forEach(p => { const nm = (p.pattern || '').trim(); if (!nm || nm === '-') return; m[nm] = (m[nm] || 0) + (+p.jang || 0); }); }
     else if (t.type === 'out') { const nm = (t.pattern || '').trim(); if (!nm || nm === '-') return; m[nm] = (m[nm] || 0) - (+t.jang || 0); }
     else if (t.type === 'adjust') { const nm = (t.pattern || '').trim(); if (!nm || nm === '-') return; m[nm] = (m[nm] || 0) + (+t.jang || 0); }   // 재고 조정(±)
   });
+  _patIx = ix; _patIxSrc = tx;
+  return ix;
+}
+function patternStock(name) {
+  if (!name) return [];
+  const m = _patternIndex().get(_normName(name)) || {};
   return Object.keys(m).map(k => ({ pattern: k, remain: m[k] })).filter(x => x.remain !== 0).sort((a, b) => b.remain - a.remain);
 }
 /* 재고 표 셀용: 패턴별 잔여 요약 */
