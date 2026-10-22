@@ -20140,13 +20140,9 @@ function downloadHoldXls() {
   const body = groups.map((g, gi) => {
     const h = g.h, its = g.its, n = its.length;
     const bg = (gi % 2) ? 'background:#f3f6f4;' : '';
-    const tj = its.reduce((a, it) => a + (+it.jang || 0), 0);
-    const th = its.reduce((a, it) => a + (+it.hebe || 0), 0);
     return its.map((it, i) => {
       const stx = (it.planned && (h.status || '홀딩') === '홀딩') ? '예정' : holdStatusText(h);
-      const head = (i === 0)
-        ? TDR('<b>' + esc(h.vendor || '') + '</b>' + (n > 1 ? '<br><span style="font-size:8.5pt;color:#777">자재 ' + n + '건 · ' + tj + '장 · ' + th.toFixed(2) + '㎡</span>' : ''), bg, n)
-        : '';
+      const head = (i === 0) ? TDR('<b>' + esc(h.vendor || '') + '</b>', bg, n) : '';
       const tail = (i === 0)
         ? TDR(esc(h.useDate || ''), bg, n) + TDR(esc(h.forSiteName || ''), bg, n)
         : '';
@@ -20159,7 +20155,7 @@ function downloadHoldXls() {
   const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>홀딩내역</x:Name><x:WorksheetOptions><x:FreezePanes/><x:SplitHorizontal>3</x:SplitHorizontal><x:TopRowBottomPane>3</x:TopRowBottomPane></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body>
 <table style="border-collapse:collapse;font-family:'맑은 고딕','Malgun Gothic',sans-serif;font-size:10.5pt">
 <tr><td colspan="10" style="font-size:16pt;font-weight:bold;color:#0F6E56;padding:8px 4px 2px">다우세라믹앤석재 · 자재 홀딩 내역</td></tr>
-<tr><td colspan="10" style="font-size:9pt;color:#777;padding:0 4px 10px">범위 ${scope}  ·  생성일 ${todayStr()}  ·  홀딩 ${groups.length}건 · 자재 ${rows.length}건</td></tr>
+<tr><td colspan="10" style="font-size:9pt;color:#777;padding:0 4px 10px">범위 ${scope}  ·  생성일 ${todayStr()}  ·  총 ${rows.length}건</td></tr>
 <tr>${TH('업체', 130)}${TH('자재명', 160)}${TH('장수', 60)}${TH('헤베(㎡)', 80)}${TH('롯트', 110)}${TH('패턴', 100)}${TH('사용예정일', 100)}${TH('현장', 130)}${TH('상태', 80)}${TH('비고', 160)}</tr>
 ${body}
 <tr><td colspan="2" style="${sumStyle};text-align:right">합계</td><td style="${sumStyle};text-align:right">${tj}</td><td style="${sumStyle};text-align:right">${th.toFixed(2)}</td><td colspan="6" style="${sumStyle}"></td></tr>
@@ -20168,7 +20164,7 @@ ${body}
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
   a.download = '홀딩내역_' + todayStr() + '.xls'; document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
-  toast('홀딩 엑셀 다운로드 (홀딩 ' + groups.length + '건 · 자재 ' + rows.length + '건)');
+  toast('홀딩 엑셀 다운로드 (' + rows.length + '건)');
 }
 /* 홀딩 목록 → 한눈에 보는 표(내역). 출고내역처럼 따로 스크롤 */
 /* ══════════════════════════════════════════════════════════
@@ -20177,10 +20173,12 @@ ${body}
 
    예전에는 자재 개수만큼 줄이 쪼개지고 예정일·거래처·현장까지 매 줄에 다시 찍혀서
    «자재 3개짜리 홀딩 하나»가 «서로 다른 홀딩 3건»처럼 보였다.
-   실측: 홀딩 470건 중 87건이 자재 2개 이상 (최대 10개). 지금 화면 55건이 69줄로 펼쳐져 있었다.
+   실측: 홀딩 470건 중 87건이 자재 2개 이상 (최대 10개).
 
-   이제 ① 예정일·거래처·현장·비고 칸을 엑셀처럼 위아래로 합치고(rowspan)
-        ② 홀딩 단위로 바탕색을 번갈아 칠하고 ③ 홀딩이 바뀌는 자리에 굵은 선을 넣는다.
+   ★ 고치는 것은 «칸 합치기» 하나뿐이다 — 예정일·거래처·현장·비고 칸을
+     자재 수만큼 세로로 합친다(rowspan).
+   ★ 색·선·글씨 같은 «모양»은 예전 그대로 둔다 (2026-10-22 되돌림).
+     자재가 하나인 홀딩(470건 중 383건)은 예전과 글자 하나 안 달라진다.
    ★ 자재별 줄은 그대로 남긴다 — 같은 홀딩 안에서도 자재마다 «예정/홀딩» 상태가
      다를 수 있기 때문이다 (예: 신성그룹 10/30 — 한 자재는 홀딩, 다른 자재는 예정).
    ══════════════════════════════════════════════════════════ */
@@ -20189,37 +20187,30 @@ function holdListTableHtml(list) {
   if (!groups.length) return `<div class="empty"><i class="ti ti-lock-off"></i>${(filters.holdSearch || '').trim() ? '검색 결과가 없습니다' : '홀딩이 없습니다'}</div>`;
   const stColor = st => st === '예정' ? 'var(--amber-t)' : (st === '출고완료' ? 'var(--gd)' : (st === '해제' ? 'var(--t3)' : 'var(--blue)'));
   let body = '';
-  groups.forEach((g, gi) => {
+  groups.forEach(g => {
     const h = g.h, its = g.its, n = its.length;
-    const bg = (gi % 2) ? 'background:var(--soft);' : '';
+    const rs = (n > 1) ? ` rowspan="${n}"` : '';        // 자재가 하나면 예전과 똑같은 칸
     const nt = String(h.note || '').trim();
-    const tj = its.reduce((a, it) => a + (+it.jang || 0), 0);
-    const th = its.reduce((a, it) => a + (+it.hebe || 0), 0);
     its.forEach((it, i) => {
       const st = (it.planned && (h.status || '홀딩') === '홀딩') ? '예정' : holdStatusText(h);   // 자재별 예정 반영
-      const top = (i === 0) ? 'border-top:2px solid var(--bd2);' : '';
-      const base = bg + top;
-      /* 홀딩 한 건에 붙는 칸 — 첫 줄에서 자재 수만큼 세로로 합친다 */
-      const merged = (i === 0) ? `
-      <td rowspan="${n}" style="${base}vertical-align:top">${esc(h.useDate || '-')}</td>
-      <td rowspan="${n}" style="${base}vertical-align:top"><b>${esc(h.vendor || '-')}</b>${n > 1 ? `<div style="font-size:11px;color:var(--t3);margin-top:2px;font-weight:500">자재 ${n}건 · ${tj}장 · ${th.toFixed(1)}㎡</div>` : ''}</td>` : '';
-      const mergedTail = (i === 0) ? `
-      <td rowspan="${n}" style="${base}vertical-align:top">${esc(h.forSiteName || '-')}</td>` : '';
-      const noteTd = (i === 0) ? `
-      <td rowspan="${n}" style="${base}vertical-align:top;font-size:12px;color:var(--t2)">${nt
+      const head = (i === 0) ? `
+      <td${rs}>${esc(h.useDate || '-')}</td>
+      <td${rs}><b>${esc(h.vendor || '-')}</b></td>` : '';
+      const site = (i === 0) ? `
+      <td${rs}>${esc(h.forSiteName || '-')}</td>` : '';
+      const note = (i === 0) ? `
+      <td${rs} style="font-size:12px;color:var(--t2)">${nt
         ? `<span title="${esc(nt)}" style="display:block;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(nt)}</span>`
         : '<span style="color:var(--t3)">—</span>'}</td>` : '';
-      body += `<tr onclick="openHoldDetail('${h.id}')" style="cursor:pointer">${merged}
-      <td style="${base}word-break:keep-all">${esc(it.materialName || '-')}</td>
-      <td style="${base}text-align:right">${(+it.jang || 0)}</td>
-      <td style="${base}text-align:right">${(+it.hebe || 0).toFixed(1)}</td>${mergedTail}
-      <td style="${base}color:${stColor(st)};font-weight:700">${esc(st)}</td>${noteTd}
+      body += `<tr onclick="openHoldDetail('${h.id}')" style="cursor:pointer">${head}
+      <td style="word-break:keep-all">${esc(it.materialName || '-')}</td>
+      <td style="text-align:right">${(+it.jang || 0)}</td>
+      <td style="text-align:right">${(+it.hebe || 0).toFixed(1)}</td>${site}
+      <td style="color:${stColor(st)};font-weight:700">${esc(st)}</td>${note}
     </tr>`;
     });
   });
-  const _multi = groups.filter(g => g.its.length > 1).length;
-  return `<div style="font-size:11.5px;color:var(--t3);margin-bottom:5px">홀딩 <b>${groups.length}건</b>${_multi ? ` <span style="color:var(--t2)">· 자재가 여러 개인 홀딩 ${_multi}건은 칸을 합쳐 한 덩어리로 보여 줍니다</span>` : ''}</div>
-  <div class="tbl-wrap" id="holdlist-wrap" data-keepscroll style="max-height:calc(100vh - 320px);overflow:auto">
+  return `<div class="tbl-wrap" id="holdlist-wrap" data-keepscroll style="max-height:calc(100vh - 320px);overflow:auto">
     <table class="tbl" style="min-width:920px"><thead><tr><th>예정일</th><th>거래처</th><th>자재</th><th>장수</th><th>헤베</th><th>현장</th><th>상태</th><th>비고</th></tr></thead><tbody>${body}</tbody></table>
   </div>`;
 }
