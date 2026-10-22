@@ -14533,6 +14533,22 @@ async function siteLinkQuote(qid, on) {
   } catch (e) { toast('실패: ' + ((e && e.message) || e)); }
 }
 
+/* ══════════════════════════════════════════════════════════
+   ★★ 2026-10-22 속도 — 시공비 정산 표를 가볍게
+   사용자: *"딜레이 줄이고 가볍게"* → *"진행"* → «정산완료만 접기» 선택
+
+   이 표는 기간 구분 없이 지금까지의 시공 현장을 «전부» 펼쳤다 (155건 · 화면 글자 32만 자 —
+   정산 › 원가 탭이 무거운 이유의 절반). 그냥 월별로 자르면 «지난달 이전 미정산 35건»이
+   화면에서 사라지므로 그렇게 하지 않는다.
+
+   · 미정산 → 몇 월 것이든 «항상» 펼친다 (할 일은 하나도 안 숨긴다)
+   · 정산완료 · 업체 직불 → 팀별로 접어 두고 「정산완료·직불 n건 보기」 로 펼친다
+     ★ 접어 둔 줄은 «아예 그리지 않는다» — 그래야 실제로 가벼워진다.
+     ★ 펼치면 예전과 «똑같은» 표가 된다 (순서·모양 그대로).
+   · 위쪽 합계 숫자는 전과 똑같이 «전체» 기준이다.
+   ══════════════════════════════════════════════════════════ */
+let _crewDoneOpen = {};
+function crewToggleDone(t) { t = String(t || ''); _crewDoneOpen[t] = !_crewDoneOpen[t]; renderSettle(); }
 function crewSettleCard() {
   const sites = (state.sites || []).filter(s => (s.team || '').trim() && !isSelfTeam(s.team));
   // 업체 직불은 '우리가 주고받는 돈'이 아니라 따로 뺀다
@@ -14555,6 +14571,10 @@ function crewSettleCard() {
     let list = byTeam[t].slice().sort((a, b) => (b.constructDate || '').localeCompare(a.constructDate || ''));
     if (onlyUnpaid) list = list.filter(s => !s.crewPaid);
     if (!list.length) return '';
+    /* ★ 정산완료·직불은 접어 둔다 — 펼쳤을 때만 그린다 (펼치면 예전 표 그대로) */
+    const _doneN = list.filter(s => s.crewPaid || s.crewDirect).length;
+    const _open = !!_crewDoneOpen[t];
+    if (!_open) list = list.filter(s => !s.crewPaid && !s.crewDirect);
     const tUnpaid = byTeam[t].filter(s => !s.crewPaid && !s.crewDirect).reduce((a, s) => a + (+s.crewFee || 0), 0);
     const tPaid = byTeam[t].filter(s => s.crewPaid && !s.crewDirect).reduce((a, s) => a + (+s.crewFee || 0), 0);
     const tDirect = byTeam[t].filter(s => s.crewDirect).reduce((a, s) => a + (+s.crewFee || 0), 0);
@@ -14596,7 +14616,8 @@ function crewSettleCard() {
     return `<div style="margin-top:10px"><div style="display:flex;align-items:center;justify-content:space-between;background:var(--soft);border-radius:8px;padding:6px 10px;margin-bottom:4px">
         <b style="font-size:13px">${esc(t)}${isSelfTeam(t) ? ' <span style="font-size:10px;color:var(--t3);font-weight:500">(자체)</span>' : ''}</b>
         <span style="font-size:11.5px;color:var(--t3)">매출 <b style="color:var(--gd)">${fmtWon(tSale)}</b> · 미정산 <b style="color:#c0341d">${fmtWon(tUnpaid)}</b> · 완료 <b style="color:#0f766e">${fmtWon(tPaid)}</b>${tDirect ? ` · 직불 <b style="color:#5847b8">${fmtWon(tDirect)}</b>` : ''}</span></div>
-      <table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="color:var(--t2);font-size:11px"><th style="padding:4px 8px;text-align:left">시공일</th><th style="padding:4px 8px;text-align:left">현장</th><th style="padding:4px 8px;text-align:left">담당자</th><th style="padding:4px 8px;text-align:right">시공 매출</th><th style="padding:4px 8px;text-align:right">시공비</th><th style="padding:4px 8px;text-align:right">남는 금액</th><th style="padding:4px 8px;text-align:center">정산</th><th style="padding:4px 8px;text-align:center">정산일</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      ${list.length ? `<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="color:var(--t2);font-size:11px"><th style="padding:4px 8px;text-align:left">시공일</th><th style="padding:4px 8px;text-align:left">현장</th><th style="padding:4px 8px;text-align:left">담당자</th><th style="padding:4px 8px;text-align:right">시공 매출</th><th style="padding:4px 8px;text-align:right">시공비</th><th style="padding:4px 8px;text-align:right">남는 금액</th><th style="padding:4px 8px;text-align:center">정산</th><th style="padding:4px 8px;text-align:center">정산일</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
+      ${_doneN ? `<button class="btn btn-sm btn-ghost" style="margin-top:4px;font-size:11.5px;color:var(--t3)" data-t="${esc(t)}" onclick="crewToggleDone(this.dataset.t)"><i class="ti ti-chevron-${_open ? 'up' : 'down'}"></i>${_open ? '정산완료·직불 접기' : '정산완료·직불 ' + _doneN + '건 보기'}</button>` : ''}</div>`;
   }).join('');
   return `<div class="card" style="margin-bottom:12px;padding:13px 14px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:6px">
