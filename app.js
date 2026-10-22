@@ -21108,6 +21108,7 @@ function renderChulgo() {
       <button type="button" class="${side === 'warehouse' ? 'on' : ''}" onclick="chulgoGoSide('warehouse')"><i class="ti ti-building-warehouse" style="font-size:14px"></i> 창고${newN ? ` <b>${newN}</b>` : ''}</button>
     </div>
     <button class="btn btn-sm btn-block" style="margin-bottom:10px;${chulgoPushEnabled() ? 'background:var(--gl2);border-color:var(--gbd);color:var(--gd)' : ''}" onclick="toggleChulgoPush()"><i class="ti ti-device-mobile"></i> 📱 휴대폰 출고 지시 알림 <b>${chulgoPushEnabled() ? '켜짐' : '꺼짐'}</b> · 눌러서 ${chulgoPushEnabled() ? '끄기' : '켜기'} <span style="font-weight:500;color:var(--t3)">(원하는 사람만 · 앱 꺼져도 수신)</span></button>
+    ${chulgoUnreadCardHtml()}
     ${side === 'office' ? chulgoOfficeSection() : chulgoWarehouseSection()}`;
   requestAnimationFrame(() => window.scrollTo(0, _sy));   // ★ 보던 자리로 되돌림
   dspSyncSched();  // 출고예정일 안내 한 줄 (체크한 건이 있으면 그 예정일로)
@@ -21428,6 +21429,68 @@ async function cancelDispatch(dispatchId) {
 let _chulgoChatOpen = '';
 function chulgoMineSide() { return chulgoSide() === 'warehouse' ? 'wh' : 'office'; }
 function chulgoUnread(r) { const mine = chulgoMineSide(); const other = mine === 'wh' ? 'office' : 'wh'; const rt = mine === 'wh' ? (+r.readWh || 0) : (+r.readOffice || 0); return (r.chats || []).filter(m => m.side === other && (+m.at || 0) > rt).length; }
+/* ══════════════════════════════════════════════════════════
+   ★★ 2026-10-22 — 「안 읽은 채팅」 모아 보기 · 한 번에 읽음 처리
+   사용자: *"출고관리 빨간색 배지 떠있는 거 이미 확인 된 것들 중에 못지우는 게 있어서
+            지울 수 있는 버튼 ? / 아니면 확인 안된 내용에 대해서 따로 모아볼 수 있는지"*
+
+   ── 왜 안 지워졌나 (실측) ──
+   출고관리 탭의 빨간 숫자는 «안 읽은 채팅 수»다. 창고 쪽에서 보면 11건이 떠 있었는데,
+   그 11건이 **전부 «완료»된 출고 건의 채팅**이었다 (7/29 ~ 9/29, 대부분 한 번도 안 읽음).
+   창고 화면은 완료된 건을 목록에서 빼기 때문에(`g.status !== '완료'`),
+   그 채팅을 열 방법이 없어서 빨간 숫자가 영영 남았다.
+   예) 7/29 동양석재 «베톤 1장 같이 나갈게요 !», 8/10 록스타일 «눕혀서 출고에요»
+
+   ── 고친 것 ──
+   완료됐든 아니든 «안 읽은 채팅»을 한 곳에 모아 보여 주고, 눌러서 바로 열거나
+   «전부 읽음»으로 한 번에 지울 수 있게 한다. ★ 채팅 내용은 지우지 않는다 —
+   «읽음» 표시만 찍는다 (나중에 완료 달력에서 다시 열어 볼 수 있다).
+   ══════════════════════════════════════════════════════════ */
+function chulgoUnreadList() {
+  const lastAt = r => { const c = (r.chats || []); return +(c[c.length - 1] || {}).at || 0; };
+  return (state.chulgoReqs || [])
+    .filter(r => chulgoUnread(r) > 0)
+    .sort((a, b) => lastAt(b) - lastAt(a));
+}
+function chulgoUnreadCardHtml() {
+  const list = chulgoUnreadList();
+  if (!list.length) return '';
+  const row = r => {
+    const c = (r.chats || []); const last = c[c.length - 1] || {};
+    const n = chulgoUnread(r);
+    const when = last.at ? new Date(+last.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    const st = r.status || '';
+    return `<div onclick="openChulgoChat('${r.id}')" style="cursor:pointer;padding:9px 2px;border-top:0.5px solid var(--bd)">
+      <div style="display:flex;gap:7px;align-items:baseline;flex-wrap:wrap">
+        <b style="font-size:13px">${esc(r.client || r.docNo || '-')}</b>
+        <span style="font-size:11px;color:var(--t3)">${esc(r.docNo || '')}${st ? ' · ' + esc(st) : ''}</span>
+        <span style="margin-left:auto;font-size:11px;color:var(--t3)">${esc(when)}</span>
+        <span style="background:#e23b3b;color:#fff;border-radius:9px;padding:0 6px;font-size:10px;font-weight:700">${n}</span></div>
+      <div style="font-size:12.5px;color:var(--t2);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(last.name || '')}${last.name ? ' : ' : ''}${esc(last.text || '')}</div>
+    </div>`;
+  };
+  return `<div class="card" style="padding:12px 14px;margin-bottom:12px;border:1.5px solid #f3c6c0;background:#fdf7f6">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px">
+      <div style="font-weight:700;font-size:14px;color:#c0341d"><i class="ti ti-message-dots"></i> 안 읽은 채팅 <span style="background:#e23b3b;color:#fff;border-radius:9px;padding:0 7px;font-size:11px">${list.length}</span></div>
+      <button class="btn btn-sm" style="margin-left:auto" onclick="chulgoReadAll()"><i class="ti ti-checks"></i>전부 읽음</button>
+    </div>
+    <div style="font-size:11.5px;color:var(--t3);margin-bottom:2px">완료된 건의 채팅도 여기 모입니다 — 눌러서 열면 그 건의 채팅이 뜹니다.</div>
+    <div data-keepscroll style="max-height:34vh;overflow:auto">${list.map(row).join('')}</div>
+  </div>`;
+}
+async function chulgoReadAll() {
+  const list = chulgoUnreadList();
+  if (!list.length) { toast('안 읽은 채팅이 없습니다'); return; }
+  if (!confirm('안 읽은 채팅 ' + list.length + '건을 모두 «읽음»으로 표시할까요?\n\n채팅 내용은 지워지지 않습니다 — 빨간 숫자만 사라집니다.')) return;
+  const mine = chulgoMineSide();
+  const now = Date.now();
+  try {
+    await Store.bulk('chulgoReqs', list.map(r => ({ id: r.id, update: (mine === 'wh') ? { readWh: now } : { readOffice: now } })));
+    toast(list.length + '건을 읽음으로 표시했습니다');
+    try { updateChatBadges(); } catch (e) { }
+    renderChulgo();
+  } catch (e) { toast('실패: ' + ((e && e.message) || e)); }
+}
 function chulgoUnreadTotal() { try { return (state.chulgoReqs || []).reduce((a, r) => a + chulgoUnread(r), 0); } catch (e) { return 0; } }
 function updateChatBadges() {
   let n = 0; try { n = chulgoUnreadTotal(); } catch (e) { }
