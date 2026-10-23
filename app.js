@@ -3230,11 +3230,12 @@ function siteTableHtml(list) {
   if (!rows.length) return `<div class="empty"><i class="ti ti-building"></i>해당하는 현장이 없습니다</div>`;
   const body = rows.map(s => {
     const iss = siteOpenIssues(s.id).length;
+    const issAll = iss ? 0 : siteIssues(s.id).length;
     const done = (s.stage || '') === '완료';
     return `<tr style="cursor:pointer${done ? ';opacity:.62' : ''}" onclick="openSiteDetail('${s.id}')">
       <td style="white-space:nowrap"><b>${esc(_shortDate(s.constructDate) || '미정')}</b></td>
       <td style="white-space:nowrap">${pill(s.stage || '접수')}</td>
-      <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(siteTitle(s))}"><b>${iss ? `<span title="미해결 이슈 ${iss}건" style="color:var(--red-t)">●</span> ` : ''}${esc(siteTitle(s))}</b></td>
+      <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(siteTitle(s))}"><b>${iss ? `<span title="미해결 이슈 ${iss}건" style="color:var(--red-t)">●</span> ` : (issAll ? `<span title="이슈 ${issAll}건 · 모두 처리완료" style="color:#0F6E56"><i class="ti ti-circle-check"></i></span> ` : '')}${esc(siteTitle(s))}</b></td>
       <td style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(s.client || '')}">${esc(s.client || '-')}</td>
       <td style="white-space:nowrap">${esc(s.manager || '-')}</td>
       <td style="white-space:nowrap">${esc(s.team || '-')}</td>
@@ -3393,7 +3394,10 @@ function siteCard(s) {
       <div class="db ${dC != null && dC >= 0 && dC <= 3 ? 'soon' : ''}"><div class="k">시공일</div><div class="v">${s.constructDate || '미정'}${dC != null && dC >= 0 && dC <= 7 && s.stage !== '완료' ? ` <small style="font-weight:600;color:var(--amber-t)">D-${dC}</small>` : ''}</div></div>
     </div>
     <div class="tline">${tnodes}</div>
-    ${openIss.length ? `<div style="margin-top:9px;font-size:12.5px;color:#b42318;background:#fef3f2;border:1px solid #fecdca;border-radius:9px;padding:8px 10px;line-height:1.5"><b><i class="ti ti-alert-triangle"></i> 미해결 이슈</b> · ${esc(openIss[0].reason)}${openIss.length > 1 ? ` <span style="color:var(--t3)">외 ${openIss.length - 1}건</span>` : ''}</div>` : ''}
+    ${(() => { const allIss = siteIssues(s.id); if (!allIss.length) return ''; const nDone = allIss.length - openIss.length;
+      if (openIss.length) return `<div style="margin-top:9px;font-size:12.5px;color:#b42318;background:#fef3f2;border:1px solid #fecdca;border-radius:9px;padding:8px 10px;line-height:1.5"><b><i class="ti ti-alert-triangle"></i> 미해결 이슈</b> · ${esc(openIss[0].reason)}${openIss.length > 1 ? ` <span style="color:var(--t3)">외 ${openIss.length - 1}건</span>` : ''}${nDone ? ` <span style="color:#0F6E56;white-space:nowrap">· <i class="ti ti-circle-check"></i> 처리완료 ${nDone}건</span>` : ''}</div>`;
+      const last = allIss.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+      return `<div style="margin-top:9px;font-size:12.5px;color:var(--t2);background:#f3faf6;border:1px solid #d0e8dc;border-radius:9px;padding:8px 10px;line-height:1.5"><b><i class="ti ti-alert-triangle"></i> 이슈</b> · ${esc(last.reason)}${allIss.length > 1 ? ` <span style="color:var(--t3)">외 ${allIss.length - 1}건</span>` : ''} <span style="color:#0F6E56;font-weight:700;white-space:nowrap"><i class="ti ti-circle-check"></i> 처리완료</span></div>`; })()}
   </div>`;
 }
 
