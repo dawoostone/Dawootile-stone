@@ -7297,9 +7297,9 @@ function quoteRegister(id) {
   } else if (hasGagong) {
     // ★ 견적 화면에 그대로 머문 채 현장 등록창만 띄운다 (예전엔 현장 탭으로 넘어갔다)
     //   자재도 같이 넘겨서 현장 저장 → 홀딩까지 한 번에 이어지게 한다
-    // 현장명은 견적의 현장명 → 현장주소 순으로 채운다. 업체명을 현장명으로 쓰면 동명 현장이 쌓인다
-    const _sn = [q.siteName, q.siteAddr].map(v => String(v == null ? '' : v).trim()).find(Boolean) || '';
-    openSiteForm(null, { name: _sn, client: q.client, address: q.siteAddr, quoteId: id, items: items });
+    // ★ 2026-10-23 사용자: "현장명에 현장 주소 자동으로 채우지마 그냥 빈칸인 채로 놔둬"
+    //   현장명은 비워 둔다 → 저장할 때 「업체명 - 자재명」이 자동으로 들어간다. (주소는 주소 칸에만)
+    openSiteForm(null, { name: '', client: q.client, address: q.siteAddr, quoteId: id, items: items });
     toast('가공 포함 · 현장 등록 후 자재는 자동으로 홀딩됩니다');
   } else {
     openShipForm({ targetName: q.client, items: items, quoteId: id, siteAddr: (q.siteAddr || '').trim() });
@@ -7453,8 +7453,8 @@ function quoteToOrder(id) {
   } else if ((q.siteAddr || '').trim()) {
     /* ★ 예전에는 업체명을 현장명으로 밀어넣었다 — 동명 현장이 쌓인다.
        견적의 현장명·주소를 쓰고, 둘 다 없으면 비워둔다(「업체명 - 자재명」이 자동으로 들어간다). */
-    const _sn2 = [q.siteName, q.siteAddr].map(v => String(v == null ? '' : v).trim()).find(Boolean) || '';
-    go('sites'); setTimeout(() => { try { openSiteForm(null, { name: _sn2, address: q.siteAddr, quoteId: id }); } catch (e) { } }, 90);
+    // ★ 2026-10-23 현장명은 비워 둔다 (주소를 현장명에 넣지 않는다) → 「업체명 - 자재명」 자동
+    go('sites'); setTimeout(() => { try { openSiteForm(null, { name: '', address: q.siteAddr, quoteId: id }); } catch (e) { } }, 90);
     toast('확정 · 현장 등록으로 이동');
   } else {
     openShipForm({ targetName: q.client, items: items, quoteId: id, siteAddr: (q.siteAddr || '').trim() });
