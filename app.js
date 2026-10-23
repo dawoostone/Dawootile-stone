@@ -5408,7 +5408,7 @@ function bcSpecWrite(row) {
   const v = c => String(((row.querySelector('.' + c) || {}).value) || '').replace(/[^\d]/g, '');
   const L = v('bc-l'), W = v('bc-w'), H = v('bc-h');
   const sp = row.querySelector('.q-spec'); if (!sp || !L || !W) return;
-  let rest = String(sp.value || '').replace(/^\s*\d{2,5}\s*[*xX×]\s*\d{2,5}(?:\s*[*xX×]\s*\d{1,5})?/, '');
+  let rest = String(sp.value || '').replace(/^\s*\d{1,5}\s*[*xX×]\s*\d{1,5}(?:\s*[*xX×]\s*\d{1,5})?/, '');   // 치는 중인 「1410*5」 도 숫자 부분으로 본다
   if (rest && !/^\s/.test(rest)) rest = ' ' + rest;
   sp.value = L + '*' + W + (H ? '*' + H : '') + rest;
 }
