@@ -5476,13 +5476,15 @@ function basinCalcRow(row, apply) {
   /* 별도(예외 단가) 거래처는 업체 구분을 사람이 직접 골랐을 때만 단가 칸에 넣는다 — 거래처 전용 단가를 덮어쓰지 않게 */
   const bizOk = !!bcBizFromCtype() || !!(bizSel && bizSel.dataset.touched === '1');
   const pEl = q('q-price');
-  if (apply && total != null && pEl && bizOk && _numv(pEl.value) !== total) { pEl.value = total; try { quoteRecalc(); } catch (e) { } }
+  if (apply && total != null && pEl && bizOk) { row.dataset.bcAuto = String(total); if (_numv(pEl.value) !== total) { pEl.value = total; try { quoteRecalc(); } catch (e) { } } }
+  /* 제작 불가·별도 견적이 되면, 계산기가 넣었던 단가는 지운다 (사람이 직접 넣은 단가는 그대로) */
+  if (apply && total == null && pEl && row.dataset.bcAuto && _numv(pEl.value) === +row.dataset.bcAuto) { pEl.value = ''; row.dataset.bcAuto = ''; try { quoteRecalc(); } catch (e) { } }
   const wEl = q('bc-why');
   if (wEl) {
     const cur = pEl ? _numv(pEl.value) : 0;
     const diff = (total != null && cur && cur !== total) ? ` <span style="color:#a2560f;font-weight:600">· 입력 단가 ${fmtWon(cur)}원 (계산과 다름)</span>` : '';
     const ask = (apply && total != null && !bizOk) ? ' <span style="color:#a2560f;font-weight:600">· 업체 구분을 골라야 단가 칸에 들어갑니다</span>' : '';
-    wEl.innerHTML = esc(why) + diff + ask;
+    wEl.innerHTML = (total == null && note && note !== '기장을 넣어 주세요' ? `<span style="color:#c0341d;font-weight:700"><i class="ti ti-alert-triangle"></i> ${esc(note)} — 단가는 직접 넣어 주세요</span>` : esc(why)) + diff + ask;
   }
 }
 function basinApply(btn) {
