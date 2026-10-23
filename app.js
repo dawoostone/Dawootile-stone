@@ -5318,75 +5318,172 @@ function bcBizFromCtype() {
 }
 /* 견적의 단가 유형이 바뀌면(=거래처를 바꿔서 유형이 따라 바뀐 경우 포함)
    직원이 아직 손대지 않은 세면대 계산기의 업체 구분을 같이 맞춰준다. */
-function bcSyncAllBiz() {
+function bcSyncAllBiz(apply) {
   /* 자동으로 정할 수 없는 유형(별도 등)은 기본값 '소비자'로 되돌린다.
      ★ 행 HTML 은 새 폼이 화면에 붙기 전에 만들어져서 '이전 폼'의 단가 유형을 읽는다.
        그래서 여기서 반드시 다시 정해줘야 앞 견적의 값이 남지 않는다. */
   const want = bcBizFromCtype() || 'consumer';
   document.querySelectorAll('.q-row').forEach(row => {
     const sel = row.querySelector('.bc-biz'); if (!sel) return;
-    if (sel.dataset.touched === '1') return;        // 직접 고른 건 건드리지 않는다
-    if (sel.value !== want) sel.value = want;
-    try { basinCalcRow(row); } catch (e) { }
+    if (sel.dataset.touched !== '1' && sel.value !== want) sel.value = want;   // 직접 고른 건 건드리지 않는다
+    try { basinCalcRow(row, !!apply); } catch (e) { }
   });
 }
 /* 사용자가 업체 구분을 직접 바꾸면 그 뒤로는 자동으로 안 건드린다 */
 function bcBizTouched(sel) {
   if (sel) sel.dataset.touched = '1';
-  try { basinCalcRow(sel.closest('.q-row')); } catch (e) { }
+  try { basinCalcRow(sel.closest('.q-row'), true); } catch (e) { }
 }
-function basinCalcHtml(isBasin) {
-  const sizeOpts = BC_SIZES.map((x, i) => `<option value="${i}">${esc(x[0])}</option>`).join('');
+/* ══════════════════════════════════════════════════════════
+   ★★ 세면대 단가 — 기장·폭·높이만 넣으면 알아서 계산 (2026-10-23)
+   사용자: "계산기를 직접 눌러보게 하지 말고 자재 선택하고 사이즈를
+            기장 폭 높이 각각 적으면 알아서 계산되게 해줘"
+   계산 공식·단가표는 휴대폰 계산기(dawoo-basin-price)와 «똑같다».
+   바뀐 건 «구간을 사람이 고르던 것»을 숫자에서 자동으로 고르는 것뿐.
+     · 기장 → 가장 가까운 구간 (딱 중간이면 큰 쪽). 800 이하 = 800, 2000 이상 = 별도 견적
+     · 높이 → 200까지 기본, 201~250 +3만, 251~300 +6만 … 451~500 +18만, 500 초과 = 별도 견적
+              (상판만은 체크 하나 → -3만)
+     · 폭   → 단가에 반영 안 함 (규격 칸에만 찍힘)
+     · 자재 → 석종으로 자동: 팬텀 화이트 / 알래스카·아스펜 / 그 외 = 15티 열성형
+     · 라운드 세면대 → 기장 700 이하 600형, 넘으면 800형
+   ★ 단가 칸에 자동으로 넣는 건 «사람이 이 칸을 만졌을 때»만.
+     저장된 견적을 열기만 했을 땐 단가를 건드리지 않고, 다르면 «계산과 다름»만 알려준다.
+   ══════════════════════════════════════════════════════════ */
+function bcParseSpec(s) {
+  const m = String(s || '').match(/(\d{2,5})\s*[*xX×]\s*(\d{2,5})(?:\s*[*xX×]\s*(\d{1,5}))?/);
+  return m ? { L: m[1], W: m[2], H: m[3] || '' } : { L: '', W: '', H: '' };
+}
+function bcTierIdx(L) {
+  const last = BC_SIZES.length - 1;                 // 마지막 = 2000 이상 (별도 견적)
+  if (L >= 2000) return last;
+  let best = 0, bd = Infinity;
+  for (let i = 0; i < last; i++) { const d = Math.abs(BC_SIZES[i][4] - L); if (d <= bd) { best = i; bd = d; } }   // 같으면 큰 쪽
+  return best;
+}
+function bcSkirtOf(H, topOnly) {
+  if (topOnly) return -30000;
+  if (!(H > 0) || H <= 200) return 0;
+  if (H > 500) return null;
+  return Math.ceil((H - 200) / 50) * 30000;
+}
+function bcMatOf(stone) {
+  const s = String(stone || '').replace(/\s+/g, '');
+  if (s.indexOf('팬텀화이트') >= 0) return 'front';
+  if (s.indexOf('알래스카') >= 0 || s.indexOf('아스펜') >= 0) return 'back';
+  return 'base';
+}
+const BC_MAT_NAME = { base: '15티 열성형', front: '팬텀 화이트', back: '알래스카·아스펜' };
+function basinCalcHtml(isBasin, d) {
   const inp = 'font-size:13px;padding:7px 8px;border:1.5px solid var(--bd2);border-radius:8px;background:#fff';
   const _bcAuto = bcBizFromCtype();                       // 견적 단가 유형에서 자동으로 고른 업체 구분
   const _bcCt = (el('q-ctype') && el('q-ctype').value) || '';
+  const sz = bcParseSpec(d && d.spec);
+  const _round = String((d && d.name) || '').indexOf('라운드') >= 0;
+  const num = (cls, ph, v) => `<label style="display:block;min-width:0"><span style="font-size:10.5px;color:var(--t3)">${ph}</span><input class="${cls}" inputmode="numeric" placeholder="${ph}(mm)" value="${esc(v)}" oninput="bcInput(this)" style="width:100%;box-sizing:border-box;${inp}"></label>`;
   return `<div class="q-bcalc" style="display:${isBasin ? 'block' : 'none'};margin-bottom:8px;border:1.5px solid #f0c060;background:#fffaf0;border-radius:10px;padding:9px 10px">
-    <div style="font-size:11.5px;font-weight:700;color:#8a5a00;margin-bottom:7px"><i class="ti ti-calculator"></i> 세면대 단가 자동계산 <span style="font-weight:500;color:var(--t3)">· 직원용 (적용 후 수동 수정 가능)</span></div>
+    <div style="font-size:11.5px;font-weight:700;color:#8a5a00;margin-bottom:7px"><i class="ti ti-calculator"></i> 세면대 단가 자동계산 <span style="font-weight:500;color:var(--t3)">· 기장·폭·높이를 넣으면 단가가 자동으로 들어갑니다</span></div>
     <div class="bc-auto-note" style="font-size:11px;margin:-3px 0 7px">${_bcAuto
       ? `<span style="color:#0f766e"><i class="ti ti-wand"></i> 거래처 유형 <b>${esc(_bcCt)}</b> 에 맞춰 업체 구분을 자동으로 골랐습니다 (직접 바꿔도 됩니다)</span>`
       : (_bcCt ? `<span style="color:#a2560f"><i class="ti ti-alert-circle"></i> 거래처 유형 <b>${esc(_bcCt)}</b> 는 자동으로 정할 수 없습니다 — 업체 구분을 직접 골라주세요</span>` : '')}</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-      <select class="bc-cat" onchange="basinCalcRow(this.closest('.q-row'))" style="${inp}"><option value="mono">모놀리스(주문제작)</option><option value="natl">국내제작(조건별)</option><option value="std">규격 600×470×200</option><option value="round">라운드형</option></select>
+      <select class="bc-cat" onchange="bcInput(this)" style="${inp}"><option value="mono">모놀리스(주문제작)</option><option value="natl">국내제작(조건별)</option><option value="std">규격 600×470×200</option><option value="round"${_round ? ' selected' : ''}>라운드형</option></select>
       <select class="bc-biz" onchange="bcBizTouched(this)" style="${inp}"><option value="dist"${_bcAuto === 'dist' ? ' selected' : ''}>유통 업체</option><option value="interior"${_bcAuto === 'interior' ? ' selected' : ''}>인테리어 업체</option><option value="consumer"${_bcAuto && _bcAuto !== 'consumer' ? '' : ' selected'}>소비자</option></select>
-      <select class="bc-size bc-mono" onchange="basinCalcRow(this.closest('.q-row'))" style="${inp}">${sizeOpts}</select>
-      <select class="bc-mat bc-mono" onchange="basinCalcRow(this.closest('.q-row'))" style="${inp}"><option value="base">15티 열성형</option><option value="front">팬텀 화이트</option><option value="back">아스펜라이트그레이</option><option value="back">알래스카</option></select>
-      <select class="bc-skirt bc-mono" onchange="basinCalcRow(this.closest('.q-row'))" style="${inp}"><option value="-30000">상판만(-3만)</option><option value="0" selected>치마 180 기본</option><option value="30000">200~250(+3만)</option><option value="60000">251~300(+6만)</option><option value="90000">301~350(+9만)</option><option value="120000">351~400(+12만)</option><option value="150000">401~450(+15만)</option><option value="180000">451~500(+18만)</option></select>
-      <select class="bc-ball bc-mono" onchange="basinCalcRow(this.closest('.q-row'))" style="${inp}"><option value="0">1볼 기본</option><option value="150000">2볼(+15만)</option></select>
-      <select class="bc-std" onchange="basinCalcRow(this.closest('.q-row'))" style="display:none;${inp}"><option value="0">팬텀 아이보리</option><option value="1">키프로스 라이트 그레이</option><option value="2">화이트 트라버티노</option></select>
-      <select class="bc-natl" onchange="basinCalcRow(this.closest('.q-row'))" style="display:none;${inp}"><option value="0">1200 상판 즉시출고</option><option value="1">1200 이하 주문발주</option><option value="2">1200이하·치마200이하</option></select>
-      <select class="bc-round" onchange="basinCalcRow(this.closest('.q-row'))" style="display:none;${inp}"><option value="0">600×470×150</option><option value="1">800×470×150</option></select>
+      <select class="bc-std" onchange="bcInput(this)" style="display:none;${inp}"><option value="0">팬텀 아이보리</option><option value="1">키프로스 라이트 그레이</option><option value="2">화이트 트라버티노</option></select>
+      <select class="bc-natl" onchange="bcInput(this)" style="display:none;${inp}"><option value="0">1200 상판 즉시출고</option><option value="1">1200 이하 주문발주</option><option value="2">1200이하·치마200이하</option></select>
     </div>
-    <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:6px">${num('bc-l', '기장', sz.L)}${num('bc-w', '폭', sz.W)}${num('bc-h', '높이', sz.H)}</div>
+    <div class="bc-monoopt" style="display:flex;gap:8px;align-items:center;margin-top:6px">
+      <select class="bc-ball" onchange="bcInput(this)" style="flex:1;${inp}"><option value="0">1볼 기본</option><option value="150000">2볼(+15만)</option></select>
+      <label style="flex:1;font-size:12px;display:flex;align-items:center;gap:5px;white-space:nowrap"><input type="checkbox" class="bc-top" onchange="bcInput(this)"> 상판만 (치마 없음 -3만)</label>
+    </div>
+    <div class="bc-why" style="font-size:11px;color:var(--t3);margin-top:6px;line-height:1.5"></div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
       <div style="flex:1"><span style="font-size:11px;color:var(--t3)">계산 단가</span> <b class="bc-total" style="font-size:15px;color:var(--gd)">-</b> <span style="font-size:10.5px;color:var(--t3)">(VAT 별도)</span></div>
       <button type="button" class="btn btn-sm btn-pri" onclick="basinApply(this)"><i class="ti ti-check"></i>단가 적용</button>
     </div>
   </div>`;
 }
-function basinCalcRow(row) {
+/* 기장·폭·높이 → 견적서 규격 칸 (뒤에 붙은 메모 「(선반)」 같은 건 그대로 둔다) */
+function bcSpecWrite(row) {
+  const v = c => String(((row.querySelector('.' + c) || {}).value) || '').replace(/[^\d]/g, '');
+  const L = v('bc-l'), W = v('bc-w'), H = v('bc-h');
+  const sp = row.querySelector('.q-spec'); if (!sp || !L || !W) return;
+  let rest = String(sp.value || '').replace(/^\s*\d{2,5}\s*[*xX×]\s*\d{2,5}(?:\s*[*xX×]\s*\d{1,5})?/, '');
+  if (rest && !/^\s/.test(rest)) rest = ' ' + rest;
+  sp.value = L + '*' + W + (H ? '*' + H : '') + rest;
+}
+/* 규격 칸을 직접 고쳤을 때 → 기장·폭·높이 칸도 따라간다 */
+function bcSpecInput(sp) {
+  const row = sp && sp.closest('.q-row'); if (!row) return;
+  const bc = row.querySelector('.q-bcalc'); if (!bc || bc.style.display === 'none') return;
+  const z = bcParseSpec(sp.value); if (!z.L) return;
+  const set = (c, x) => { const e = row.querySelector('.' + c); if (e) e.value = x; };
+  set('bc-l', z.L); set('bc-w', z.W); set('bc-h', z.H);
+  basinCalcRow(row, true);
+}
+/* 계산기 안의 칸(또는 석종)을 사람이 바꿨을 때 */
+function bcInput(elm) {
+  const row = elm && elm.closest('.q-row'); if (!row) return;
+  const bc = row.querySelector('.q-bcalc'); if (!bc || bc.style.display === 'none') return;
+  if (elm.classList.contains('bc-cat')) elm.dataset.touched = '1';
+  if (/bc-[lwh]\b/.test(elm.className)) bcSpecWrite(row);
+  basinCalcRow(row, true);
+}
+function basinCalcRow(row, apply) {
   if (!row) return;
   const q = cls => row.querySelector('.' + cls);
-  const cat = q('bc-cat') ? q('bc-cat').value : 'mono';
-  const biz = q('bc-biz') ? q('bc-biz').value : 'consumer';
-  row.querySelectorAll('.bc-mono').forEach(e => e.style.display = cat === 'mono' ? '' : 'none');
+  const catSel = q('bc-cat');
+  const nm = ((q('q-mat') || {}).value || '');
+  if (catSel && catSel.dataset.touched !== '1') catSel.value = nm.indexOf('라운드') >= 0 ? 'round' : 'mono';
+  const cat = catSel ? catSel.value : 'mono';
+  const bizSel = q('bc-biz');
+  const biz = bizSel ? bizSel.value : 'consumer';
   const sd = (cls, on) => { const e = q(cls); if (e) e.style.display = on ? '' : 'none'; };
-  sd('bc-std', cat === 'std'); sd('bc-natl', cat === 'natl'); sd('bc-round', cat === 'round');
-  const bi = BC_BIZ[biz]; let total = null, note = '';
-  if (cat === 'natl') total = BC_NATL[+q('bc-natl').value][bi];
-  else if (cat === 'std') total = BC_STD[+q('bc-std').value][bi];
-  else if (cat === 'round') total = BC_ROUND[+q('bc-round').value][bi];
-  else {
-    const x = BC_SIZES[+q('bc-size').value], base = x[1], width = x[4];
-    if (base === null) note = '별도 견적 (2000↑)';
-    else if (q('bc-mat').value !== 'base' && width >= 1600) note = '제작 불가 (12티 1600↑)';
+  sd('bc-std', cat === 'std'); sd('bc-natl', cat === 'natl');
+  const mo = q('bc-monoopt'); if (mo) mo.style.display = cat === 'mono' ? 'flex' : 'none';
+  const n = c => parseInt(String(((q(c) || {}).value) || '').replace(/[^\d]/g, ''), 10) || 0;
+  const L = n('bc-l'), H = n('bc-h');
+  const bi = BC_BIZ[biz]; let total = null, note = '', why = '';
+  if (cat === 'natl') { total = BC_NATL[+q('bc-natl').value][bi]; why = '국내제작 · 조건별 단가'; }
+  else if (cat === 'std') { total = BC_STD[+q('bc-std').value][bi]; why = '규격 600×470×200'; }
+  else if (cat === 'round') {
+    if (!(L > 0)) note = '기장을 넣어 주세요';
+    else { const ri = L <= 700 ? 0 : 1; total = BC_ROUND[ri][bi]; why = '라운드 ' + (ri ? '800' : '600') + '×470×150 단가'; }
+  } else {
+    if (!(L > 0)) note = '기장을 넣어 주세요';
     else {
-      const matAdd = q('bc-mat').value === 'front' ? x[2] : (q('bc-mat').value === 'back' ? x[3] : 0);
-      const skirtBase = +q('bc-skirt').value, extra = Math.max(0, Math.ceil(width / 1000) - 1);
-      const skirtAdd = skirtBase === 0 ? 0 : skirtBase * (1 + extra);
-      total = base + BC_MARKUP[biz] + matAdd + skirtAdd + (+q('bc-ball').value);
+      const x = BC_SIZES[bcTierIdx(L)];
+      const mat = bcMatOf((q('q-stone') || {}).value);
+      const top = !!(q('bc-top') && q('bc-top').checked);
+      const skirtBase = bcSkirtOf(H, top);
+      if (x[1] === null) note = '별도 견적 (기장 2000 이상)';
+      else if (mat !== 'base' && L >= 1600) note = '제작 불가 (12티 자재는 1600 이상 불가)';
+      else if (skirtBase === null) note = '별도 견적 (높이 500 초과)';
+      else {
+        const matAdd = mat === 'front' ? x[2] : (mat === 'back' ? x[3] : 0);
+        const extra = Math.max(0, Math.ceil(x[4] / 1000) - 1);
+        const skirtAdd = skirtBase === 0 ? 0 : skirtBase * (1 + extra);
+        const ball = +((q('bc-ball') || {}).value) || 0;
+        total = x[1] + BC_MARKUP[biz] + matAdd + skirtAdd + ball;
+        why = `기장 ${x[4]} 구간 ${fmtWon(x[1])} · 업체 +${fmtWon(BC_MARKUP[biz])} · ${BC_MAT_NAME[mat]}${matAdd ? ' +' + fmtWon(matAdd) : ''}`
+          + (skirtAdd ? ` · ${top ? '상판만' : '치마'} ${skirtAdd > 0 ? '+' : '-'}${fmtWon(Math.abs(skirtAdd))}` : (H > 0 ? ' · 치마 기본' : ' · 높이 미입력(기본)'))
+          + (ball ? ' · 2볼 +' + fmtWon(ball) : '');
+      }
     }
   }
   const tEl = q('bc-total');
   if (tEl) { if (total != null) { tEl.textContent = fmtWon(total) + '원'; tEl.dataset.v = total; } else { tEl.textContent = note || '-'; tEl.dataset.v = ''; } }
+  /* 별도(예외 단가) 거래처는 업체 구분을 사람이 직접 골랐을 때만 단가 칸에 넣는다 — 거래처 전용 단가를 덮어쓰지 않게 */
+  const bizOk = !!bcBizFromCtype() || !!(bizSel && bizSel.dataset.touched === '1');
+  const pEl = q('q-price');
+  if (apply && total != null && pEl && bizOk && _numv(pEl.value) !== total) { pEl.value = total; try { quoteRecalc(); } catch (e) { } }
+  const wEl = q('bc-why');
+  if (wEl) {
+    const cur = pEl ? _numv(pEl.value) : 0;
+    const diff = (total != null && cur && cur !== total) ? ` <span style="color:#a2560f;font-weight:600">· 입력 단가 ${fmtWon(cur)}원 (계산과 다름)</span>` : '';
+    const ask = (apply && total != null && !bizOk) ? ' <span style="color:#a2560f;font-weight:600">· 업체 구분을 골라야 단가 칸에 들어갑니다</span>' : '';
+    wEl.innerHTML = esc(why) + diff + ask;
+  }
 }
 function basinApply(btn) {
   const row = btn.closest('.q-row'); if (!row) return;
@@ -5555,11 +5652,11 @@ function qRowHtml(d) {
       <button type="button" class="btn btn-ghost btn-sm" onclick="this.closest('.q-row').remove();quoteRecalc()" aria-label="삭제" title="이 품목 줄을 통째로 삭제"><i class="ti ti-x"></i></button>
     </div>
     <div class="q-avail" style="font-size:11.5px;margin:-2px 2px 6px;min-height:14px">${qAvailText(d.name)}${qLockNote(d.name)}</div>
-    <div class="q-stone-wrap" style="margin-bottom:6px;display:${_isBasin ? 'block' : 'none'}"><select class="q-stone" style="width:100%;font-size:14px;padding:8px;border:1.5px solid var(--bd2);border-radius:8px;background:#fff"><option value="">— 석종(컬러) 선택 · 세면대 발주에 적용 —</option>${basinStones().map(st => `<option value="${esc(st.k)}" ${d.stone === st.k ? 'selected' : ''}>${esc(st.k)}${st.t ? ' · ' + st.t : ''}</option>`).join('')}</select></div>
-    ${basinCalcHtml(_isBasin)}
+    <div class="q-stone-wrap" style="margin-bottom:6px;display:${_isBasin ? 'block' : 'none'}"><select class="q-stone" onchange="bcInput(this)" style="width:100%;font-size:14px;padding:8px;border:1.5px solid var(--bd2);border-radius:8px;background:#fff"><option value="">— 석종(컬러) 선택 · 세면대 발주에 적용 —</option>${basinStones().map(st => `<option value="${esc(st.k)}" ${d.stone === st.k ? 'selected' : ''}>${esc(st.k)}${st.t ? ' · ' + st.t : ''}</option>`).join('')}</select></div>
+    ${basinCalcHtml(_isBasin, d)}
     ${halfMakeHtml(_isHalf, d)}
     <div style="display:flex;gap:6px;align-items:center">
-      <input class="q-spec" lang="en" placeholder="규격" value="${esc(d.spec || '')}" oninput="quoteRecalc()" style="flex:1.7;min-width:0;${inp}">
+      <input class="q-spec" lang="en" placeholder="규격" value="${esc(d.spec || '')}" oninput="quoteRecalc();bcSpecInput(this)" style="flex:1.7;min-width:0;${inp}">
       <input class="q-qty" inputmode="text" placeholder="수량" value="${esc(d.qty || '')}" oninput="quoteRecalc()" style="flex:1;min-width:44px;${inp};text-align:right">
       <button type="button" class="btn btn-sm" title="환불(마이너스) 전환" onclick="qFlipQty(this)" style="flex:none;padding:8px 7px;font-weight:800">±</button>
       <input class="q-price" inputmode="numeric" placeholder="단가" value="${esc(d.price || '')}" oninput="quoteRecalc()" style="flex:1.3;min-width:56px;${inp};text-align:right">
@@ -5599,7 +5696,12 @@ function quoteMatPick(inp) {
   const wrap = row.querySelector('.q-stone-wrap'); if (wrap) wrap.style.display = name.includes('세면대') ? 'block' : 'none';
   const avEl = row.querySelector('.q-avail'); if (avEl) avEl.innerHTML = qAvailText(name) + qLockNote(name);
   qLockMat(row);                                  // 등록된 자재를 고르면 이름칸 잠금
-  const bc = row.querySelector('.q-bcalc'); if (bc) { const on = name.includes('세면대'); bc.style.display = on ? 'block' : 'none'; if (on) { bcSyncAllBiz(); bcNoteRefresh(); } }
+  const bc = row.querySelector('.q-bcalc'); if (bc) { const on = name.includes('세면대'); bc.style.display = on ? 'block' : 'none'; if (on) {
+    const z = bcParseSpec((row.querySelector('.q-spec') || {}).value); const setv = (c, x) => { const e = row.querySelector('.' + c); if (e && x && !e.value) e.value = x; };
+    setv('bc-l', z.L); setv('bc-w', z.W); setv('bc-h', z.H);
+    bcSyncAllBiz(); bcNoteRefresh();
+    if (!_numv(priceEl.value)) basinCalcRow(row, true);     // 단가표·거래처 단가가 이미 들어갔으면 그대로 둔다
+  } }
   const hf = row.querySelector('.q-half'); if (hf) { hf.style.display = _half ? 'block' : 'none'; if (_half) { try { hbCalc(row); } catch (e) { } } }
   const hb = row.querySelector('.q-hebe'); if (hb) hb.style.display = (name.includes('세면대') || _half) ? 'none' : 'flex';
   const hh = row.querySelector('.q-hebe-hint'); if (hh) { const hpj = it ? (+it.hebePerJang || 0) : 0; hh.textContent = hpj > 0 ? ('1장 ' + hpj + '㎡') : ''; }
@@ -5738,7 +5840,7 @@ async function qCtypeSaveToClient() {
    상호만 바뀐 것과 다르다. 유형을 고르는 건 "이 단가로 가겠다"는 뜻이라 덮어쓴다. */
 function quoteTypeChanged() {
   const n = quoteRefillPrices(true);
-  quoteExtraRefresh(); bcSyncAllBiz(); bcNoteRefresh();
+  quoteExtraRefresh(); bcSyncAllBiz(true); bcNoteRefresh();
   const t = el('q-ctype') ? el('q-ctype').value : '';
   qCtypeNoteRefresh();
   if (n) toast(t + ' 단가로 ' + n + '개 품목을 다시 채웠습니다');
@@ -6090,6 +6192,7 @@ function qDraftRestore() {
       if (e.type === 'checkbox' || e.type === 'radio') e.checked = !!v; else e.value = v;
     });
     try { quoteRecalc(); } catch (e2) { }
+    document.querySelectorAll('#q-rows .q-row').forEach(r => { try { basinCalcRow(r); } catch (e3) { } });
     const note = document.getElementById('qd-note');
     if (note) {
       const mins = Math.max(1, Math.round((Date.now() - d.at) / 60000));
