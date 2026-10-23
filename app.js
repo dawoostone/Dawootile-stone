@@ -10971,6 +10971,7 @@ function cutRowHtml(p) {
     <td><input class="ct-l" inputmode="numeric" placeholder="길이" value="${p.l != null ? esc(p.l) : ''}" style="${inp}"></td>
     <td style="text-align:center;color:var(--t3);width:16px">×</td>
     <td><input class="ct-w" inputmode="numeric" placeholder="폭" value="${p.w != null ? esc(p.w) : ''}" style="${inp}"></td>
+    <td><input class="ct-lb" lang="ko" placeholder="예) 싱크상판" maxlength="30" value="${esc(p.lb || '')}" style="${inp};min-width:88px;text-align:left"></td>
     <td style="width:70px"><input class="ct-q" inputmode="numeric" placeholder="수량" value="${p.q != null ? esc(p.q) : '1'}" style="${inp}"></td>
     <td style="width:44px;text-align:center"><input type="checkbox" class="ct-sel" style="width:17px;height:17px" title="무늬연결 선택"></td>
     <td style="width:44px;text-align:center"><input type="checkbox" class="ct-rot" ${p.rot === false ? '' : 'checked'} style="width:17px;height:17px" title="가로세로 회전 허용"></td>
@@ -11060,7 +11061,8 @@ function _collectCutParts() {
     const q = Math.max(1, Math.round(_numv(r.querySelector('.ct-q').value) || 0) || 1);
     const rot = r.querySelector('.ct-rot') ? r.querySelector('.ct-rot').checked : true;
     const cid = r.getAttribute('data-cid');
-    if (l > 0 && w > 0) parts.push({ cid, l, w, q, rot, idx: i + 1 });
+    const lb = String((r.querySelector('.ct-lb') && r.querySelector('.ct-lb').value) || '').trim();   // ★ 라벨 (2026-10-23)
+    if (l > 0 && w > 0) parts.push({ cid, l, w, q, rot, idx: i + 1, lb });
   });
   return parts;
 }
@@ -11514,7 +11516,32 @@ function cutRenderResult() {
   cutDragBind();
 }
 
+/* ══════════════════════════════════════════════════════════
+   ★★ 2026-10-23 — 조각에 «라벨» 찍기
+   사용자: *"커팅플랜 그릴 때 판재 옆에 라벨링 할 수 있게 해줘 (예 싱크상판)
+            그러면 그게 커팅플랜 상 사이즈 밑에 보이게"*
+   · 라벨이 있으면 사이즈를 조금 올리고 그 «밑에» 라벨을 굵게 한 줄 더 적는다.
+   · 조각이 얇아 두 줄이 안 들어가면 «사이즈 · 라벨» 한 줄로, 그것도 안 되면 사이즈만.
+   · 너무 길면 조각 폭에 맞춰 … 로 줄인다 (부재 목록에는 그대로 남아 있다).
+   ★ 라벨이 없는 조각은 예전과 «글자 하나까지» 똑같이 그린다.
+   ══════════════════════════════════════════════════════════ */
+function _cutPieceText(x, y, w, h, sizeTxt, lb) {
+  if (!(w > 40 && h > 16)) return '';
+  const cx = (x + w / 2).toFixed(1);
+  const plain = `<text x="${cx}" y="${(y + h / 2 + 3).toFixed(1)}" text-anchor="middle" font-size="10" fill="#333">${sizeTxt}</text>`;
+  lb = String(lb || '').trim();
+  if (!lb) return plain;                                          // 라벨 없으면 예전 그대로
+  const fit = (t, px) => { const n = Math.max(1, Math.floor(px / 10)); return t.length > n ? (n > 1 ? t.slice(0, n - 1) + '…' : '…') : t; };
+  if (h >= 28) {                                                  // 두 줄 — 사이즈 밑에 라벨
+    return `<text x="${cx}" y="${(y + h / 2 - 2).toFixed(1)}" text-anchor="middle" font-size="10" fill="#333">${sizeTxt}</text>`
+      + `<text x="${cx}" y="${(y + h / 2 + 10).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="800" fill="#1b4fb0">${esc(fit(lb, w - 6))}</text>`;
+  }
+  const room = w - 6 - String(sizeTxt).length * 5.8 - 12;          // 얇은 조각 — 옆에 붙일 자리가 있나
+  if (room >= 20) return `<text x="${cx}" y="${(y + h / 2 + 3).toFixed(1)}" text-anchor="middle" font-size="10" fill="#333">${sizeTxt} · <tspan font-weight="800" fill="#1b4fb0">${esc(fit(lb, room))}</tspan></text>`;
+  return plain;
+}
 function cutSheetSvg(sh, Ws, Hs, n, si) {
+  const LB = (_cutCtx && _cutCtx.labels) || {};
   const maxW = 620; const sc = maxW / Ws; const W = Ws * sc, H = Hs * sc;
   const colors = ['#FCE9B8', '#D8ECB0', '#F7C9A8', '#C9DAF0', '#E8CDEA', '#CDEAE0', '#F5D0D0', '#D0E8F0'];
   /* ★ si 가 있으면 «손으로 옮길 수 있는» 그림이다 — 조각마다 번호표를 붙인다 */
@@ -11535,12 +11562,12 @@ function cutSheetSvg(sh, Ws, Hs, n, si) {
         if (pc.rotated) { ex = pc.l - sp.y - sp.w; ey = sp.x; ew = sp.w; eh = sp.l; }
         else { ex = sp.x; ey = sp.y; ew = sp.l; eh = sp.w; }
         const sx = (pc.x + ex) * sc, sy = (pc.y + ey) * sc, sw = ew * sc, sh2 = eh * sc; const cc = colors[((sp.idx || 1) - 1) % colors.length];
-        return `<rect x="${sx.toFixed(1)}" y="${sy.toFixed(1)}" width="${sw.toFixed(1)}" height="${sh2.toFixed(1)}" fill="${cc}" stroke="#555" stroke-width="0.7"/>` + (sw > 40 && sh2 > 16 ? `<text x="${(sx + sw / 2).toFixed(1)}" y="${(sy + sh2 / 2 + 3).toFixed(1)}" text-anchor="middle" font-size="10" fill="#333">${sp.l}×${sp.w}${sp.idx ? ' #' + sp.idx : ''}</text>` : ''); }).join('');
+        return `<rect x="${sx.toFixed(1)}" y="${sy.toFixed(1)}" width="${sw.toFixed(1)}" height="${sh2.toFixed(1)}" fill="${cc}" stroke="#555" stroke-width="0.7"/>` + _cutPieceText(sx, sy, sw, sh2, `${sp.l}×${sp.w}${sp.idx ? ' #' + sp.idx : ''}`, LB[sp.idx]); }).join('');
       return `<g${_dg(pi)}>${inner}<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="none" stroke="${_selQ(pi) ? '#d97706' : '#185fa5'}" stroke-width="${_selQ(pi) ? 3 : 1.8}" stroke-dasharray="5 3"/></g>`;
     }
     const c = pc.over ? '#f2b0b0' : colors[((pc.idx || 1) - 1) % colors.length];
     return `<g${_dg(pi)}><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="${c}" stroke="${_selQ(pi) ? '#d97706' : '#555'}" stroke-width="${_selQ(pi) ? 2.6 : 0.7}"/>` +
-      (w > 40 && h > 16 ? `<text x="${(x + w / 2).toFixed(1)}" y="${(y + h / 2 + 3).toFixed(1)}" text-anchor="middle" font-size="10" fill="#333">${pc.l}×${pc.w}${pc.idx ? ' #' + pc.idx : ''}</text>` : '') + `</g>`;
+      _cutPieceText(x, y, w, h, `${pc.l}×${pc.w}${pc.idx ? ' #' + pc.idx : ''}`, LB[pc.idx]) + `</g>`;
   }).join('');
   /* ★ 2026-09-09 — 「남는 부분(자투리) 치수도 표기해줘」
      배치가 끝나고 남은 빈 자리(sh.free)를 회색 빗금으로 칠하고 «가로×세로»를 적는다.
@@ -11624,7 +11651,8 @@ function runCutSim() {
   parts.forEach(p => { partArea += p.l * p.w * p.q; edgeLen += 2 * (p.l + p.w) * p.q; const big = Math.max(p.l, p.w), small = Math.min(p.l, p.w); if (big > Math.max(Ws, Hs) + 0.001 || small > Math.min(Ws, Hs) + 0.001) over = true; });
   /* ★ 배치를 기억해 둔다 — 손으로 옮길 수 있게 (cutRenderResult 가 그린다) */
   _cutSheets = sheets; _cutTouched = false; _cutSel = null;
-  _cutCtx = { Ws: Ws, Hs: Hs, kerf: kerf, partArea: partArea, edgeLen: edgeLen, over: over, gOver: gOver, noFit: (sheets.noFit || []).slice() };
+  const labels = {}; parts.forEach(p => { if (p.lb) labels[p.idx] = p.lb; });   // ★ 도면 #번호 → 라벨
+  _cutCtx = { Ws: Ws, Hs: Hs, kerf: kerf, partArea: partArea, edgeLen: edgeLen, over: over, gOver: gOver, noFit: (sheets.noFit || []).slice(), labels: labels };
   cutRenderResult();
   cutPlanAutoSave(sheets.length, partArea);   // ★ 돌릴 때마다 '최근 커팅플랜'에 자동 저장
 }
@@ -11655,7 +11683,8 @@ function cutPlanSnapshot() {
   return {
     sheet: { L: _numv(el('cut-sheetL') && el('cut-sheetL').value) || 3200, W: _numv(el('cut-sheetW') && el('cut-sheetW').value) || 1600 },
     grain: !!(el('cut-grain') && el('cut-grain').checked),
-    parts: parts.map(p => ({ l: p.l, w: p.w, q: p.q, rot: !!p.rot })),
+    /* ★ 라벨은 «있을 때만» 담는다 — 라벨 없는 플랜은 예전과 똑같은 값이라 같은 플랜이 두 번 저장되지 않는다 */
+    parts: parts.map(p => Object.assign({ l: p.l, w: p.w, q: p.q, rot: !!p.rot }, p.lb ? { lb: p.lb } : {})),
     groups: groups
   };
 }
@@ -11757,7 +11786,7 @@ function cutPlanApply(p) {
   if (el('cut-grain')) el('cut-grain').checked = !!p.grain;
   // 부재 목록 다시 깔기 — 행 번호를 새로 매기고, 그 번호를 무늬연결에 다시 이어 준다
   const cids = [];
-  box.innerHTML = (p.parts || []).map(x => { const cid = ++_cutCid; cids.push(String(cid)); return cutRowHtml({ cid: cid, l: x.l, w: x.w, q: x.q, rot: x.rot }); }).join('')
+  box.innerHTML = (p.parts || []).map(x => { const cid = ++_cutCid; cids.push(String(cid)); return cutRowHtml({ cid: cid, l: x.l, w: x.w, q: x.q, rot: x.rot, lb: x.lb || '' }); }).join('')
     || cutRowHtml({}) + cutRowHtml({});
   _cutGroups = (p.groups || []).map(g => ({
     dir: g.dir, rot: g.rot !== false, cids: (g.at || []).map(i => cids[i]).filter(Boolean)
@@ -11793,7 +11822,7 @@ function cutSimBodyHtml() {
     </div>
     <div class="card" style="padding:13px 15px;margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-weight:700;font-size:13.5px">부재 목록 (길이 × 폭 × 수량)</div><button class="btn btn-sm" onclick="addCutRow()"><i class="ti ti-plus"></i>행 추가</button></div>
-      <table style="width:100%;border-collapse:collapse"><thead><tr style="font-size:11px;color:var(--t3)"><th style="padding:2px 4px;text-align:center" title="도면에 찍히는 번호">#</th><th style="padding:2px 4px;text-align:center">길이</th><th></th><th style="padding:2px 4px;text-align:center">폭</th><th style="padding:2px 4px;text-align:center">수량</th><th style="padding:2px 4px;text-align:center" title="무늬연결 선택">연결</th><th style="padding:2px 4px;text-align:center" title="가로세로 회전 허용">회전</th><th></th></tr></thead><tbody id="cut-parts">${rows}</tbody></table>
+      <table style="width:100%;border-collapse:collapse"><thead><tr style="font-size:11px;color:var(--t3)"><th style="padding:2px 4px;text-align:center" title="도면에 찍히는 번호">#</th><th style="padding:2px 4px;text-align:center">길이</th><th></th><th style="padding:2px 4px;text-align:center">폭</th><th style="padding:2px 4px;text-align:center" title="도면에서 사이즈 밑에 찍힙니다">라벨</th><th style="padding:2px 4px;text-align:center">수량</th><th style="padding:2px 4px;text-align:center" title="무늬연결 선택">연결</th><th style="padding:2px 4px;text-align:center" title="가로세로 회전 허용">회전</th><th></th></tr></thead><tbody id="cut-parts">${rows}</tbody></table>
       <div style="display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn btn-sm" onclick="cutMakeGroup()"><i class="ti ti-link"></i>선택 연결 (무늬)</button><span style="font-size:11px;color:var(--t3)">체크한 부재끼리 <b>한 덩어리</b>가 됩니다 · 폭 같으면 폭방향, 기장 같으면 기장방향 자동 · 같은 부재 여러 장은 그 행 1개만 체크(수량 기준) · 판재에 맞게 방향 자동회전</span>
       </div>
       <div style="margin-top:8px;font-size:11.5px;color:var(--t2);background:#eaf3ff;border:1px solid #b5d4f4;border-radius:9px;padding:8px 11px"><i class="ti ti-link" style="color:#185fa5"></i> <b>짝끼리 따로따로 연결하세요.</b> 1·2번을 체크해 [선택 연결] → 그 다음 5·6번을 체크해 [선택 연결] — 이렇게 <b>연결을 2개</b> 만듭니다.<br><span style="color:var(--t3)">네 줄(1·2·5·6번)을 한꺼번에 체크하면 <b>넷이 한 덩어리로 붙어버립니다</b>. 왼쪽 # 번호가 도면에 찍히는 번호와 같습니다.</span></div>
