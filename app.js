@@ -6153,7 +6153,7 @@ function qDraftGrab() {
   const root = document.getElementById('qform-root'); if (!root) return null;
   const rows = document.querySelectorAll('#q-rows .q-row').length;
   const vals = _qdFields(root).map(e => (e.type === 'checkbox' || e.type === 'radio') ? (e.checked ? 1 : 0) : String(e.value == null ? '' : e.value));
-  return { at: Date.now(), rows: rows, vals: vals };
+  return { at: Date.now(), rows: rows, vals: vals, bc: 2 };      // bc:2 = 세면대 칸이 기장·폭·높이로 바뀐 뒤의 초안
 }
 let _qdTimer = null;
 function qDraftSave() {
@@ -6192,6 +6192,17 @@ function qDraftRestore() {
       if (e.type === 'checkbox' || e.type === 'radio') e.checked = !!v; else e.value = v;
     });
     try { quoteRecalc(); } catch (e2) { }
+    /* 세면대 칸이 바뀌기 전(2026-10-23 이전)에 적어 둔 초안은 칸 수는 같아도 순서가 달라
+       엉뚱한 값이 들어간다 → 세면대 칸만 규격 칸에서 다시 읽고 나머지는 기본값으로 */
+    if (d.bc !== 2) document.querySelectorAll('#q-rows .q-row').forEach(r => {
+      const g = c => r.querySelector('.' + c); if (!g('bc-l')) return;
+      const z = bcParseSpec((g('q-spec') || {}).value);
+      g('bc-l').value = z.L; g('bc-w').value = z.W; g('bc-h').value = z.H;
+      if (g('bc-top')) g('bc-top').checked = false;
+      if (g('bc-ball')) g('bc-ball').value = '0';
+      ['bc-std', 'bc-natl'].forEach(c => { const e = g(c); if (e && !e.value) e.value = '0'; });
+      const cs = g('bc-cat'); if (cs && !cs.value) cs.value = 'mono';
+    });
     document.querySelectorAll('#q-rows .q-row').forEach(r => { try { basinCalcRow(r); } catch (e3) { } });
     const note = document.getElementById('qd-note');
     if (note) {
