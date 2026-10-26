@@ -21067,61 +21067,107 @@ function chulgoPrintDispatch(dispatchId) {
   const isBasin = g.reqs.some(r => r.sourceBasinId);
   const banner = isBasin ? '🛁　세 면 대　출 고 · 주 문 제 작' : (g.packing ? '📦　포 장 건' + (g.dispatchNote ? '　·　' + g.dispatchNote : '') : '');
   const driverTxt = g.companyDispatch ? '업체 직접 상차' : (e(g.driver) || '-');
+  /* ══════════════════════════════════════════════════════════
+     ★★ 2026-10-26 출고 요청서 디자인 정리 — 사용자: "디자인 너무 구림 좀 가시성 있게 해줘 전체적으로"
+     창고에서 «한눈에» 봐야 하는 순서대로 배치:
+       ① 출고예정일·상차·긴급도·요청자 (큰 글씨 카드)  ② 비고 (맨 위 경고 상자)
+       ③ 품목 — 품목명·수량을 크게, 롯트·패턴은 형광 꼬리표  ④ 배차·확인·서명
+     데이터·계산은 그대로, 보이는 모양만 바꿨다.
+     ══════════════════════════════════════════════════════════ */
   let rows = ''; let no = 0;
   stops.forEach(s => {
-    rows += `<tr><td class="grp" colspan="6">◼&nbsp; 거래처 : <b>${e(s.client)}</b> <span style="font-weight:600;color:#555">(${(s.items || []).length}품목)</span></td></tr>`;
+    rows += `<tr class="grp"><td colspan="6"><span class="gl">거래처</span><b>${e(s.client)}</b><span class="gc">${(s.items || []).length}품목</span></td></tr>`;
     (s.items || []).forEach(it => { no++; const lp = cgLotPatOf(it);
-      rows += `<tr><td class="c">${no}</td><td class="l">${e(it.name)}${lp.any ? `<div>${[lp.lot ? '<span class="lp">롯트 : ' + e(lp.lot) + '</span>' : '', lp.pat ? '<span class="lp">무늬(패턴) : ' + e(lp.pat) + '</span>' : ''].filter(Boolean).join(' ')}</div>` : ''}</td><td class="c">${e(cgSpecOf(it))}</td><td class="c">${e(it.qty)}</td><td class="c">${e(it.unit)}</td><td class="l">${g.companyDispatch ? '업체 직접 수령' : e(s.dest)}</td></tr>`; });
+      const tags = lp.any ? `<div class="tags">${lp.lot ? `<span class="tag"><i>롯트</i>${e(lp.lot)}</span>` : ''}${lp.pat ? `<span class="tag"><i>패턴</i>${e(lp.pat)}</span>` : ''}</div>` : '';
+      rows += `<tr><td class="no">${no}</td><td class="nm"><div class="nmt">${e(it.name)}</div>${tags}</td><td class="c">${e(cgSpecOf(it))}</td><td class="qty">${e(it.qty)}</td><td class="c">${e(it.unit)}</td><td class="dest">${g.companyDispatch ? '업체 직접 수령' : e(s.dest)}</td></tr>`; });
   });
-  const MIN = Math.max(6, no);
-  for (let i = no; i < MIN; i++) rows += `<tr><td class="c">${i + 1}</td><td></td><td></td><td></td><td></td><td></td></tr>`;
+  const MIN = Math.max(4, no);
+  for (let i = no; i < MIN; i++) rows += `<tr class="blank"><td class="no">${i + 1}</td><td></td><td></td><td></td><td></td><td></td></tr>`;
   const memoTxt = [g.dispatchNote || '', ...(g.memos || [])].filter(Boolean).join('  /  ');
+  const schedTxt = kdate((g.reqs.find(r => r.schedDate) || {}).schedDate || todayStr());
   const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>출고 요청서 ${e(g.clients.join(','))} ${e(g.docNos[0] || '')}</title>
-<style>*{box-sizing:border-box}body{font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#111;margin:0;padding:20px 28px;position:relative}
-h1{text-align:center;font-size:30px;font-weight:800;letter-spacing:16px;margin:2px 0 2px}
-.sub{text-align:center;font-size:12.5px;color:#666;margin-bottom:14px;letter-spacing:.5px}
-.docno{position:absolute;top:20px;right:28px;font-size:13px;font-weight:700}
+<style>
+*{box-sizing:border-box}
+html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#1d2433;margin:0;padding:22px 28px;background:#fff;font-size:13px}
+.hd{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #1d2433;padding-bottom:10px}
+.ttl{font-size:28px;font-weight:800;letter-spacing:6px}
+.sub{font-size:12px;color:#6b7280;margin-top:3px;letter-spacing:.3px}
+.meta{text-align:right;font-size:12px;color:#4b5563;line-height:1.6}
+.meta .no{font-size:15px;font-weight:800;color:#1d2433}
+.banner{margin-top:12px;border-radius:8px;background:#1d2433;color:#fff;text-align:center;font-size:17px;font-weight:800;letter-spacing:3px;padding:9px}
+.kv{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;gap:8px;margin-top:12px}
+.kv2{grid-template-columns:1fr 1fr 1fr}
+.cell{border:1.5px solid #d5dae3;border-radius:9px;padding:8px 12px;background:#f7f8fa}
+.cell .k{font-size:11px;font-weight:700;color:#6b7280;letter-spacing:.5px}
+.cell .v{font-size:15px;font-weight:700;margin-top:3px;min-height:20px}
+.cell.hi{border-color:#1d2433;background:#fff}.cell.hi .v{font-size:19px;font-weight:800}
+.cell.urg{border-color:#c0341d;background:#fdecea}.cell.urg .v{color:#c0341d;font-weight:800}
+.memo{margin-top:12px;border:2.5px solid #c0341d;border-left-width:10px;border-radius:9px;background:#fff6d6;padding:10px 14px}
+.memo .mk{font-size:12px;font-weight:800;color:#c0341d;letter-spacing:1px}
+.memo .mv{font-size:17px;font-weight:800;color:#1d2433;margin-top:4px;line-height:1.5;white-space:pre-wrap;word-break:keep-all}
 table{border-collapse:collapse;width:100%}
-.info td{border:1px solid #333;padding:8px 10px;font-size:13px}.info .k{background:#f2f2f2;font-weight:700;text-align:center;white-space:nowrap;width:15%}
-.banner{border:2px solid #111;border-radius:10px;text-align:center;font-size:19px;font-weight:800;letter-spacing:3px;padding:11px;margin:0 0 12px}
-.urg{color:#c0341d;font-weight:800}
-.items{margin-top:0}.items th{border:1px solid #333;background:#efefef;padding:8px 6px;font-size:13px;color:#333}.items td{border:1px solid #333;padding:7px 6px;font-size:13px;height:32px}
-.items td.c{text-align:center}.items td.l{text-align:left;padding-left:10px}.items td.grp{background:#eaf1ff;font-size:13px;text-align:left;padding-left:10px}
-.detail{margin-top:12px}.detail td{border:1px solid #333;padding:11px 10px;font-size:13px}.detail .k{background:#f2f2f2;font-weight:700;text-align:center;white-space:nowrap;width:15%}
-.sign{margin-top:14px}.sign td{border:1px solid #333;font-size:12.5px;text-align:center}.sign .k{background:#f2f2f2;font-weight:700;padding:9px 6px;width:12%}.sign .v{padding:9px 6px;height:48px;vertical-align:top;width:21.3%}
-.co{text-align:center;font-size:15px;font-weight:800;margin-top:14px}
-/* ★ 2026-10-26 비고·롯트·패턴은 창고에서 놓치면 안 돼서 형광펜처럼 강조 (인쇄에도 나오게) */
-.lp{display:inline-block;margin:4px 4px 0 0;padding:3px 9px;border:2px solid #c0341d;border-radius:5px;background:#fff3a8;color:#c0341d;font-size:14px;font-weight:800;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.detail td.memo-k{background:#c0341d;color:#fff;font-size:14px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.detail td.memo-v{background:#fff3a8;color:#c0341d;font-size:16px;font-weight:800;border:2.5px solid #c0341d;line-height:1.5;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.items{margin-top:12px}
+.items th{background:#1d2433;color:#fff;font-size:12.5px;font-weight:700;padding:8px 6px;border:1px solid #1d2433}
+.items td{border-bottom:1px solid #d5dae3;padding:9px 8px;vertical-align:middle}
+.items tr.grp td{background:#eef2f8;border-top:2px solid #1d2433;border-bottom:1px solid #c3cad6;padding:7px 10px;font-size:13.5px}
+.items .gl{display:inline-block;font-size:11px;font-weight:700;color:#fff;background:#4b5563;border-radius:4px;padding:1px 7px;margin-right:8px}
+.items .gc{color:#6b7280;font-weight:600;margin-left:8px;font-size:12px}
+.items td.no{text-align:center;color:#6b7280;font-weight:700;width:6%}
+.items td.c{text-align:center}
+.items td.nm .nmt{font-size:15px;font-weight:800}
+.items td.qty{text-align:center;font-size:18px;font-weight:800}
+.items td.dest{font-weight:600}
+.items tr.blank td{height:30px}
+.tags{margin-top:5px;display:flex;flex-wrap:wrap;gap:5px}
+.tag{display:inline-flex;align-items:stretch;border:2px solid #c0341d;border-radius:6px;overflow:hidden;font-size:14px;font-weight:800;background:#fff1a6;color:#1d2433}
+.tag i{font-style:normal;background:#c0341d;color:#fff;padding:2px 7px;font-size:12px;display:flex;align-items:center}
+.tag{padding-right:8px}.tag i{margin-right:7px}
+.foot{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.box{border:1.5px solid #d5dae3;border-radius:9px;padding:8px 12px}
+.box .k{font-size:11px;font-weight:700;color:#6b7280}
+.box.write{min-height:64px}
+.sign{margin-top:10px}
+.sign td{border:1.5px solid #d5dae3;text-align:center;font-size:12px}
+.sign .k{background:#f7f8fa;font-weight:700;color:#4b5563;padding:7px 4px;width:12%}
+.sign .v{height:46px;vertical-align:top;padding:6px;width:21.3%}
+.co{text-align:center;font-size:13px;font-weight:700;color:#6b7280;margin-top:12px;letter-spacing:1px}
 /* 화면에서만 보이는 도구막대 — 인쇄할 때는 안 나온다 */
 .tb{position:fixed;top:0;left:0;right:0;z-index:99;display:flex;gap:8px;align-items:center;justify-content:flex-end;
     background:#111;padding:8px 14px;box-shadow:0 2px 8px rgba(0,0,0,.25)}
 .tb .msg{margin-right:auto;color:#cfd6e4;font-size:12.5px}
 .tb button{font-family:inherit;font-size:14px;font-weight:700;border:0;border-radius:8px;padding:8px 16px;cursor:pointer}
 .tb .p{background:#2f6fed;color:#fff}.tb .c{background:#3a3f4a;color:#e6e9ef}
-@media screen{body{padding-top:70px}.docno{top:74px}}
-@media print{body{padding:10px 12px}.tb{display:none !important}}</style></head><body>
+@media screen{body{padding-top:70px;max-width:1000px;margin:0 auto}}
+@page{size:A4;margin:10mm}
+@media print{body{padding:0}.tb{display:none !important}tr{page-break-inside:avoid}}
+</style></head><body>
   <div class="tb"><span class="msg">인쇄가 필요할 때만 오른쪽 [인쇄]를 누르세요. 그냥 보기만 해도 됩니다.</span>
     <button class="p" onclick="window.print()">🖨 인쇄</button>
     <button class="c" onclick="window.close()">닫기</button></div>
-  <div class="docno">No. ${e(g.docNos[0] || '')}${g.docNos.length > 1 ? ' 외 ' + (g.docNos.length - 1) : ''}</div>
-  <h1>출 고 요 청 서</h1>
-  <div class="sub">${companyInfo().name}　|　Material Dispatch Order</div>
+  <div class="hd">
+    <div><div class="ttl">출고 요청서</div><div class="sub">${companyInfo().name}　·　Material Dispatch Order</div></div>
+    <div class="meta"><div class="no">No. ${e(g.docNos[0] || '')}${g.docNos.length > 1 ? ' 외 ' + (g.docNos.length - 1) : ''}</div>${g.docNos.length > 1 ? `<div>${e(g.docNos.join(', '))}</div>` : ''}<div>발행 ${kdate(todayStr())}</div></div>
+  </div>
   ${banner ? `<div class="banner">${e(banner)}</div>` : ''}
-  <table class="info">
-    <tr><td class="k">문서번호</td><td>${e(g.docNos.join(', '))}</td><td class="k">발행일자</td><td>${kdate(todayStr())}</td></tr>
-    <tr><td class="k">출고예정일</td><td><b>${kdate((g.reqs.find(r => r.schedDate) || {}).schedDate || todayStr())}</b></td><td class="k">긴급도</td><td class="${urg !== '보통' ? 'urg' : ''}">${e(urg)}</td></tr>
-    <tr><td class="k">요청자</td><td colspan="3">${e(g.dispatchedBy) || '-'}</td></tr>
-  </table>
-  <table class="items" style="margin-top:12px"><colgroup><col style="width:7%"><col style="width:30%"><col style="width:20%"><col style="width:9%"><col style="width:9%"><col style="width:25%"></colgroup>
-    <thead><tr><th>No</th><th>품목명</th><th>규격</th><th>수량</th><th>단위</th><th>출고지</th></tr></thead><tbody>${rows}</tbody></table>
-  <table class="detail">
-    <tr><td class="k">배송차량</td><td>${e(g.vehicle) || '-'}</td><td class="k">기사명</td><td>${driverTxt}</td></tr>
-    <tr><td class="k">상차예정</td><td>${ktime(g.loadTime)}</td><td class="k">출고확인시각</td><td>${ackTime || '<span style="color:#aaa">　　　:　　</span>'}</td></tr>
-    ${memoTxt ? `<tr><td class="k memo-k">★ 비 고</td><td colspan="3" class="memo-v">${e(memoTxt)}</td></tr>` : `<tr><td class="k">비 고</td><td colspan="3"></td></tr>`}
-    <tr><td class="k">창고 코멘트</td><td colspan="3" style="height:40px"></td></tr>
-  </table>
+  <div class="kv">
+    <div class="cell hi"><div class="k">출고예정일</div><div class="v">${schedTxt}</div></div>
+    <div class="cell"><div class="k">상차예정</div><div class="v">${ktime(g.loadTime)}</div></div>
+    <div class="cell${urg !== '보통' ? ' urg' : ''}"><div class="k">긴급도</div><div class="v">${e(urg)}</div></div>
+    <div class="cell"><div class="k">요청자</div><div class="v">${e(g.dispatchedBy) || '-'}</div></div>
+  </div>
+  <div class="kv kv2">
+    <div class="cell"><div class="k">기사명</div><div class="v">${driverTxt}</div></div>
+    <div class="cell"><div class="k">배송차량</div><div class="v">${e(g.vehicle) || '-'}</div></div>
+    <div class="cell"><div class="k">출고확인시각</div><div class="v">${ackTime || '<span style="color:#b8bec9">　　:　　</span>'}</div></div>
+  </div>
+  ${memoTxt ? `<div class="memo"><div class="mk">⚠ 비고 · 꼭 확인</div><div class="mv">${e(memoTxt)}</div></div>` : ''}
+  <table class="items"><colgroup><col style="width:6%"><col style="width:33%"><col style="width:18%"><col style="width:9%"><col style="width:8%"><col style="width:26%"></colgroup>
+    <thead><tr><th>No</th><th>품목명 · 롯트 · 패턴</th><th>규격</th><th>수량</th><th>단위</th><th>출고지</th></tr></thead><tbody>${rows}</tbody></table>
+  <div class="foot">
+    <div class="box write"><div class="k">창고 코멘트</div></div>
+    <div class="box write"><div class="k">특이사항 (파손·수량 차이 등)</div></div>
+  </div>
   <table class="sign">
     <tr><td class="k">요청</td><td class="v">${e(g.dispatchedBy) || ''}</td><td class="k">출고담당<br>(확인자)</td><td class="v">${e(g.handler) || ''}</td><td class="k">차량인수</td><td class="v"></td></tr>
   </table>
