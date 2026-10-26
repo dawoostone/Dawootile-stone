@@ -21071,7 +21071,7 @@ function chulgoPrintDispatch(dispatchId) {
   stops.forEach(s => {
     rows += `<tr><td class="grp" colspan="6">◼&nbsp; 거래처 : <b>${e(s.client)}</b> <span style="font-weight:600;color:#555">(${(s.items || []).length}품목)</span></td></tr>`;
     (s.items || []).forEach(it => { no++; const lp = cgLotPatOf(it);
-      rows += `<tr><td class="c">${no}</td><td class="l">${e(it.name)}${lp.any ? `<div style="font-size:11.5px;color:#c0341d;font-weight:700;margin-top:2px">${[lp.lot ? '롯트 : ' + e(lp.lot) : '', lp.pat ? '무늬(패턴) : ' + e(lp.pat) : ''].filter(Boolean).join('　·　')}</div>` : ''}</td><td class="c">${e(cgSpecOf(it))}</td><td class="c">${e(it.qty)}</td><td class="c">${e(it.unit)}</td><td class="l">${g.companyDispatch ? '업체 직접 수령' : e(s.dest)}</td></tr>`; });
+      rows += `<tr><td class="c">${no}</td><td class="l">${e(it.name)}${lp.any ? `<div>${[lp.lot ? '<span class="lp">롯트 : ' + e(lp.lot) + '</span>' : '', lp.pat ? '<span class="lp">무늬(패턴) : ' + e(lp.pat) + '</span>' : ''].filter(Boolean).join(' ')}</div>` : ''}</td><td class="c">${e(cgSpecOf(it))}</td><td class="c">${e(it.qty)}</td><td class="c">${e(it.unit)}</td><td class="l">${g.companyDispatch ? '업체 직접 수령' : e(s.dest)}</td></tr>`; });
   });
   const MIN = Math.max(6, no);
   for (let i = no; i < MIN; i++) rows += `<tr><td class="c">${i + 1}</td><td></td><td></td><td></td><td></td><td></td></tr>`;
@@ -21090,6 +21090,10 @@ table{border-collapse:collapse;width:100%}
 .detail{margin-top:12px}.detail td{border:1px solid #333;padding:11px 10px;font-size:13px}.detail .k{background:#f2f2f2;font-weight:700;text-align:center;white-space:nowrap;width:15%}
 .sign{margin-top:14px}.sign td{border:1px solid #333;font-size:12.5px;text-align:center}.sign .k{background:#f2f2f2;font-weight:700;padding:9px 6px;width:12%}.sign .v{padding:9px 6px;height:48px;vertical-align:top;width:21.3%}
 .co{text-align:center;font-size:15px;font-weight:800;margin-top:14px}
+/* ★ 2026-10-26 비고·롯트·패턴은 창고에서 놓치면 안 돼서 형광펜처럼 강조 (인쇄에도 나오게) */
+.lp{display:inline-block;margin:4px 4px 0 0;padding:3px 9px;border:2px solid #c0341d;border-radius:5px;background:#fff3a8;color:#c0341d;font-size:14px;font-weight:800;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.detail td.memo-k{background:#c0341d;color:#fff;font-size:14px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.detail td.memo-v{background:#fff3a8;color:#c0341d;font-size:16px;font-weight:800;border:2.5px solid #c0341d;line-height:1.5;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 /* 화면에서만 보이는 도구막대 — 인쇄할 때는 안 나온다 */
 .tb{position:fixed;top:0;left:0;right:0;z-index:99;display:flex;gap:8px;align-items:center;justify-content:flex-end;
     background:#111;padding:8px 14px;box-shadow:0 2px 8px rgba(0,0,0,.25)}
@@ -21115,7 +21119,7 @@ table{border-collapse:collapse;width:100%}
   <table class="detail">
     <tr><td class="k">배송차량</td><td>${e(g.vehicle) || '-'}</td><td class="k">기사명</td><td>${driverTxt}</td></tr>
     <tr><td class="k">상차예정</td><td>${ktime(g.loadTime)}</td><td class="k">출고확인시각</td><td>${ackTime || '<span style="color:#aaa">　　　:　　</span>'}</td></tr>
-    <tr><td class="k">비 고</td><td colspan="3">${e(memoTxt)}</td></tr>
+    ${memoTxt ? `<tr><td class="k memo-k">★ 비 고</td><td colspan="3" class="memo-v">${e(memoTxt)}</td></tr>` : `<tr><td class="k">비 고</td><td colspan="3"></td></tr>`}
     <tr><td class="k">창고 코멘트</td><td colspan="3" style="height:40px"></td></tr>
   </table>
   <table class="sign">
