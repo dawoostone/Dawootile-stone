@@ -21096,13 +21096,11 @@ body{font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-seri
 .meta{text-align:right;font-size:12px;color:#4b5563;line-height:1.6}
 .meta .no{font-size:15px;font-weight:800;color:#1d2433}
 .banner{margin-top:12px;border-radius:8px;background:#1d2433;color:#fff;text-align:center;font-size:17px;font-weight:800;letter-spacing:3px;padding:9px}
-.kv{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;gap:8px;margin-top:12px}
-.kv2{grid-template-columns:1fr 1fr 1fr}
+.kv{display:grid;grid-template-columns:1.6fr 1fr 1.1fr 1fr 1fr;gap:8px;margin-top:12px}
 .cell{border:1.5px solid #d5dae3;border-radius:9px;padding:8px 12px;background:#f7f8fa}
 .cell .k{font-size:11px;font-weight:700;color:#6b7280;letter-spacing:.5px}
 .cell .v{font-size:15px;font-weight:700;margin-top:3px;min-height:20px}
 .cell.hi{border-color:#1d2433;background:#fff}.cell.hi .v{font-size:19px;font-weight:800}
-.cell.urg{border-color:#c0341d;background:#fdecea}.cell.urg .v{color:#c0341d;font-weight:800}
 .memo{margin-top:12px;border:2.5px solid #c0341d;border-left-width:10px;border-radius:9px;background:#fff6d6;padding:10px 14px}
 .memo .mk{font-size:12px;font-weight:800;color:#c0341d;letter-spacing:1px}
 .memo .mv{font-size:17px;font-weight:800;color:#1d2433;margin-top:4px;line-height:1.5;white-space:pre-wrap;word-break:keep-all}
@@ -21123,7 +21121,7 @@ table{border-collapse:collapse;width:100%}
 .tag{display:inline-flex;align-items:stretch;border:2px solid #c0341d;border-radius:6px;overflow:hidden;font-size:14px;font-weight:800;background:#fff1a6;color:#1d2433}
 .tag i{font-style:normal;background:#c0341d;color:#fff;padding:2px 7px;font-size:12px;display:flex;align-items:center}
 .tag{padding-right:8px}.tag i{margin-right:7px}
-.foot{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.foot{margin-top:14px}
 .box{border:1.5px solid #d5dae3;border-radius:9px;padding:8px 12px}
 .box .k{font-size:11px;font-weight:700;color:#6b7280}
 .box.write{min-height:64px}
@@ -21150,15 +21148,12 @@ table{border-collapse:collapse;width:100%}
     <div class="meta"><div class="no">No. ${e(g.docNos[0] || '')}${g.docNos.length > 1 ? ' 외 ' + (g.docNos.length - 1) : ''}</div>${g.docNos.length > 1 ? `<div>${e(g.docNos.join(', '))}</div>` : ''}<div>발행 ${kdate(todayStr())}</div></div>
   </div>
   ${banner ? `<div class="banner">${e(banner)}</div>` : ''}
+  <!-- ★ 2026-10-28 긴급도·배송차량은 출고 지시할 때 정하는 칸이 없어 의미가 없다 → 뺐다 (사용자 요청) -->
   <div class="kv">
     <div class="cell hi"><div class="k">출고예정일</div><div class="v">${schedTxt}</div></div>
     <div class="cell"><div class="k">상차예정</div><div class="v">${ktime(g.loadTime)}</div></div>
-    <div class="cell${urg !== '보통' ? ' urg' : ''}"><div class="k">긴급도</div><div class="v">${e(urg)}</div></div>
-    <div class="cell"><div class="k">요청자</div><div class="v">${e(g.dispatchedBy) || '-'}</div></div>
-  </div>
-  <div class="kv kv2">
     <div class="cell"><div class="k">기사명</div><div class="v">${driverTxt}</div></div>
-    <div class="cell"><div class="k">배송차량</div><div class="v">${e(g.vehicle) || '-'}</div></div>
+    <div class="cell"><div class="k">요청자</div><div class="v">${e(g.dispatchedBy) || '-'}</div></div>
     <div class="cell"><div class="k">출고확인시각</div><div class="v">${ackTime || '<span style="color:#b8bec9">　　:　　</span>'}</div></div>
   </div>
   ${memoTxt ? `<div class="memo"><div class="mk">⚠ 비고 · 꼭 확인</div><div class="mv">${e(memoTxt)}</div></div>` : ''}
@@ -21166,7 +21161,6 @@ table{border-collapse:collapse;width:100%}
     <thead><tr><th>No</th><th>품목명 · 롯트 · 패턴</th><th>규격</th><th>수량</th><th>단위</th><th>출고지</th></tr></thead><tbody>${rows}</tbody></table>
   <div class="foot">
     <div class="box write"><div class="k">창고 코멘트</div></div>
-    <div class="box write"><div class="k">특이사항 (파손·수량 차이 등)</div></div>
   </div>
   <table class="sign">
     <tr><td class="k">요청</td><td class="v">${e(g.dispatchedBy) || ''}</td><td class="k">출고담당<br>(확인자)</td><td class="v">${e(g.handler) || ''}</td><td class="k">차량인수</td><td class="v"></td></tr>
