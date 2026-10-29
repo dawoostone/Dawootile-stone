@@ -10836,8 +10836,9 @@ function taxPreviewInner() {
     </tr>`).join('');
   const wd = (d.writeDate || '').replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
   const _q = (state.quotes || []).find(x => x.id === d._quoteId) || {};
-  const _base = d._bundle ? (+d._billTotal || 0) : (+_q.total || 0);      // 묶음이면 청구서 합계와 비교
-  const _lab = d._bundle ? '청구서' : '견적';
+  /* ★ 계약금 계산서면 «계약금», 잔금이면 «견적 합계 − 기발행 계약금» 과 비교 (2026-10-29) */
+  const _base = d._bundle ? (+d._billTotal || 0) : (d._dep ? (+d._dep.amt || 0) : ((+_q.total || 0) - (+d._lessDep || 0)));      // 묶음이면 청구서 합계와 비교
+  const _lab = d._bundle ? '청구서' : (d._dep ? '계약금' : (d._lessDep ? '잔금' : '견적'));
   const _gap = _base - d.totalAmount;
   const warn = (Math.abs(_gap) > 1)
     ? `<div class="banner" style="margin-bottom:11px;font-size:12.5px;background:#fdf1ef;border-left:4px solid #c0341d;border-radius:0 10px 10px 0;padding:10px 13px;color:#8a2b1a">
@@ -16867,6 +16868,9 @@ function buildBillTaxPayload() {
   if (!t.n) { toast('청구할 품목을 하나 이상 선택하세요'); return null; }
   const qs = _billQs().filter(q => _billEdit.items.some(x => x.qid === q.id && x.on));
   if (!qs.length) { toast('청구할 품목이 없습니다'); return null; }
+  /* ★ 계약금 계산서가 먼저 나간 견적은 묶음에 넣으면 계약금이 두 번 잡힌다 → 따로 발행하게 막는다 (2026-10-29) */
+  const _depQ = qs.find(q => taxDepPrev(q));
+  if (_depQ) { toast((_depQ.docNo || '') + ' 은 계약금 계산서가 먼저 나간 견적입니다 — 묶음에서 빼고 그 견적에서 따로 발행해 주세요'); return null; }
   const co = companyInfo();
   if (!(co.bizno || '').trim()) { toast('공급자 사업자번호가 없습니다 — 회사 정보에서 설정하세요'); return null; }
   const client = (qs[0].client || '').trim();
