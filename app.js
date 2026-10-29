@@ -5291,7 +5291,7 @@ function quoteNextDocNo() {
    견적번호가 중복된 예전 자료가 있으므로, 이미 쓰인 번호면 -2, -3 … 을 붙여 피한다. */
 function taxKeyInUse(key, myId) {
   const k = String(key || '').trim(); if (!k) return false;
-  return (state.quotes || []).some(x => x && x.id !== myId && String(x.taxMgtKey || '').trim() === k);
+  return (state.quotes || []).some(x => x && ((x.id !== myId && String(x.taxMgtKey || '').trim() === k) || String(((x.taxDep || {}).mgtKey) || '').trim() === k));
 }
 function taxFreeMgtKey(base, myId) {
   if (!taxKeyInUse(base, myId)) return base;
@@ -6962,6 +6962,23 @@ const TAX_MOD_REASONS = [
 ];
 function taxModReason(code) { return TAX_MOD_REASONS.find(r => r.code === (+code || 0)) || null; }
 function taxModRows(q) { return (q && Array.isArray(q.taxMods)) ? q.taxMods : []; }
+/* ══════════════════════════════════════════════════════════
+   ★★ 계약금 계산서 (2026-10-29) — 사용자: "계약금만 계산서 발행할 수 있게 해줘"
+   · 금액 = 견적서에 적은 계약금 그대로 (고치지 않는다)
+   · 품목 = 한 줄 「○○ 외 n건 계약금」 · 공급가액 = 계약금 ÷ 1.1
+   · 기록은 견적의 taxDep 에 따로 둔다 — taxInvoice(본 계산서)는 건드리지 않는다.
+     그래서 이 견적은 여전히 «잔금 계산서 발행 전» 으로 보인다.
+   · 나중에 같은 견적(또는 그 잔금 견적서)에서 발행하면 전체 품목 + 「기발행 계약금」 차감 줄이 붙어
+     남은 금액만 나간다.
+   ══════════════════════════════════════════════════════════ */
+function taxDepOf(q) { const d = q && q.taxDep; return (d && (+d.total || 0) > 0) ? d : null; }
+/* 이 견적에서 «이미 나간 계약금 계산서» — 잔금 견적서면 원본 견적의 것을 본다 */
+function taxDepPrev(q) {
+  if (!q) return null;
+  const own = taxDepOf(q); if (own) return own;
+  if (q.prepaidFromId) { const o = (state.quotes || []).find(x => x.id === q.prepaidFromId); return taxDepOf(o); }
+  return null;
+}
 /* 수정분 합 — 마이너스는 음수로 들어 있다 */
 function taxModSum(q) {
   const o = { supply: 0, vat: 0, total: 0, n: 0 };
@@ -7553,6 +7570,47 @@ function taxPrevSetPurpose(v) {
   if (c) c.setAttribute('style', _ppStyle(v === '청구', true));
 }
 function taxCancel() { taxModClear(); filters.taxEdit = ''; renderQuote(); qListRestore(); }
+/* ── 계약금 계산서: 발행 범위 (전체 / 계약금만) ─────────────── */
+function taxScopeCanDep(q) {
+  return !!(q && !(_taxModPlus && _taxModPlus.qid === q.id) && !q.taxMgtKey && !taxDepOf(q) && quoteDeposit(q));
+}
+/* 확정 전 견적은 계약금만 낼 수 있다 (전체 계산서는 확정 후) */
+function taxScopeDefault(q) { return (taxScopeCanDep(q) && !q.ordered) ? 'dep' : 'all'; }
+function taxScopeHtml(q) {
+  if (!taxScopeCanDep(q)) return `<input type="hidden" id="tx-scope" value="all">`;
+  const dp = quoteDeposit(q), cur = taxScopeDefault(q);
+  const b = (k, label) => `<button type="button" id="tx-sc-${k}" style="${_ppStyle(cur === k, false)}" onclick="taxSetScope('${k}')"${(k === 'all' && !q.ordered) ? ' disabled title="주문확정 후에 전체 금액으로 발행할 수 있습니다"' : ''}>${label}</button>`;
+  return `<div class="fld full" style="margin:0 0 12px"><label>발행 범위</label><input type="hidden" id="tx-scope" value="${cur}">
+    <div style="display:flex;gap:6px">${b('all', '전체 금액 ' + fmtWon(q.total) + '원')}${b('dep', '계약금만 ' + fmtWon(dp.amt) + '원 (' + _pctTxt(dp.pct) + '%)')}</div>
+    ${!q.ordered ? '<div style="font-size:11px;color:var(--t3);margin-top:4px">주문확정 전이라 계약금 계산서만 낼 수 있습니다.</div>' : ''}</div>`;
+}
+function taxSetScope(v) {
+  const id = filters.taxEdit; const q = (state.quotes || []).find(x => x.id === id); if (!q) return;
+  if (v === 'all' && !q.ordered) return;
+  const h = el('tx-scope'); if (h) h.value = v;
+  ['all', 'dep'].forEach(k => { const b = el('tx-sc-' + k); if (b) b.setAttribute('style', _ppStyle(v === k, false)); });
+  const box = el('tx-sumbox'); if (box) box.innerHTML = taxSumBoxHtml(q, v);
+}
+function taxSumBoxHtml(q, scope) {
+  const co = companyInfo();
+  const row = (k, v, st) => `<div style="display:flex;justify-content:space-between;margin-bottom:${st === 'last' ? 0 : 4}px"><span style="color:var(--t2)">${k}</span><b${st && st !== 'last' ? ` style="${st}"` : ''}>${v}</b></div>`;
+  let body = '';
+  if (scope === 'dep') {
+    const dp = quoteDeposit(q); const sup = Math.round(dp.amt / 1.1);
+    body = `<div style="font-size:12px;color:#1a56b8;font-weight:700;margin-bottom:6px"><i class="ti ti-percentage"></i> 계약금 계산서 — 견적 합계 ${fmtWon(q.total)}원의 ${_pctTxt(dp.pct)}%</div>`
+      + row('공급가액', fmtWon(sup) + '원') + row('세액', fmtWon(dp.amt - sup) + '원')
+      + `<div style="display:flex;justify-content:space-between;font-size:15px;border-top:1px solid var(--bd2);padding-top:6px"><span style="font-weight:700">합계</span><b style="color:var(--gd)">${fmtWon(dp.amt)}원</b></div>`
+      + `<div style="font-size:11px;color:var(--t3);margin-top:5px">잔금은 나중에 이 견적에서 다시 [계산서] 를 누르면 «기발행 계약금» 을 빼고 나갑니다.</div>`;
+  } else {
+    const pd = taxDepPrev(q);
+    body = row('공급가액', fmtWon(q.supply) + '원') + row('세액', fmtWon(q.vat) + '원')
+      + ((+q.discount || 0) > 0 ? row('할인 (D/C)', '- ' + fmtWon(q.discount) + '원', 'color:#c0341d') : '')
+      + (pd ? row('기발행 계약금' + (pd.nts ? ' <span style="font-size:11px;color:var(--t3)">(승인 ' + esc(pd.nts) + ')</span>' : ''), '- ' + fmtWon(pd.total) + '원', 'color:#1a56b8') : '')
+      + `<div style="display:flex;justify-content:space-between;font-size:15px;border-top:1px solid var(--bd2);padding-top:6px"><span style="font-weight:700">${pd ? '잔금 합계' : '합계'}</span><b style="color:var(--gd)">${fmtWon((+q.total || 0) - (pd ? (+pd.total || 0) : 0))}원</b></div>`;
+  }
+  return `<div style="background:var(--soft);border-radius:11px;padding:12px 14px;margin-bottom:12px;font-size:13px">
+        <div style="color:var(--t2);margin-bottom:5px">공급자: <b>${esc(co.name)}</b> (${esc(co.bizno)})</div>${body}</div>`;
+}
 function renderTaxForm() {
   const id = filters.taxEdit; const q = (state.quotes || []).find(x => x.id === id); if (!q) { filters.taxEdit = ''; renderQuote(); return; }
   const co = companyInfo(); const ti = clientTaxInfo(q.client);
@@ -7586,13 +7644,8 @@ function renderTaxForm() {
         <div class="fld" style="flex:1;min-width:150px;margin:0"><label>작성일자</label><input type="date" id="tx-date" value="${esc(todayStr())}" style="${inp}"></div>
         <div class="fld" style="flex:1;min-width:150px;margin:0"><label>영수/청구</label>${taxPurposeHtml(TAX_PURPOSE_DEFAULT)}</div>
       </div>
-      <div style="background:var(--soft);border-radius:11px;padding:12px 14px;margin-bottom:12px;font-size:13px">
-        <div style="color:var(--t2);margin-bottom:5px">공급자: <b>${esc(co.name)}</b> (${esc(co.bizno)})</div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="color:var(--t2)">공급가액</span><b>${fmtWon(q.supply)}원</b></div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:5px"><span style="color:var(--t2)">세액</span><b>${fmtWon(q.vat)}원</b></div>
-        ${(+q.discount || 0) > 0 ? `<div style="display:flex;justify-content:space-between;margin-bottom:5px"><span style="color:var(--t2)">할인 (D/C)</span><b style="color:#c0341d">- ${fmtWon(q.discount)}원</b></div>` : ''}
-        <div style="display:flex;justify-content:space-between;font-size:15px;border-top:1px solid var(--bd2);padding-top:6px"><span style="font-weight:700">합계</span><b style="color:var(--gd)">${fmtWon(q.total)}원</b></div>
-      </div>
+      ${taxScopeHtml(q)}
+      <div id="tx-sumbox">${taxSumBoxHtml(q, taxScopeDefault(q))}</div>
       <div style="background:var(--soft);border-radius:11px;padding:10px 12px;margin-bottom:11px">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <button class="btn btn-sm" onclick="taxPing()"><i class="ti ti-plug-connected"></i>팝빌 연동 상태 확인</button>
@@ -7814,6 +7867,29 @@ function buildTaxPayload(id) {
   /* ★ 수정발행은 -M1, -M2 … 로 따로 번호를 쓴다 (원본 번호는 그대로 둔다) */
   const _mgtKey = _mp ? (String(q.taxMgtKey || _mgtBase).replace(/-[RM]\d+$/, '') + '-M' + (taxModRows(q).length + 1))
     : (_reN ? (_mgtBase + '-R' + _reN) : _mgtBase);
+  /* ★ 계약금 계산서 — 품목 한 줄 (2026-10-29) */
+  const _scope = (el('tx-scope') && el('tx-scope').value) || 'all';
+  if (_scope === 'dep' && !_mp) {
+    const dp = quoteDeposit(q);
+    if (!dp || !taxScopeCanDep(q)) { toast('이 견적은 계약금 계산서를 낼 수 없습니다 (계약금이 없거나 이미 발행됨)'); return null; }
+    const nmList = (q.items || []).filter(it => String(it.name || '').trim() && (+it.amt || 0) > 0);
+    const nm0 = (nmList.find(it => !isGagongItem(it)) || nmList[0] || {}).name || '자재';
+    const nm = String(nm0).trim() + (nmList.length > 1 ? ' 외 ' + (nmList.length - 1) + '건' : '') + ' 계약금';
+    const dSup = Math.round(dp.amt / 1.1), dVat = dp.amt - dSup;
+    const dKey = taxFreeMgtKey(_rawBase.slice(0, 20) + '-D', q.id);
+    return {
+      _quoteId: id, _buyer: buyer, _reN: 0, _dep: { pct: dp.pct, amt: dp.amt },
+      invoicerCorpNum: co.bizno, mgtKey: dKey, writeDate, purposeType,
+      invoicerCorpName: co.name, invoicerCEOName: co.ceo, invoicerAddr: co.addr, invoicerBizType: _btType, invoicerBizClass: _btClass, invoicerContactName: (me && me.name) || '', invoicerTEL: _invTel, invoicerEmail: co.email,
+      invoiceeCorpNum: buyer.bizNo, invoiceeCorpName: buyer.corpName, invoiceeCEOName: buyer.ceo, invoiceeAddr: buyer.addr, invoiceeBizType: buyer.bizType, invoiceeBizClass: buyer.bizClass,
+      invoiceeContactName1: buyer.contact, invoiceeEmail1: buyer.email, invoiceeTEL1: buyer.tel || '', invoiceeHP1: buyer.hp || '',
+      invoiceeContactName: buyer.contact, invoiceeEmail: buyer.email,
+      supplyCostTotal: dSup, taxTotal: dVat, totalAmount: dp.amt,
+      detailList: [{ itemName: nm.slice(0, 100), spec: ('견적 ' + (q.docNo || '') + ' 의 ' + _pctTxt(dp.pct) + '%').slice(0, 60), qty: 1, unitCost: dSup, supplyCost: dSup, tax: dVat, remark: '' }],
+      remark1: taxRemarkOf(q), memo: '견적 ' + (q.docNo || '') + ' 계약금',
+      modifyCode: undefined, orgNTSConfirmNum: undefined, _mod: null
+    };
+  }
   const items = (q.items || []).filter(it => (+it.amt || 0) !== 0 || (+it.qty || 0) !== 0);   // 환불(마이너스) 행도 그대로 넣는다
   const _gag = items.filter(isGagongItem), _rest = items.filter(it => !isGagongItem(it));
   /* ★ 품목 금액(amt)은 보통 '공급가액'인데, 단가를 부가세 포함으로 넣은 견적이 간혹 있다.
@@ -7840,11 +7916,14 @@ function buildTaxPayload(id) {
     const _dcSup = Math.round(_dc / 1.1);
     detailList.push({ itemName: TAX_DC_NAME, spec: '', qty: '', unitCost: -_dcSup, supplyCost: -_dcSup, tax: -(_dc - _dcSup), remark: '' });
   }
+  /* ★ 계약금 계산서가 먼저 나간 견적 → 「기발행 계약금」 차감 줄 (남은 금액만 발행) */
+  const _pd = _mp ? null : taxDepPrev(q);
+  if (_pd) detailList.push({ itemName: '기발행 계약금', spec: _pd.nts ? ('승인 ' + _pd.nts).slice(0, 60) : '', qty: '', unitCost: -Math.round(+_pd.supply || 0), supplyCost: -Math.round(+_pd.supply || 0), tax: -Math.round(+_pd.vat || 0), remark: '' });
   const supplyTotal = detailList.reduce((a, b) => a + (+b.supplyCost || 0), 0);
   const taxTotal = detailList.reduce((a, b) => a + (+b.tax || 0), 0); const totalAmount = supplyTotal + taxTotal;
   const remark1 = taxRemarkOf(q);   // 계산서 비고 = 현장명(없으면 견적번호)
   return {
-    _quoteId: id, _buyer: buyer, _reN: _reN,
+    _quoteId: id, _buyer: buyer, _reN: _reN, _lessDep: _pd ? Math.round(+_pd.total || 0) : 0,
     invoicerCorpNum: co.bizno, mgtKey: _mgtKey, writeDate, purposeType,
     invoicerCorpName: co.name, invoicerCEOName: co.ceo, invoicerAddr: co.addr, invoicerBizType: _btType, invoicerBizClass: _btClass, invoicerContactName: (me && me.name) || '', invoicerTEL: _invTel, invoicerEmail: co.email,
     invoiceeCorpNum: buyer.bizNo, invoiceeCorpName: buyer.corpName, invoiceeCEOName: buyer.ceo, invoiceeAddr: buyer.addr, invoiceeBizType: buyer.bizType, invoiceeBizClass: buyer.bizClass,
@@ -9376,6 +9455,8 @@ function ledgerRows(client, cat) {
     rows.push({ d: q.date || '', k: 'sale', amt: amt, full: CAT ? tot : _full, part: mixed, docNo: q.docNo || '', site: quoteSiteText(q), attn: quoteAttnText(q), id: q.id,
       rfA: _rfA, rfV: _rfV,                                               // ★ 환불이 반영된 줄인지
       got: CAT ? null : quotePaid(q), left: CAT ? null : quoteRem(q) });   // ★ 이 견적이 얼마나 메워졌나
+    { const _td = CAT ? null : taxDepOf(q);   // ★ 계약금 계산서 (2026-10-29)
+      if (_td) rows.push({ d: _td.date || q.date || '', k: 'tax', amt: Math.round(+_td.total || 0), part: false, docNo: (q.docNo || '') + ' 계약금', id: q.id, nts: _td.nts || '', mgt: _td.mgtKey || '', mods: 0, voided: false }); }
     if (q.taxInvoice) {
       /* ★ 수정발행이 있으면 «원본 + 수정분» 으로 (2026-10-19) */
       const _mn = taxModRows(q).length;
@@ -9441,9 +9522,10 @@ function ledgerAgg() {
   (state.quotes || []).forEach(q => {
     if (!q.ordered) return; const c = (q.client || '').trim(); if (!c) return;
     const o = get(c), tot = Math.round(+q.total || 0);
-    if (q.taxInvoice && !taxVoided(q)) o.taxAmt += (taxModRows(q).length ? taxNet(q).total : (+q.taxTotal || tot));
+    const _tdA = taxDepOf(q) ? Math.round(+q.taxDep.total || 0) : 0;   // ★ 계약금 계산서 (2026-10-29)
+    if (q.taxInvoice && !taxVoided(q)) o.taxAmt += (taxModRows(q).length ? taxNet(q).total : (+q.taxTotal || tot)) + _tdA;
     else if (isCashRcpt(q)) { o.cashAmt = (o.cashAmt || 0) + tot; o.cashN = (o.cashN || 0) + 1; }
-    else if (!quoteVoided(q)) { o.noTaxAmt += tot; o.noTaxN++; }
+    else if (!quoteVoided(q)) { o.taxAmt += _tdA; o.noTaxAmt += tot - _tdA; o.noTaxN++; }
     const d = q.date || ''; if (d > o.last) o.last = d;
   });
   let unassigned = 0, unassignedSum = 0;
@@ -10628,6 +10710,9 @@ function taxListInner() {
      묶음에 딸린 견적(taxBundleRef)은 금액이 0 으로 저장돼 있어 그대로 두면
      0원짜리 줄이 여러 개 뜬다 → 대표 건 한 줄에 전체 금액으로 모은다. */
   const list = (state.quotes || []).filter(q => (q.taxMgtKey || q.ntsConfirmNum) && !q.taxBundleRef)
+    .concat((state.quotes || []).filter(q => taxDepOf(q)).map(q => Object.assign({}, q, {   // ★ 계약금 계산서도 한 줄 (2026-10-29)
+      _depRow: true, taxDate: q.taxDep.date, taxTestMode: !!q.taxDep.test, taxMgtKey: q.taxDep.mgtKey, ntsConfirmNum: q.taxDep.nts,
+      taxTotal: q.taxDep.total, taxState: q.taxDep.state || '', taxIssuedAt: q.taxDep.at, taxBundleIds: [], taxBundleNos: [], docNo: (q.docNo || '') + ' 계약금' })))
     .sort((a, b) => (+b.taxIssuedAt || 0) - (+a.taxIssuedAt || 0) || (b.taxDate || '').localeCompare(a.taxDate || ''));
   if (!list.length) return `<div class="empty"><i class="ti ti-file-off"></i>앱에서 발행한 계산서가 아직 없습니다</div>`;
   const sum = list.reduce((a, q) => a + (+q.taxTotal || +q.total || 0), 0);
@@ -10650,7 +10735,7 @@ function taxListInner() {
         <td style="text-align:right;font-weight:700;white-space:nowrap">${fmtWon(q.taxTotal || q.total)}</td>
         <td style="font-size:11px">${q.ntsConfirmNum ? esc(q.ntsConfirmNum) : '<span style="color:var(--t3)">-</span>'}</td>
         <td style="font-size:11px">${q.taxState ? esc(q.taxState) : '<span style="color:var(--t3)">미확인</span>'}</td>
-        <td style="white-space:nowrap"><button class="btn btn-sm" title="발행 내용 보기" onclick="taxViewDoc('${esc(q.taxMgtKey || '')}','print')"><i class="ti ti-file-search"></i>보기</button><button class="btn btn-sm btn-ghost" title="팝빌 상세화면" onclick="taxOpenDoc('${esc(q.taxMgtKey || '')}')"><i class="ti ti-external-link"></i></button><button class="btn btn-sm btn-ghost" title="상태 새로고침" onclick="taxRefreshInfo('${q.id}')"><i class="ti ti-refresh"></i></button></td>
+        <td style="white-space:nowrap"><button class="btn btn-sm" title="발행 내용 보기" onclick="taxViewDoc('${esc(q.taxMgtKey || '')}','print')"><i class="ti ti-file-search"></i>보기</button><button class="btn btn-sm btn-ghost" title="팝빌 상세화면" onclick="taxOpenDoc('${esc(q.taxMgtKey || '')}')"><i class="ti ti-external-link"></i></button><button class="btn btn-sm btn-ghost" title="상태 새로고침" onclick="taxRefreshInfo('${q.id}')"${q._depRow ? ' hidden' : ''}><i class="ti ti-refresh"></i></button></td>
       </tr>`).join('')}
     </tbody></table></div>`;
 }
@@ -10705,7 +10790,7 @@ function openTaxPreview(id) {
     <b>수정세금계산서 «정정분»</b> 입니다 — ${esc((taxModReason(p._mod.code) || {}).nm || '')}<br>
     작성일자는 당초 작성일자 <b>${esc(String(p.writeDate || '').replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3'))}</b> 로 나갑니다 (아래 날짜칸과 상관없이 고정).
     당초 승인번호 <b>${esc(p.orgNTSConfirmNum || '')}</b> 에 연결됩니다.</span></div>` : '';
-  openModal(`<div class="sheet-h"><h3><i class="ti ti-file-search"></i>${p._mod ? '정정분 발행 내용 확인' : '발행 내용 확인'}</h3><button class="x" onclick="closeModal()">×</button></div>${_mb}<div id="taxprev-body">${taxPreviewInner()}</div>`);
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-file-search"></i>${p._mod ? '정정분 발행 내용 확인' : (p._dep ? '계약금 계산서 발행 내용 확인' : '발행 내용 확인')}</h3><button class="x" onclick="closeModal()">×</button></div>${_mb}${p._dep ? `<div class="banner info" style="margin-bottom:11px;font-size:12.5px"><i class="ti ti-percentage"></i><span style="flex:1;min-width:0"><b>계약금 계산서</b>입니다 — 견적 합계의 ${_pctTxt(p._dep.pct)}% (${fmtWon(p._dep.amt)}원). 잔금은 나중에 «기발행 계약금»을 빼고 따로 발행합니다.</span></div>` : ''}${(!p._dep && p._lessDep) ? `<div class="banner info" style="margin-bottom:11px;font-size:12.5px"><i class="ti ti-receipt-2"></i><span style="flex:1;min-width:0">계약금 계산서 <b>${fmtWon(p._lessDep)}원</b>이 먼저 나가서, 맨 아래 «기발행 계약금» 줄로 빼고 <b>잔금만</b> 발행합니다.</span></div>` : ''}<div id="taxprev-body">${taxPreviewInner()}</div>`);
 }
 function taxPrevSum() {
   const d = _taxDraft; if (!d) return;
@@ -10842,7 +10927,17 @@ async function submitTaxInvoice(id) {
       toast('정정분 발행 완료' + (j.ntsConfirmNum ? (' · 승인 ' + j.ntsConfirmNum) : ''));
       filters.taxEdit = ''; renderQuote(); qListRestore(); setTimeout(() => openTaxResult(id), 350);
     }
-    else if (r.ok && j.ok) { await Store.update('quotes', id, { taxInvoice: true, taxDate: todayStr(), ntsConfirmNum: j.ntsConfirmNum || '', taxMgtKey: j.mgtKey || payload.mgtKey, taxReissue: _reN, taxTestMode: !!j.test, taxSupply: payload.supplyCostTotal, taxVat: payload.taxTotal, taxTotal: payload.totalAmount, taxIssuedAt: Date.now() }); _taxDraft = null; closeModal(); toast('세금계산서 발행 완료' + (j.ntsConfirmNum ? (' · 승인 ' + j.ntsConfirmNum) : '')); filters.taxEdit = ''; renderQuote(); qListRestore(); setTimeout(() => openTaxResult(id), 350); }   // 발행된 내용을 바로 확인할 수 있게
+    else if (r.ok && j.ok && payload._dep) {
+      /* ★ 계약금 계산서 — 본 계산서(taxInvoice)는 그대로 두고 taxDep 에만 적는다 */
+      const _wd = String(payload.writeDate || '').replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3') || todayStr();
+      await Store.update('quotes', id, { taxDep: { mgtKey: j.mgtKey || payload.mgtKey, nts: j.ntsConfirmNum || '', date: _wd,
+        supply: Math.round(+payload.supplyCostTotal || 0), vat: Math.round(+payload.taxTotal || 0), total: Math.round(+payload.totalAmount || 0),
+        pct: payload._dep.pct, test: !!j.test, by: (me && me.name) || '', at: Date.now() } });
+      _taxDraft = null; closeModal();
+      toast('계약금 계산서 발행 완료 · ' + fmtWon(payload.totalAmount) + '원' + (j.ntsConfirmNum ? (' · 승인 ' + j.ntsConfirmNum) : ''));
+      filters.taxEdit = ''; renderQuote(); qListRestore();
+    }
+    else if (r.ok && j.ok) { await Store.update('quotes', id, { taxLessDep: Math.round(+payload._lessDep || 0), taxInvoice: true, taxDate: todayStr(), ntsConfirmNum: j.ntsConfirmNum || '', taxMgtKey: j.mgtKey || payload.mgtKey, taxReissue: _reN, taxTestMode: !!j.test, taxSupply: payload.supplyCostTotal, taxVat: payload.taxTotal, taxTotal: payload.totalAmount, taxIssuedAt: Date.now() }); _taxDraft = null; closeModal(); toast('세금계산서 발행 완료' + (j.ntsConfirmNum ? (' · 승인 ' + j.ntsConfirmNum) : '')); filters.taxEdit = ''; renderQuote(); qListRestore(); setTimeout(() => openTaxResult(id), 350); }   // 발행된 내용을 바로 확인할 수 있게
     else if (_dupErr(j)) { toast('문서번호가 모두 사용중입니다 — 견적번호를 바꾸고 다시 시도해 주세요'); }
     else { toast('발행 실패: ' + ((j && j.error) || ('HTTP ' + r.status))); }
   } catch (e) { toast('발행 오류: ' + ((e && e.message) || e)); }
@@ -12604,6 +12699,8 @@ function quoteCardHtml(q) {
           <button class="btn btn-sm btn-ghost" title="PNG 저장" onclick="downloadQuotePng('${q.id}')"><i class="ti ti-photo"></i></button>
           <button class="btn btn-sm btn-ghost" title="이미지 복사" onclick="copyQuoteImage('${q.id}')"><i class="ti ti-clipboard"></i></button>
         </span>
+        ${(() => { const d = taxDepOf(q); return d ? `<button class="pill" style="border:1px solid #cfe0ff;background:#eaf2ff;color:#1a56b8;cursor:pointer" onclick="taxViewDoc('${esc(d.mgtKey || '')}','print')" title="계약금 계산서 보기${d.nts ? ' · 승인 ' + esc(d.nts) : ''}"><i class="ti ti-file-check"></i> 계약금 계산서 ${fmtWon(d.total)}${d.test ? ' (테스트)' : ''}</button>` : ''; })()}
+        ${(canTax() && !q.ordered && !isCashRcpt(q) && taxScopeCanDep(q)) ? `<button class="btn btn-sm" style="color:#1a56b8" onclick="openTaxForm('${q.id}')" title="계약금만 세금계산서 발행"><i class="ti ti-file-invoice"></i>계약금 계산서</button>` : ''}
         ${(canTax() && q.ordered && !isCashRcpt(q)) ? (q.taxMgtKey
           /* 이미 발행한 건은 '조회'만 보여준다. 수정발행은 조회 창 안에서 넘어간다. */
           ? `<button class="btn btn-sm" style="color:var(--gd)" onclick="openTaxResult('${q.id}')" title="발행한 계산서 조회"><i class="ti ti-file-search"></i>계산서 조회</button>`
@@ -15428,7 +15525,12 @@ function salesFromApp(sd, ed) {
       nts: q.ntsConfirmNum || '', mgt: q.taxMgtKey || '', test: !!q.taxTestMode,
       src: 'app', qid: q.id, item: '', extId: q.taxExtId || ''   // ★ 손으로 이어 붙인 홈택스 계산서 id
     };
-  });
+  }).concat((state.quotes || []).filter(q => { const d = taxDepOf(q); return d && (d.date || '') >= sd && (d.date || '') <= ed; }).map(q => {
+    const d = q.taxDep;   // ★ 계약금 계산서 (2026-10-29)
+    return { key: 'QD' + q.id, date: d.date || '', client: (q.client || '').trim(), docNo: (q.docNo || '') + ' 계약금',
+      supply: +d.supply || 0, vat: +d.vat || 0, total: +d.total || 0, nts: d.nts || '', mgt: d.mgtKey || '', test: !!d.test,
+      src: 'app', qid: q.id, item: '계약금', extId: '' };
+  }));
 }
 /* 홈택스에서 수집한 매출 계산서 */
 function salesFromHometax(sd, ed) {
