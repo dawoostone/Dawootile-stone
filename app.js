@@ -329,6 +329,20 @@ function canQuoteDone() {
   if ((lm.role || '') !== 'staff') return false;
   return lm.canDone !== false;
 }
+/* ══════════════════════════════════════════════════════════
+   ★★ 출고 대기열 «바로 완료 처리» 권한 (2026-10-29)
+   사용자: *"출고 완료는 차장님까지 뜨게"*
+   예전엔 관리자(실장·지사장)만 보였다. 이제 직급이 «차장» 이상인 직원도 보인다.
+   직급은 직원 이름 끝의 호칭으로 본다 (예: 「곽봉권 차장」). 대리·주임은 그대로 안 보인다.
+   ══════════════════════════════════════════════════════════ */
+const CHULGO_DONE_RANKS = ['차장', '부장', '본부장', '이사', '상무', '전무', '대표', '지사장', '실장'];
+function canChulgoDone() {
+  if (isAdmin()) return true;
+  const lm = (typeof liveMe === 'function' ? liveMe() : me) || {};
+  if ((lm.role || '') !== 'staff') return false;
+  const nm = String(lm.name || '').trim();
+  return CHULGO_DONE_RANKS.some(r => nm.endsWith(r));
+}
 function isCustomerRole() { return me && me.role === 'customer'; }  // 고객(거래처) — 재고 조회 전용
 /* ── 고객·시공팀 화면: 좌측 메뉴를 아예 안 띄운다 (2026-09-29) ──
    사용자: "고객 화면에서는 좌측 메뉴 아예 안뜨게 해줘"
@@ -21389,19 +21403,19 @@ function chulgoQueueRow(r) {
       ${(r.dispatchDest || '').trim() ? `<div style="font-size:11px;color:#1b4fb0;margin-top:2px"><i class="ti ti-map-pin" style="font-size:12px;vertical-align:-1px"></i> 하차 ${esc(r.dispatchDest)}</div>` : ''}
       <div style="font-size:10.5px;color:var(--t3);margin-top:2px">${esc(r.docNo || '')} · ${esc(r.sender || '')}</div></div>
     <button class="btn btn-ghost btn-sm" style="flex:none" onclick="event.preventDefault();chulgoPrint('${r.id}')" title="출고증/지시서"><i class="ti ti-printer"></i></button>
-    ${isAdmin() ? `<button class="btn btn-ghost btn-sm" style="flex:none;color:var(--gd)" onclick="event.preventDefault();chulgoQueueComplete('${r.id}')" title="바로 완료 처리(관리자) — 이미 기출고된 건"><i class="ti ti-circle-check"></i></button>` : ''}
+    ${canChulgoDone() ? `<button class="btn btn-ghost btn-sm" style="flex:none;color:var(--gd)" onclick="event.preventDefault();chulgoQueueComplete('${r.id}')" title="바로 완료 처리 — 이미 기출고된 건"><i class="ti ti-circle-check"></i></button>` : ''}
     <button class="btn btn-ghost btn-sm" style="flex:none;color:var(--red-t)" onclick="event.preventDefault();delChulgoReq('${r.id}')" title="출고 취소(재고 복구)"><i class="ti ti-x"></i></button>
   </label>`;
 }
 async function chulgoQueueComplete(id) {
-  if (!isAdmin()) { toast('관리자만 가능합니다'); return; }
+  if (!canChulgoDone()) { toast('차장 이상만 가능합니다'); return; }
   const r = (state.chulgoReqs || []).find(x => x.id === id); if (!r) return;
   if (!confirm('이 건을 바로 완료 처리할까요?\n(등록 시 재고는 이미 차감됨 · 완료로만 정리)')) return;
   await Store.update('chulgoReqs', id, { status: '완료', dispatchId: r.dispatchId || ('D' + Date.now()), doneBy: (me && me.name) || '', doneAt: Date.now(), dispatchedAt: r.dispatchedAt || Date.now(), dispatchedBy: r.dispatchedBy || (me && me.name) || '' });
   toast('완료 처리됨'); renderChulgo();
 }
 async function chulgoQueueCompleteAll() {
-  if (!isAdmin()) { toast('관리자만 가능합니다'); return; }
+  if (!canChulgoDone()) { toast('차장 이상만 가능합니다'); return; }
   const queue = (state.chulgoReqs || []).filter(r => r.reqType === '출고' && (r.status || '') === '대기열');
   if (!queue.length) { toast('대기열이 비어 있습니다'); return; }
   if (!confirm(`대기열 ${queue.length}건을 모두 완료 처리할까요?\n(등록 시 재고는 이미 차감됨 · 완료로만 정리)`)) return;
@@ -21478,7 +21492,7 @@ function chulgoOfficeSection() {
     ${driverView}
     ${whAlertCard}
     <div class="card" style="padding:13px 15px;margin-bottom:12px">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:3px"><div style="font-weight:700;font-size:14px"><i class="ti ti-list-check" style="color:var(--blue)"></i> 출고 대기열 <span style="font-size:12px;color:var(--t3)">(${queue.length}건)</span></div>${isAdmin() && queue.length ? `<button class="btn btn-ghost btn-sm" style="flex:none;color:var(--gd)" onclick="chulgoQueueCompleteAll()" title="이미 기출고된 대기열 전체를 완료 처리(관리자)"><i class="ti ti-checks"></i> 전체 완료</button>` : ''}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:3px"><div style="font-weight:700;font-size:14px"><i class="ti ti-list-check" style="color:var(--blue)"></i> 출고 대기열 <span style="font-size:12px;color:var(--t3)">(${queue.length}건)</span></div>${canChulgoDone() && queue.length ? `<button class="btn btn-ghost btn-sm" style="flex:none;color:var(--gd)" onclick="chulgoQueueCompleteAll()" title="이미 기출고된 대기열 전체를 완료 처리"><i class="ti ti-checks"></i> 전체 완료</button>` : ''}</div>
       <div style="font-size:11.5px;color:var(--t3);margin-bottom:9px">출고 탭에서 출고를 등록하면 여기에 쌓입니다. 묶을 항목을 체크하고 배차 정보를 넣어 <b>출고 지시</b>를 내리면 창고에 소리로 알림이 갑니다.${isAdmin() ? ' <span style="color:var(--gd)">관리자는 각 건의 ✓로 바로 완료 처리할 수 있습니다.</span>' : ''}</div>
       <div id="chulgo-queue" data-keepscroll style="max-height:38vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border:0.5px solid var(--bd);border-radius:10px;margin-bottom:10px">${queue.length ? queue.map(chulgoQueueRow).join('') : `<div style="padding:18px;text-align:center;color:var(--t3);font-size:12.5px">대기열이 비어 있습니다.<br>출고 탭 → 출고 등록을 하면 여기로 올라옵니다.</div>`}</div>
       <div style="display:flex;gap:8px;margin-bottom:8px">
