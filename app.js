@@ -6275,6 +6275,101 @@ function quoteBalanceNew(id) {
 }
 /* 부대비용·가공 프리셋 (견적 폼에 항상 표시, 수량 입력한 것만 견적서 반영) */
 const CONSUMER_GAGONG = [{ name: '가공비 12T (장당)', unit: '장' }, { name: '가공비 6T (장당)', unit: '장' }];   // 소비자 유형 가공비
+/* ══════════════════════════════════════════════════════════
+   ★★ 현장 운임 자동 (2026-10-29) — 사용자: "운임표 학습해서 현장 주소 넣으면 현장으로 가는 운임
+       자동으로 넣어줄 수 있는지? 1톤 + 1만원(마진) 하면 됨"
+   · 운임표(엑셀) 1톤 칸 그대로 · 단위 천원 (120 = 120,000원) + 마진 1만원
+     실제 견적 142건 중 53건이 이미 정확히 «1톤 + 1만원» 이었다 → 단위·규칙 확인됨
+   · 「운송비 (공장-현장)」 줄에 넣는다 (지난 견적에서 442번 쓴 줄)
+   · 위에서부터 «구체적인 지역» 먼저 본다 (양주 은현 → 양주, 파주 조리읍 → 파주 …)
+   · 표에 없는 지역은 넣지 않고 «직접 입력» 안내만 한다
+   · 넣는 건 사람이 현장 주소를 고쳤을 때만 — 저장된 견적을 열기만 하면 안 바꾼다
+   ══════════════════════════════════════════════════════════ */
+const FREIGHT_1T = [
+  // [표의 지역명, 1톤(천원), 주소에서 찾을 규칙(모두 만족해야)]
+  ['영종도', 170, [/영종|운서동|중산동|운남동|운북동/]],
+  ['인천서구', 140, [/인천/, /서구|청라|검단|가정동|석남동|연희동|원당동|당하동|마전동|불로동/]],
+  ['인천남동+송도', 130, [/송도|인천.*(남동구|논현동|구월동|간석동|만수동)|남동구/]],
+  ['인천계양구+부천', 110, [/계양|부천/]],
+  ['파평+강화+파주조리읍', 160, [/파평|강화|조리읍/]],
+  ['대곶+파주+양촌+양주은현', 140, [/대곶|양촌|은현|파주/]],
+  ['김포구래', 140, [/김포/, /구래/]],
+  ['김포고촌+양주+대부남동', 130, [/고촌|대부남동|(?<!남)양주/]],
+  ['포천신북', 150, [/포천/, /신북/]],
+  ['일산+포천', 130, [/일산|포천/]],
+  ['의정부', 120, [/의정부/]],
+  ['남양주수동', 110, [/남양주/, /수동면/]],
+  ['남양주화도읍', 100, [/남양주/, /화도/]],
+  ['평택포승+화성우정읍', 130, [/포승|우정읍/]],
+  ['화성봉담', 100, [/봉담/]],
+  ['화성정남+남양', 110, [/정남면|남양읍|남양동/]],
+  ['오산+화성석우동', 90, [/오산|석우동/]],
+  ['평택', 110, [/평택/]],
+  ['안산+시흥', 110, [/안산|시흥시|경기[^,]*시흥/]],
+  ['성남+하남+용인수지', 80, [/성남|분당|판교|위례|하남|수지/]],
+  ['수원+안양+의왕+기흥', 90, [/수원|영통|광교|안양|의왕|기흥|동안구|만안구/]],
+  ['군포', 90, [/군포|산본/]],
+  ['광명', 100, [/광명/]],
+  ['여주+안성', 100, [/여주|안성/]],
+  ['천안', 140, [/천안/]],
+  ['강서+양천+구로+마포', 120, [/강서구|양천구|구로구|마포구|(^|\s)(강서|양천|구로|마포|목동)/]],
+  ['강남+서초+강동+송파', 100, [/강남구|서초구|강동구|송파구|(^|\s)(강남|서초|강동|송파|잠실)/]],
+  ['성북+강북+여의도', 120, [/성북구|강북구|여의도|(^|\s)(성북|강북)/]],
+  ['중구+용산', 120, [/용산구|(^|\s)용산|서울[^,]*중구/]],
+  ['성동', 110, [/성동구|(^|\s)(성동|성수동|왕십리)/]],
+  ['강릉+속초+양양', 260, [/강릉|속초|양양/]],
+  ['청주+충주+제천', 170, [/청주|충주|제천/]],
+  ['아산', 140, [/(^|\s)아산(시)?(\s|$)/]],
+  ['진천', 130, [/진천/]],
+  ['예산+당진', 170, [/예산|당진/]],
+  ['대전+태안', 190, [/(^|\s)대전(광역시|시)?(\s|$)|태안/]],
+  ['세종', 180, [/세종(특별자치|시|\s*[가-힣]+[읍면동])/]],
+  ['음성', 130, [/음성/]],
+  ['증평', 150, [/증평/]],
+  ['전라광주', 410, [/광주광역시|광주\s*(광산|서구|북구|남구|동구)/]],
+  ['군산+전주', 310, [/군산|전주/]],
+  ['횡성', 160, [/횡성/]],
+  ['가평', 140, [/가평/]],
+  ['춘천', 180, [/춘천/]],
+  ['원주', 140, [/원주/]],
+  ['대구', 330, [/(^|\s)대구(광역시|시)?(\s|$)/]],
+];
+function freightMatch(addr) {   // → { region, ton1 } 또는 null
+  const a = String(addr || '').replace(/\s+/g, ' ');
+  if (!a.trim()) return null;
+  for (const [nm, k, rules] of FREIGHT_1T) if (rules.every(r => r.test(a))) return { region: nm, ton1: k * 1000 };
+  return null;
+}
+const FREIGHT_MARGIN = 10000;
+const FREIGHT_ITEM = '운송비 (공장-현장)';
+function freightHintHtml(addr, applied) {
+  const a = String(addr || '').trim(); if (!a) return '';
+  const m = freightMatch(a);
+  if (!m) return '<span style="color:var(--t3)"><i class="ti ti-truck"></i> 운임표에 없는 지역입니다 — 운송비는 직접 입력해 주세요</span>';
+  const v = m.ton1 + FREIGHT_MARGIN;
+  return `<span style="color:#0f766e"><i class="ti ti-truck"></i> 운임표 <b>${esc(m.region)}</b> · 1톤 ${fmtWon(m.ton1)} + 마진 ${fmtWon(FREIGHT_MARGIN)} = <b>${fmtWon(v)}원</b>${applied ? ' → 「' + FREIGHT_ITEM + '」에 넣었습니다' : ''}</span>`;
+}
+let _frTimer = 0;
+function quoteSiteFreight() { clearTimeout(_frTimer); _frTimer = setTimeout(quoteSiteFreightNow, 500); }
+function quoteSiteFreightNow() {
+  const addr = (el('q-site') && el('q-site').value || '').trim();
+  const hint = el('q-site-fr');
+  const row = Array.from(document.querySelectorAll('.qx-row')).find(r => r.getAttribute('data-name') === FREIGHT_ITEM);
+  const m = freightMatch(addr);
+  if (!row) { if (hint) hint.innerHTML = freightHintHtml(addr, false); return; }
+  const pEl = row.querySelector('.qx-price'), qEl = row.querySelector('.qx-qty');
+  if (m) {
+    const v = m.ton1 + FREIGHT_MARGIN;
+    if (!row.dataset.frAuto) row.dataset.frQty0 = qEl.value;          // 처음 넣기 전 수량을 기억 (되돌릴 때)
+    pEl.value = v; if (!(_numv(qEl.value) > 0)) qEl.value = '1';
+    row.dataset.frAuto = String(v);
+  } else if (row.dataset.frAuto && _numv(pEl.value) === +row.dataset.frAuto) {
+    /* 표에 없는 주소로 바뀌면 — 앱이 넣었던 운임은 되돌린다 (사람이 고친 값은 그대로) */
+    pEl.value = ''; qEl.value = row.dataset.frQty0 || ''; row.dataset.frAuto = '';
+  }
+  if (hint) hint.innerHTML = freightHintHtml(addr, !!m);
+  quoteRecalc();
+}
 const QUOTE_EXTRAS = [
   { name: '재단비 12T', unit: 'M' }, { name: '재단비 6T', unit: 'M' },
   { name: '북매치 재단', unit: 'M' }, { name: '워터젯', unit: 'M' },
@@ -6460,7 +6555,7 @@ function renderQuoteForm() {
         </div>
         <div class="fld full" style="margin-bottom:10px"><label>수신·참조 <span style="color:var(--t3);font-weight:500">(담당자·현장 등, 선택)</span></label><input id="q-attn" lang="ko" placeholder="예: 홍길동 과장 / OO현장" value="${esc(v.attn || '')}"></div>
         <div class="fld full" style="margin-bottom:10px;background:var(--soft);border-radius:10px;padding:9px 12px"><label style="display:flex;align-items:center;gap:9px;cursor:pointer;font-weight:600;margin:0"><input type="checkbox" id="q-userep" ${editing && v.useSalesRep ? 'checked' : ''} style="width:18px;height:18px"> 영업담당자로 표기 <span style="font-weight:400;color:var(--t3);font-size:12px">(견적 담당자 대신 거래처 영업담당자 이름·연락처 표시)</span></label></div>
-        <div class="fld full" style="margin-bottom:10px"><label>현장 주소 <span style="color:var(--t3);font-weight:500">(선택 · 견적서 수신란에 표시)</span></label><input id="q-site" lang="ko" placeholder="예: OO시 OO구 OO동 OO현장" value="${esc(v.siteAddr || '')}"></div>
+        <div class="fld full" style="margin-bottom:10px"><label>현장 주소 <span style="color:var(--t3);font-weight:500">(선택 · 견적서 수신란에 표시)</span></label><input id="q-site" lang="ko" placeholder="예: OO시 OO구 OO동 OO현장" value="${esc(v.siteAddr || '')}" oninput="quoteSiteFreight()"><div id="q-site-fr" style="font-size:11.5px;margin-top:4px;min-height:14px">${freightHintHtml(v.siteAddr, false)}</div></div>
         <div class="fld full" style="margin-bottom:10px"><label><i class="ti ti-lock" style="font-size:13px;color:var(--blue)"></i> 이 거래처 홀딩 자재 불러오기 <span style="color:var(--t3);font-weight:500">(진행·<b style="color:#8a5a00">예정</b> 홀딩 · 눌러서 견적에 추가 → 확정 후 출고)</span></label>
           <div id="q-holdbox" style="border:1px solid var(--bd2);border-radius:10px;padding:4px 10px;max-height:26vh;overflow:auto">${quoteHoldBoxHtml(v.client || '')}</div>
         </div>
