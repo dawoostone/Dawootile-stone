@@ -1164,7 +1164,75 @@ async function saveClientBizInfo(id) {
   const patch = { taxInfo: taxInfo };
   const ct = classifyCtype(taxInfo.bizType, taxInfo.bizClass, taxInfo.corpName);
   if (ctypeAutoOK(c) && (c.ctype || '') !== ct && (taxInfo.bizType || taxInfo.bizClass)) patch.ctype = ct;   // ★ 손으로 정한 업체 구분은 지킨다
+  /* ★ 상호를 바꿨으면 — 견적서·원장(입금 연결)·… 의 거래처 이름도 같이 바꿀지 묻는다 (2026-10-30) */
+  const _newNm = String(taxInfo.corpName || '').trim();
+  const _prevNm = String(((c.taxInfo || {}).corpName) || c.value || '').trim();   // ★ 이번에 «상호 칸을 고쳤을 때»만 묻는다
+  if (_newNm && _normName(_newNm) !== _normName(_prevNm) && _normName(_newNm) !== _normName(c.value)) {
+    await Store.update('clients', id, patch);
+    await clientRenameAsk(c, _newNm);
+    setTimeout(renderClients, 300); return;
+  }
   await Store.update('clients', id, patch); toast('거래처 정보 저장됨'); setTimeout(renderClients, 300);
+}
+/* ══════════════════════════════════════════════════════════
+   ★★ 거래처 상호 변경 → 견적서·장부 이름도 같이 (2026-10-30)
+   사용자: *"거래처 정보에서 상호 바꾸면 견적서 상 / 장부상 상호 변경"*
+   앱은 거래처를 «이름»으로 잇는다 (견적서의 client, 입금 연결, 출고 기록 …).
+   그래서 상호를 바꾸면 그 이름을 쓰는 기록을 전부 같이 바꿔야 원장이 끊기지 않는다.
+   · 바꾸기 전에 «무엇이 몇 건 바뀌는지» 보여 주고 확인을 받는다.
+   · 같은 이름의 거래처가 이미 있으면 멈춘다 (합치기는 따로).
+   · 고객 로그인 계정 이름이 옛 상호면 — 고객 화면이 이름으로 홀딩을 찾으므로 홀딩·홀딩요청은 건드리지 않는다.
+   · 이미 발행한 세금계산서(국세청·팝빌)는 바뀌지 않는다.
+   ══════════════════════════════════════════════════════════ */
+function clientRenamePlan(oldNm, newNm) {
+  const same = v => _normName(v || '') === _normName(oldNm || '');
+  const pick = (coll, f, extra) => (state[coll] || []).filter(x => same(x[f]) && (!extra || extra(x))).map(x => x.id);
+  const custLock = (state.members || []).some(m => (m.role || '') === 'customer' && same(m.name));
+  const amap = bankAliasMap(); const aliasKeys = Object.keys(amap).filter(k => same(amap[k]));
+  return {
+    oldNm, newNm, custLock, aliasKeys,
+    sets: [
+      { coll: 'quotes', f: 'client', label: '견적서', ids: pick('quotes', 'client') },
+      { coll: 'banktx', f: 'client', label: '입금·출금 거래처 연결', ids: pick('banktx', 'client') },
+      { coll: 'clientPrices', f: 'client', label: '거래처 전용 단가', ids: pick('clientPrices', 'client') },
+      { coll: 'transactions', f: 'targetName', label: '출고 기록', ids: pick('transactions', 'targetName', x => x.type === 'out') },
+      { coll: 'chulgoReqs', f: 'client', label: '출고관리', ids: pick('chulgoReqs', 'client') },
+      { coll: 'sites', f: 'client', label: '현장', ids: pick('sites', 'client') },
+      { coll: 'basins', f: 'vendor', label: '세면대 발주', ids: pick('basins', 'vendor') },
+      { coll: 'holdings', f: 'vendor', label: '홀딩', ids: custLock ? [] : pick('holdings', 'vendor') }
+    ]
+  };
+}
+async function clientRenameAsk(c, newNm) {
+  const oldNm = c.value;
+  if ((state.clients || []).some(x => x.id !== c.id && _normName(x.value) === _normName(newNm))) {
+    toast('「' + newNm + '」 거래처가 이미 따로 있어 이름은 바꾸지 않았습니다 (사업자 정보만 저장)'); return;
+  }
+  const pl = clientRenamePlan(oldNm, newNm);
+  const lines = pl.sets.filter(x => x.ids.length).map(x => '· ' + x.label + ' ' + x.ids.length + '건');
+  if (pl.aliasKeys.length) lines.push('· 통장 입금자명 연결 ' + pl.aliasKeys.length + '개');
+  const msg = '상호를 바꿉니다\n「' + oldNm + '」 → 「' + newNm + '」\n\n같이 바뀌는 것:\n· 거래처 이름 (원장·이월잔액)\n' + (lines.length ? lines.join('\n') : '· (다른 기록 없음)')
+    + (pl.custLock ? '\n\n※ 고객 로그인 계정 이름이 「' + oldNm + '」 이라 홀딩은 바꾸지 않습니다' : '')
+    + '\n※ 이미 발행한 세금계산서는 바뀌지 않습니다\n\n[확인] 전부 바꾸기 / [취소] 사업자 정보의 상호만 저장';
+  if (!confirm(msg)) { toast('사업자 정보만 저장했습니다 (견적서·장부 이름은 그대로)'); return; }
+  if (_busy) { toast('앞 작업을 끝내는 중입니다 — 잠시 후 다시'); return; }
+  _busy = true;
+  try {
+    let n = 0;
+    for (const st of pl.sets) {
+      if (!st.ids.length) continue;
+      const r = await Store.bulk(st.coll, st.ids.map(i => ({ id: i, update: { [st.f]: newNm } })));
+      n += (r && r.ok) || 0;
+    }
+    if (pl.aliasKeys.length) { const m = Object.assign({}, bankAliasMap()); pl.aliasKeys.forEach(k => { m[k] = newNm; }); await saveBankAlias(m); }
+    const hist = Array.isArray(c.nameHistory) ? c.nameHistory.slice() : [];
+    hist.push({ from: oldNm, to: newNm, at: Date.now(), by: (me && me.name) || '' });
+    await Store.update('clients', c.id, { value: newNm, nameHistory: hist });
+    try { moneyBust(); } catch (e) { }
+    try { _tcIx = null; } catch (e) { }
+    toast('상호 변경 완료 · 「' + newNm + '」 · 기록 ' + n + '건');
+  } catch (e) { toast('상호 변경 중 오류: ' + ((e && e.message) || e)); }
+  finally { _busy = false; }
 }
 async function lookupClientBiz(id) {
   const c = (state.clients || []).find(x => x.id === id); if (!c) return;
