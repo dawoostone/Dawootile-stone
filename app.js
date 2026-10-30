@@ -7353,7 +7353,7 @@ function quoteToShip(id) {
   if (!mats.length) { toast('출고할 자재가 없습니다 (가공·운송·시공 항목만 있는 견적)'); return; }
   openShipForm({ targetName: q.client, items: mats.map(it => ({ name: it.name, qty: it.qty, lot: '', pattern: '' })), quoteId: id, siteAddr: (q.siteAddr || '').trim() });
   const _hh = quoteLiveHoldIds(q);
-  if (_hh.length) { _holdConfirm = _hh; toast('출고 등록 폼에 불러왔습니다 · 저장하면 홀딩 ' + _hh.length + '건이 풀립니다'); }
+  if (_hh.length) { _holdConfirm = _hh; toast('출고 등록 폼에 불러왔습니다 · 저장하면 홀딩 ' + _hh.length + '건에서 출고한 만큼 풀립니다 (남은 수량은 홀딩 유지)'); }
   else toast('견적의 자재만 출고 등록 폼에 불러왔습니다 · 확인 후 등록하세요');
 }
 /* ★★ 2026-09-19 — 미확정 견적 이월
@@ -7438,7 +7438,7 @@ function quoteRegister(id) {
     /* ★ 이 견적이 홀딩에서 가져온 자재라면, 출고가 저장될 때 그 홀딩을 확정 처리해 목록에서 없앤다.
          (openShipForm 뒤에 넣는다 — closeModal 이 _holdConfirm 을 비우기 때문) */
     const _hh = quoteLiveHoldIds(q);
-    if (_hh.length) { _holdConfirm = _hh; toast('출고 등록으로 불러왔습니다 · 저장하면 홀딩 ' + _hh.length + '건이 풀립니다'); }
+    if (_hh.length) { _holdConfirm = _hh; toast('출고 등록으로 불러왔습니다 · 저장하면 홀딩 ' + _hh.length + '건에서 출고한 만큼 풀립니다 (남은 수량은 홀딩 유지)'); }
     else toast('출고 등록으로 불러왔습니다 · 확인 후 등록');
   }
   /* ★ 현장 주소만 넘긴다.
@@ -7591,7 +7591,7 @@ function quoteToOrder(id) {
   } else {
     openShipForm({ targetName: q.client, items: items, quoteId: id, siteAddr: (q.siteAddr || '').trim() });
     const _hh = quoteLiveHoldIds(q);
-    if (_hh.length) { _holdConfirm = _hh; toast('확정 · 출고 등록으로 불러왔습니다 · 저장하면 홀딩 ' + _hh.length + '건이 풀립니다'); }
+    if (_hh.length) { _holdConfirm = _hh; toast('확정 · 출고 등록으로 불러왔습니다 · 저장하면 홀딩 ' + _hh.length + '건에서 출고한 만큼 풀립니다 (남은 수량은 홀딩 유지)'); }
     else toast('확정 · 출고 등록으로 불러왔습니다 · 확인 후 등록');
   }
 }
@@ -20373,15 +20373,23 @@ async function submitShip() {
       if (it && oldJang > 0 && newJang <= 0) zeroed.push(material);
     }
     const _hcIds = Array.isArray(_holdConfirm) ? _holdConfirm.slice() : (_holdConfirm ? [_holdConfirm] : []);
-    if (_hcIds.length) {   // 홀딩 → 출고: 연결된 홀딩(묶음이면 전부)을 '확정' 처리
-      for (const _hid of _hcIds) {
-        const _hh = state.holdings.find(x => x.id === _hid); if (!_hh) continue;
-        const _hj = _hcIds.length === 1 ? totalJang : holdItems(_hh).reduce((a, x) => a + (+x.jang || 0), 0);
-        await Store.update('holdings', _hid, { status: '확정', shippedDate: date, shippedJang: _hj, confirmShipId: shipId });
+    let _holdLeft = 0;
+    if (_hcIds.length) {   // 홀딩 → 출고: 다 나간 홀딩은 '확정', 일부만 나간 홀딩은 나눠서 남은 수량은 그대로 홀딩
+      const _plan = holdShipPlan(_hcIds.map(x => state.holdings.find(h => h.id === x)).filter(Boolean), rows);
+      for (const pl of _plan) {
+        const _hh = pl.h;
+        if (pl.mode === 'all') {
+          const _hj = _hcIds.length === 1 ? totalJang : holdItems(_hh).reduce((a, x) => a + (+x.jang || 0), 0);
+          await Store.update('holdings', _hh.id, { status: '확정', shippedDate: date, shippedJang: _hj, confirmShipId: shipId });
+        } else if (pl.mode === 'part') {
+          await holdSplitShip(_hh, pl, shipId, date);
+          _holdLeft += pl.left.reduce((a, x) => a + (+x.jang || 0), 0);
+        }
       }
       _holdConfirm = null;
       _hSel.clear(); _hSelVendor = ''; filters.holdBundle = false;   // 묶음 출고 완료 → 선택 해제
     }
+    if (_holdLeft > 0) setTimeout(() => toast('분할 출고 · 남은 ' + _holdLeft + '장은 그대로 홀딩되어 있습니다'), 900);
     for (const nm of zeroed) notifyStockOut(nm);   // 재고 소진 → 즉시 푸시
     // 출고 대기열(출고관리)에 등록 — 재고는 위에서 이미 차감됨(stockApplied). 소리 알림은 '출고 지시' 낼 때만.
     try {
@@ -20443,6 +20451,14 @@ async function quoteUnshipIfNone(quoteIds, removedTxIds) {
 /* 이 출고(shipId)로 확정됐던 홀딩을 되돌림 — 출고완료 해제 → 홀딩 */
 async function revertHoldsForShip(key) {
   for (const h of state.holdings.filter(h => h.confirmShipId === key)) {
+    /* ★ 분할 출고로 떼어 낸 «출고분»이면 — 원래 홀딩이 아직 살아 있을 때 거기에 수량을 되돌려 합친다 (2026-10-30) */
+    const org = h.splitFrom ? state.holdings.find(x => x.id === h.splitFrom) : null;
+    if (org && ['홀딩', '예정'].includes(org.status || '홀딩')) {
+      const merged = holdItemsMerge(holdItems(org), holdItems(h));
+      await Store.update('holdings', org.id, holdItemsPatch(merged));
+      await Store.remove('holdings', h.id);
+      continue;
+    }
     await Store.update('holdings', h.id, { status: '홀딩', shippedDate: '', shippedJang: 0, confirmShipId: '' });
   }
 }
@@ -20520,7 +20536,8 @@ function holdCardHtml(h) {
           ${holdItems(h).map(it => `<div style="margin-bottom:3px"><span style="font-size:15px;font-weight:700;color:var(--t1);word-break:keep-all">${esc(it.materialName || '-')}</span> <span style="color:var(--t2);font-size:12.5px">· ${+it.jang || 0}장${it.hebe ? ` (${(+it.hebe).toFixed(1)}㎡)` : ''}${it.lot ? ` · 롯트 ${esc(it.lot)}` : ''}${it.pattern ? ` · 패턴 ${esc(it.pattern)}` : ''}</span>${it.planned ? ` <span style="font-size:10.5px;font-weight:700;color:#9a6a12;background:#fef3e2;border-radius:5px;padding:1px 6px">예정</span>` : (!plan && holdItems(h).some(x => x.planned) ? ` <span style="font-size:10.5px;font-weight:700;color:#0F6E56;background:var(--gl2,#e8f7f0);border-radius:5px;padding:1px 6px">확보</span>` : '')}</div>`).join('')}
         </div>
         ${!plan && !conf && !rel && holdItems(h).some(x => x.planned) ? `<div style="font-size:12px;color:var(--amber-t);margin-top:4px"><i class="ti ti-clock-pause"></i> '예정' 품목은 입고되면 자동으로 확보됩니다</div>` : ''}
-        ${conf ? `<div style="font-size:12px;color:var(--lime-t);margin-top:4px"><i class="ti ti-truck-delivery"></i> 출고 완료 ${esc(h.shippedDate || '')} · ${+h.shippedJang || 0}장</div>` : ''}
+        ${conf ? `<div style="font-size:12px;color:var(--lime-t);margin-top:4px"><i class="ti ti-truck-delivery"></i> 출고 완료 ${esc(h.shippedDate || '')} · ${+h.shippedJang || 0}장${h.splitFrom ? ' <span style="color:var(--t3)">(분할 선출고분)</span>' : ''}</div>` : ''}
+        ${(!conf && !rel && (+h.partShipped || 0) > 0) ? `<div style="font-size:12px;color:#1b4fb0;margin-top:4px"><i class="ti ti-truck-delivery"></i> 선출고 ${+h.partShipped}장 · 남은 수량 홀딩 중</div>` : ''}
         ${plan ? `<div style="font-size:12px;color:var(--amber-t);margin-top:4px"><i class="ti ti-clock-pause"></i> 입고되면 자동으로 홀딩으로 전환됩니다</div>` : ''}
         ${rel && h.releasedAuto ? `<div style="font-size:12px;color:var(--t3);margin-top:4px"><i class="ti ti-history"></i> 사용예정일 경과로 자동 해제됨 (${esc(h.releasedDate || '')})</div>` : ''}
         ${h.note ? `<div style="font-size:12px;color:var(--t3);margin-top:6px">${esc(h.note)}</div>` : ''}
@@ -20914,12 +20931,74 @@ function holdToSite(id) {
 /* 홀딩 → 출고 (출고가 찍히면 그 홀딩이 '확정'으로). 다자재면 첫 자재부터 — 나머지는 따로 출고
    ★ 2026-09-20 — 예전에는 현장주소를 아예 안 넘겨서
      「견적서 → 현장등록 → 홀딩 → 출고」로 가면 출고증에 현장 주소가 빈칸으로 나왔다. */
+/* ══════════════════════════════════════════════════════════
+   ★★ 홀딩 분할 선출고 (2026-10-30)
+   사용자: *"홀딩 잡은 물량에서 분할 선출고 할 수 있게 해주고 남은 건 그대로 홀딩될 수 있게 해줘"*
+   · 홀딩에서 출고 폼을 열고 «수량을 줄여서» 저장하면 그만큼만 나간다.
+   · 홀딩은 둘로 나눈다 — 나간 만큼은 새 «확정(출고완료)» 기록, 원래 홀딩은 남은 수량으로 줄어
+     그대로 «홀딩» 상태를 유지한다 (가용재고에서도 남은 수량만 잡힌다).
+   · 자재 이름으로 맞춘다. 묶음 출고면 위 홀딩부터 차례로 채운다.
+   · 이름이 하나도 안 맞으면(견적에서 이름을 바꿔 출고 등) 예전처럼 홀딩을 통째로 확정한다.
+   · 출고를 지우면 떼어 낸 출고분이 원래 홀딩으로 다시 합쳐진다.
+   ══════════════════════════════════════════════════════════ */
+function holdShipPlan(holds, rows) {
+  const pool = {};
+  (rows || []).forEach(r => { const k = _normName(r.name || ''); if (k) pool[k] = (pool[k] || 0) + (+r.qty || 0); });
+  return holds.map(h => {
+    const its = holdItems(h);
+    let took = 0; const shipped = [], left = [];
+    its.forEach(it => {
+      const k = _normName(it.materialName || ''); const j = +it.jang || 0;
+      const t = Math.max(0, Math.min(pool[k] || 0, j));
+      if (t > 0) { pool[k] -= t; took += t; }
+      const ratio = j > 0 ? 1 / j : 0;
+      if (t > 0) shipped.push(Object.assign({}, it, { jang: t, hebe: +((+it.hebe || 0) * t * ratio).toFixed(2) }));
+      if (j - t > 0) left.push(Object.assign({}, it, { jang: j - t, hebe: +((+it.hebe || 0) * (j - t) * ratio).toFixed(2) }));
+    });
+    if (took <= 0) return { h, mode: 'all', shipped: [], left: [] };          // 이름이 안 맞음 → 예전처럼 통째로
+    if (!left.length) return { h, mode: 'all', shipped, left };
+    return { h, mode: 'part', shipped, left };
+  });
+}
+/* 홀딩 자재 목록 → 저장용 (다자재 + 예전 단일자재 칸도 같이 맞춘다) */
+function holdItemsPatch(items) {
+  const its = (items || []).filter(x => (+x.jang || 0) > 0);
+  const first = its[0] || { materialName: '', jang: 0, hebe: 0, lot: '', pattern: '' };
+  return {
+    items: its.map(x => ({ materialName: x.materialName, jang: +x.jang || 0, hebe: +x.hebe || 0, lot: x.lot || '', pattern: x.pattern || '', planned: !!x.planned })),
+    materialName: first.materialName, jang: its.reduce((a, x) => a + (+x.jang || 0), 0),
+    hebe: +its.reduce((a, x) => a + (+x.hebe || 0), 0).toFixed(2), lot: first.lot || '', pattern: first.pattern || ''
+  };
+}
+/* 같은 자재(이름+롯트+패턴)끼리 수량을 더한다 */
+function holdItemsMerge(a, b) {
+  const out = (a || []).map(x => Object.assign({}, x));
+  (b || []).forEach(y => {
+    const k = _normName(y.materialName || '') + '|' + (y.lot || '') + '|' + (y.pattern || '');
+    const hit = out.find(x => (_normName(x.materialName || '') + '|' + (x.lot || '') + '|' + (x.pattern || '')) === k);
+    if (hit) { hit.jang = (+hit.jang || 0) + (+y.jang || 0); hit.hebe = +((+hit.hebe || 0) + (+y.hebe || 0)).toFixed(2); }
+    else out.push(Object.assign({}, y));
+  });
+  return out;
+}
+async function holdSplitShip(h, pl, shipId, date) {
+  /* ① 나간 만큼 — 원래 홀딩을 복사해 «확정» 기록으로 새로 만든다 */
+  const base = Object.assign({}, h); delete base.id;
+  const shippedJang = pl.shipped.reduce((a, x) => a + (+x.jang || 0), 0);
+  await Store.add('holdings', Object.assign(base, holdItemsPatch(pl.shipped), {
+    status: '확정', shippedDate: date, shippedJang: shippedJang, confirmShipId: shipId,
+    splitFrom: h.id, splitAt: Date.now(), splitBy: (me && me.name) || ''
+  }));
+  /* ② 원래 홀딩 — 남은 수량으로 줄이고 상태는 그대로 */
+  await Store.update('holdings', h.id, Object.assign(holdItemsPatch(pl.left), { partShipped: ((+h.partShipped || 0) + shippedJang) }));
+}
 function holdToShip(id) {
   const h = state.holdings.find(x => x.id === id); if (!h) return;
   _holdConfirm = [id];
   const _hs = (h.forSiteId || '').trim() ? (state.sites || []).find(x => x.id === h.forSiteId) : null;
   const _hadr = String((_hs && _hs.address) || '').trim();
   openShipForm({ items: holdItems(h).map(it => ({ name: it.materialName, qty: it.jang, lot: it.lot, pattern: it.pattern })), targetName: h.vendor || h.forSiteName || '', siteAddr: _hadr });
+  toast('홀딩 출고 · 일부만 내보내려면 장수를 줄이세요 — 남은 수량은 그대로 홀딩됩니다');
 }
 /* 같은 업체의 출고 가능한(=상태 '홀딩') 건들 — 예정·확정·해제는 제외 */
 function vendorHoldsFor(vendor) {
