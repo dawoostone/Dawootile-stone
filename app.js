@@ -6356,12 +6356,12 @@ function freightMatch(addr) {   // → { region, ton1 } 또는 null
 }
 const FREIGHT_MARGIN = 10000;
 const FREIGHT_ITEM = '운송비 (공장-현장)';
-function freightHintHtml(addr, applied) {
+function freightHintHtml(addr, applied, kept) {
   const a = String(addr || '').trim(); if (!a) return '';
   const m = freightMatch(a);
   if (!m) return '<span style="color:var(--t3)"><i class="ti ti-truck"></i> 운임표에 없는 지역입니다 — 운송비는 직접 입력해 주세요</span>';
   const v = m.ton1 + FREIGHT_MARGIN;
-  return `<span style="color:#0f766e"><i class="ti ti-truck"></i> 운임표 <b>${esc(m.region)}</b> · 1톤 ${fmtWon(m.ton1)} + 마진 ${fmtWon(FREIGHT_MARGIN)} = <b>${fmtWon(v)}원</b>${applied ? ' → 「' + FREIGHT_ITEM + '」에 넣었습니다' : ' <span style="color:var(--t3)">· 「' + FREIGHT_ITEM + '」 수량을 1로 하면 이 금액이 들어갑니다</span>'}</span>`;
+  return `<span style="color:#0f766e"><i class="ti ti-truck"></i> 운임표 <b>${esc(m.region)}</b> · 1톤 ${fmtWon(m.ton1)} + 마진 ${fmtWon(FREIGHT_MARGIN)} = <b>${fmtWon(v)}원</b>${applied ? ' → 「' + FREIGHT_ITEM + '」에 넣었습니다' : (kept ? ' <span style="color:var(--t3)">· 직접 넣은 운송비를 그대로 둡니다</span>' : ' <span style="color:var(--t3)">· 「' + FREIGHT_ITEM + '」 수량을 1로 하면 이 금액이 들어갑니다</span>')}</span>`;
 }
 let _frTimer = 0;
 function quoteSiteFreight() { clearTimeout(_frTimer); _frTimer = setTimeout(quoteSiteFreightNow, 500); }
@@ -6388,7 +6388,7 @@ function quoteSiteFreightNow() {
     /* 표에 없는 주소로 바뀌면 — 앱이 넣었던 운임은 원래 단가로 되돌린다 */
     pEl.value = row.dataset.frPrice0 || ''; row.dataset.frAuto = '';
   }
-  if (hint) hint.innerHTML = freightHintHtml(addr, applied);
+  if (hint) hint.innerHTML = freightHintHtml(addr, applied, !applied && _numv(qEl.value) > 0);
   quoteRecalc();
 }
 /* 부대비용 줄의 수량·단가를 사람이 바꿨을 때 — 운송비(공장-현장) 줄만 본다 */
