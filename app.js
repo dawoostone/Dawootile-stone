@@ -6361,7 +6361,7 @@ function freightHintHtml(addr, applied) {
   const m = freightMatch(a);
   if (!m) return '<span style="color:var(--t3)"><i class="ti ti-truck"></i> 운임표에 없는 지역입니다 — 운송비는 직접 입력해 주세요</span>';
   const v = m.ton1 + FREIGHT_MARGIN;
-  return `<span style="color:#0f766e"><i class="ti ti-truck"></i> 운임표 <b>${esc(m.region)}</b> · 1톤 ${fmtWon(m.ton1)} + 마진 ${fmtWon(FREIGHT_MARGIN)} = <b>${fmtWon(v)}원</b>${applied ? ' → 「' + FREIGHT_ITEM + '」에 넣었습니다' : ''}</span>`;
+  return `<span style="color:#0f766e"><i class="ti ti-truck"></i> 운임표 <b>${esc(m.region)}</b> · 1톤 ${fmtWon(m.ton1)} + 마진 ${fmtWon(FREIGHT_MARGIN)} = <b>${fmtWon(v)}원</b>${applied ? ' → 「' + FREIGHT_ITEM + '」에 넣었습니다' : ' <span style="color:var(--t3)">· 「' + FREIGHT_ITEM + '」 수량을 1로 하면 이 금액이 들어갑니다</span>'}</span>`;
 }
 let _frTimer = 0;
 function quoteSiteFreight() { clearTimeout(_frTimer); _frTimer = setTimeout(quoteSiteFreightNow, 500); }
@@ -6372,17 +6372,30 @@ function quoteSiteFreightNow() {
   const m = freightMatch(addr);
   if (!row) { if (hint) hint.innerHTML = freightHintHtml(addr, false); return; }
   const pEl = row.querySelector('.qx-price'), qEl = row.querySelector('.qx-qty');
-  if (m) {
+  /* ★ 2026-10-30 사용자: "운송비 자동으로 넣지마 1로 했을 때만 넣어"
+     → 수량은 절대 건드리지 않는다. 운송비 줄 수량을 사람이 1(이상)로 넣었을 때만 단가를 채운다.
+     단가 칸을 사람이 직접 고쳤으면(frManual) 그 뒤로는 덮어쓰지 않는다. */
+  /* 이미 들어 있는 단가가 «기본 단가» 이거나 «앱이 넣은 값» 이거나 비어 있을 때만 — 저장된 견적의 협의 운임은 지킨다 */
+  const _cur = _numv(pEl.value), _def = _numv((extraPrices() || {})[FREIGHT_ITEM]);
+  const _free = !pEl.value || _cur === 0 || _cur === _def || (row.dataset.frAuto && _cur === +row.dataset.frAuto);
+  const want = !!m && _numv(qEl.value) > 0 && !row.dataset.frManual && _free;
+  let applied = false;
+  if (want) {
     const v = m.ton1 + FREIGHT_MARGIN;
-    if (!row.dataset.frAuto) row.dataset.frQty0 = qEl.value;          // 처음 넣기 전 수량을 기억 (되돌릴 때)
-    pEl.value = v; if (!(_numv(qEl.value) > 0)) qEl.value = '1';
-    row.dataset.frAuto = String(v);
-  } else if (row.dataset.frAuto && _numv(pEl.value) === +row.dataset.frAuto) {
-    /* 표에 없는 주소로 바뀌면 — 앱이 넣었던 운임은 되돌린다 (사람이 고친 값은 그대로) */
-    pEl.value = ''; qEl.value = row.dataset.frQty0 || ''; row.dataset.frAuto = '';
+    if (!row.dataset.frAuto) row.dataset.frPrice0 = pEl.value;        // 처음 넣기 전 단가를 기억 (되돌릴 때)
+    pEl.value = v; row.dataset.frAuto = String(v); applied = true;
+  } else if (!m && row.dataset.frAuto && _numv(pEl.value) === +row.dataset.frAuto) {
+    /* 표에 없는 주소로 바뀌면 — 앱이 넣었던 운임은 원래 단가로 되돌린다 */
+    pEl.value = row.dataset.frPrice0 || ''; row.dataset.frAuto = '';
   }
-  if (hint) hint.innerHTML = freightHintHtml(addr, !!m);
+  if (hint) hint.innerHTML = freightHintHtml(addr, applied);
   quoteRecalc();
+}
+/* 부대비용 줄의 수량·단가를 사람이 바꿨을 때 — 운송비(공장-현장) 줄만 본다 */
+function qxFreightHook(inp, isPrice) {
+  const row = inp && inp.closest('.qx-row'); if (!row || row.getAttribute('data-name') !== FREIGHT_ITEM) return;
+  if (isPrice) { row.dataset.frManual = '1'; return; }
+  quoteSiteFreightNow();
 }
 const QUOTE_EXTRAS = [
   { name: '재단비 12T', unit: 'M' }, { name: '재단비 6T', unit: 'M' },
@@ -6490,9 +6503,9 @@ function qxRowHtml(item, d) {
   const qty = (d && d.qty != null) ? d.qty : '';
   return `<div class="qx-row" data-name="${esc(name)}" data-unit="${esc(unit)}" style="display:flex;gap:6px;row-gap:0;flex-wrap:wrap;align-items:center;margin-bottom:5px">
     <div style="flex:2.2;min-width:0;font-size:13.5px">${esc(name)}</div>
-    <input class="qx-qty" inputmode="numeric" placeholder="0" value="${esc(qty)}" oninput="quoteRecalc()" style="flex:1;min-width:42px;${inp};text-align:right">
+    <input class="qx-qty" inputmode="numeric" placeholder="0" value="${esc(qty)}" oninput="quoteRecalc();qxFreightHook(this)" style="flex:1;min-width:42px;${inp};text-align:right">
     <div style="width:24px;font-size:11.5px;color:var(--t3);text-align:center">${esc(unit)}</div>
-    <input class="qx-price" inputmode="numeric" placeholder="단가" value="${esc(price)}" oninput="quoteRecalc()" style="flex:1.3;min-width:54px;${inp};text-align:right">
+    <input class="qx-price" inputmode="numeric" placeholder="단가" value="${esc(price)}" oninput="quoteRecalc();qxFreightHook(this,1)" style="flex:1.3;min-width:54px;${inp};text-align:right">
     <div class="qx-amt" style="flex:1.3;min-width:58px;text-align:right;font-weight:700;font-size:14px">0</div>
     <div class="qx-prev" style="flex:0 0 100%;font-size:11.5px;text-align:right"></div>
   </div>`;
