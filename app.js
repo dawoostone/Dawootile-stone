@@ -1090,7 +1090,7 @@ function clientStats(name) {
   const total = qs.reduce((a, b) => a + (+b.total || 0), 0);
   const M = clientMoneyOf(name);
   const noTax = qs.filter(q => !taxSettled(q)).length;   // ★ 현금영수증 건은 할 일이 아니다
-  return { count: qs.length, total: total, sale: M.sale, unpaid: M.rem, paidSum: M.applied, extra: M.extra, noTax: noTax };
+  return { count: qs.length, total: total, sale: M.sale, unpaid: M.rem, paidSum: M.paid, extra: M.extra, noTax: noTax };
 }
 /* ══════════════════════════════════════════════════════════
    거래처 원장 엑셀 (2026-09-30 고침)
@@ -1137,7 +1137,7 @@ function downloadClientLedger(id) {
   const vatSum = qs.reduce((a, b) => a + Math.round(+b.vat || 0), 0);
   const totalSum = qs.reduce((a, b) => a + Math.round(+b.total || 0), 0) + (ob ? ob.amt : 0);
   /* ★ 입금·미수는 원장 화면과 같은 값을 쓴다 (줄별 미수를 더한 것과 맞는다) */
-  const paidSum = Math.round(+M.applied || 0), unpaid = Math.round(+M.rem || 0);
+  const paidSum = Math.round(+M.paid || 0), unpaid = Math.round(+M.rem || 0);   // ★ 2026-11-03 전체 금액에서 차감 — 받은 돈 전체
   const ti = c.taxInfo || {};
   const aoa = [['거래처 원장 · ' + c.value],
     ['출력일 ' + todayStr() + (ti.bizNo ? (' · 사업자 ' + ti.bizNo) : '') + (c.ctype ? (' · 유형 ' + c.ctype) : '')
@@ -9813,7 +9813,7 @@ function clientOpeningCardHtml(c) {
       <div>이월 <b>${fmtWon(ob.amt)}</b> <span style="color:var(--t3)">(${esc(ob.date || '기준일 없음')})</span>
         + 앱 매출 <b>${fmtWon(M.sale)}</b> − 입금 <b style="color:var(--gd)">${fmtWon(M.paid)}</b>
         = 미수 <b style="color:${M.rem > 0 ? 'var(--red-t)' : 'var(--gd)'}">${fmtWon(M.rem)}</b></div>
-      ${M.extra ? `<div style="color:var(--amber-t)">아직 어느 건에도 안 붙은 돈 <b>${fmtWon(M.extra)}</b>원</div>` : ''}
+      ${M.extra ? `<div style="color:var(--amber-t)">매출보다 더 받은 돈 <b>${fmtWon(M.extra)}</b>원</div>` : ''}
       ${c.prepayOk ? '<div style="color:#0f766e"><i class="ti ti-check"></i> 선입금 인정 — 먼저 들어온 돈도 뒤 견적에 붙습니다</div>' : ''}
     </div>` : ''}
   </div>`;
@@ -9863,7 +9863,7 @@ function openClientReset(cid) {
       <div style="color:var(--t3);font-size:11.5px;margin-bottom:3px">지금 이 거래처</div>
       매출 <b>${fmtWon(M.sale)}</b> · 입금 <b style="color:var(--gd)">${fmtWon(M.paid)}</b>
       · 미수 <b style="color:${M.rem > 0 ? 'var(--red-t)' : 'var(--gd)'}">${fmtWon(M.rem)}</b>
-      ${M.extra > 0 ? `<div style="color:var(--amber-t)">어디에도 안 붙은 돈 <b>${fmtWon(M.extra)}</b>원 — 초기화하면 같이 정리됩니다</div>` : ''}
+      ${M.extra > 0 ? `<div style="color:var(--amber-t)">매출보다 더 받은 돈 <b>${fmtWon(M.extra)}</b>원 — 초기화하면 같이 정리됩니다</div>` : ''}
     </div>
     <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:10px">
       <div class="fld" style="flex:1;min-width:148px;margin:0"><label>기준일 <span style="color:var(--t3);font-weight:500">(이 날까지 정산 끝)</span></label>
@@ -10178,12 +10178,29 @@ function _moneyBuild() {
         if (!_prepay && i.d && qd && i.d < qd) continue;   // 그 건보다 먼저 들어온 돈은 그 건 대금이 아니다
         const use = Math.min(need, i.left); i.left -= use; need -= use; got += use;
       }
-      if (x.id) P[x.id] = got; else o.openingPaid = got;
-      applied += got;
+      x.need = need; x.got = got;
     });
-    o.applied = applied;                                       // 실제로 붙은 돈 (이월 포함)
-    o.rem = Math.max(0, (o.sale + (o.opening || 0)) - applied); // 미수 = 앱 매출 + 이월 − 붙은 돈
-    o.extra = Math.max(0, o.paid - applied);                   // 아직 어디에도 안 붙은 돈 (선입금 · 앱 밖 대금)
+    /* ══════════════════════════════════════════════════════════
+       ★★ 2026-11-03 «전체 금액에서 차감» — 사용자: *"금액을 견적서랑 딱 붙이는 게 아니라
+           전체 금액에서 차감하기로 했잖아?"* (진상석재: 견적일보다 하루 먼저 들어온 2,313만원이
+           날짜 규칙에 막혀 미수로 떴다)
+       · 거래처 미수 = (확정 매출 + 이월) − 받은 돈 전체. 날짜·지정과 상관없다.
+       · 견적별 결제 표시도 맞춘다 — 위에서 날짜 순서로 채우고 남은 돈은 «아직 덜 받은 견적»에
+         오래된 것부터 날짜 상관없이 채운다 (다른 견적에 지정해 둔 돈은 그대로 둔다).
+       ══════════════════════════════════════════════════════════ */
+    line.forEach(x => {
+      if (!(x.need > 0)) return;
+      for (const i of ins) {
+        if (x.need <= 0) break;
+        if (i.left <= 0) continue;
+        if (i.pin && i.pin !== x.id) continue;
+        const use = Math.min(x.need, i.left); i.left -= use; x.need -= use; x.got += use;
+      }
+    });
+    line.forEach(x => { if (x.id) P[x.id] = x.got; else o.openingPaid = x.got; applied += x.got; });
+    o.applied = applied;                                       // 견적(·이월)에 붙은 돈
+    o.rem = Math.max(0, (o.sale + (o.opening || 0)) - o.paid);  // 미수 = 앱 매출 + 이월 − 받은 돈 전체
+    o.extra = Math.max(0, o.paid - (o.sale + (o.opening || 0))); // 매출보다 더 받은 돈 (선입금 · 앱 밖 대금)
   });
   _cmAt = Date.now(); _cmCache = M; _qpCache = P;
 }
