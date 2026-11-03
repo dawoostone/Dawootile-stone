@@ -5396,7 +5396,14 @@ const BC_MARKUP = { dist: 60000, interior: 240000, consumer: 440000 };
    · 「1200 상판 즉시 출고」 는 뺐다 */
 const BC_NATL = [[950000, 950000, 1100000], [850000, 850000, 850000]];
 const BC_NATL_NAME = ['1200 이하 접합 주문 발주', '1200 이하 비접합 주문 발주'];
-const BC_STD = [[420000,540000,680000],[420000,540000,680000],[360000,460000,580000]];
+/* ★ 2026-11-03 규격 사이즈 변경 (사용자 지정) — [유통, 인테리어, 소비자]
+   · 규격을 600*470*180 (R) 로, 예전 단가에 개당 +10만
+       팬텀 아이보리 42/54/68만 → 52/64/78만
+       트라버티노(화이트·실버·베이지) — 예전 화이트 트라버티노 36/46/58만 → 46/56/68만
+   · 키프로스 라이트 그레이는 단가 그대로, 규격은 600*470*200 (직각) */
+const BC_STD = [[520000, 640000, 780000], [460000, 560000, 680000], [460000, 560000, 680000], [460000, 560000, 680000], [420000, 540000, 680000]];
+const BC_STD_NAME = ['팬텀 아이보리', '화이트 트라버티노', '실버 트라버티노', '베이지 트라버티노', '키프로스 라이트 그레이 (규격 600*470*200 직각)'];
+const BC_STD_SIZE = ['600*470*180 (R)', '600*470*180 (R)', '600*470*180 (R)', '600*470*180 (R)', '600*470*200 (직각)'];
 const BC_ROUND = [[400000,450000,550000],[480000,550000,650000]];
 const BC_BIZ = { dist: 0, interior: 1, consumer: 2 };
 /* 견적서 '단가 유형' → 세면대 계산기 '업체 구분'
@@ -5479,9 +5486,9 @@ function basinCalcHtml(isBasin, d) {
       ? `<span style="color:#0f766e"><i class="ti ti-wand"></i> 거래처 유형 <b>${esc(_bcCt)}</b> 에 맞춰 업체 구분을 자동으로 골랐습니다 (직접 바꿔도 됩니다)</span>`
       : (_bcCt ? `<span style="color:#a2560f"><i class="ti ti-alert-circle"></i> 거래처 유형 <b>${esc(_bcCt)}</b> 는 자동으로 정할 수 없습니다 — 업체 구분을 직접 골라주세요</span>` : '')}</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-      <select class="bc-cat" onchange="bcInput(this)" style="${inp}"><option value="mono">모놀리스(주문제작)</option><option value="natl">국내제작(조건별)</option><option value="std">규격 600×470×200</option><option value="round"${_round ? ' selected' : ''}>라운드형</option></select>
+      <select class="bc-cat" onchange="bcInput(this)" style="${inp}"><option value="mono">모놀리스(주문제작)</option><option value="natl">국내제작(조건별)</option><option value="std">규격 600*470*180 (R)</option><option value="round"${_round ? ' selected' : ''}>라운드형</option></select>
       <select class="bc-biz" onchange="bcBizTouched(this)" style="${inp}"><option value="dist"${_bcAuto === 'dist' ? ' selected' : ''}>유통 업체</option><option value="interior"${_bcAuto === 'interior' ? ' selected' : ''}>인테리어 업체</option><option value="consumer"${_bcAuto && _bcAuto !== 'consumer' ? '' : ' selected'}>소비자</option></select>
-      <select class="bc-std" onchange="bcInput(this)" style="display:none;${inp}"><option value="0">팬텀 아이보리</option><option value="1">키프로스 라이트 그레이</option><option value="2">화이트 트라버티노</option></select>
+      <select class="bc-std" onchange="bcInput(this)" style="display:none;${inp}">${BC_STD_NAME.map((n, i) => `<option value="${i}">${n}</option>`).join('')}</select>
       <select class="bc-natl" onchange="bcInput(this)" style="display:none;${inp}">${BC_NATL_NAME.map((n, i) => `<option value="${i}">${n}</option>`).join('')}</select>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:6px">${num('bc-l', '기장', sz.L)}${num('bc-w', '폭', sz.W)}${num('bc-h', '높이', sz.H)}</div>
@@ -5542,7 +5549,7 @@ function basinCalcRow(row, apply) {
     total = BC_NATL[ni][bi]; why = '국내제작 · ' + BC_NATL_NAME[ni];
     if (ni === 0 && H > 200) why += ' · ⚠ 치마 200 초과 — 추가 비용 확인 필요';
   }
-  else if (cat === 'std') { total = BC_STD[+q('bc-std').value][bi]; why = '규격 600×470×200'; }
+  else if (cat === 'std') { const si = Math.min(BC_STD.length - 1, Math.max(0, +q('bc-std').value || 0)); total = BC_STD[si][bi]; why = '규격 ' + BC_STD_SIZE[si] + ' · ' + BC_STD_NAME[si].replace(/\s*\(.*\)$/, ''); }
   else if (cat === 'round') {
     if (!(L > 0)) note = '기장을 넣어 주세요';
     else { const ri = L <= 700 ? 0 : 1; total = BC_ROUND[ri][bi]; why = '라운드 ' + (ri ? '800' : '600') + '×470×150 단가'; }
