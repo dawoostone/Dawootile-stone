@@ -6974,6 +6974,21 @@ function clientPriceCard(c) {
 async function submitQuote(id) {
   const client = (el('q-client') && el('q-client').value || '').trim();
   if (!client) { toast('거래처를 입력하세요'); return; }
+  /* ★ 2026-11-03 사용자: "세면대 견적서 몇개씩 넣으면 왜 자꾸 하나로만 저장되는지"
+     원인: 수량 칸이 빈 줄은 저장할 때 «말없이» 빠졌다 (세면대는 단가가 자동으로 들어가서
+     수량을 안 넣고 저장하기 쉽다). 이제 자재명·단가는 있는데 수량이 빈 줄이 있으면 저장을 멈추고 알려준다. */
+  const _noQty = Array.from(document.querySelectorAll('#q-rows .q-row')).filter(r => {
+    const nm = ((r.querySelector('.q-mat') || {}).value || '').trim();
+    const qv = ((r.querySelector('.q-qty') || {}).value || '').trim();
+    const pv = _numv((r.querySelector('.q-price') || {}).value);
+    return nm && !qv && pv !== 0;
+  });
+  if (_noQty.length) {
+    _noQty.forEach(r => { const qi = r.querySelector('.q-qty'); if (qi) { qi.style.borderColor = '#c0341d'; qi.style.background = '#fdecea'; qi.oninput = function () { this.style.borderColor = ''; this.style.background = ''; quoteRecalc(); }; } });
+    const f = _noQty[0].querySelector('.q-qty'); if (f) { f.scrollIntoView({ block: 'center' }); f.focus(); }
+    toast('수량이 빈 품목이 ' + _noQty.length + '줄 있습니다 — 수량을 넣어야 저장됩니다 (빨간 칸)');
+    return;
+  }
   const items = collectQItems();
   if (!items.length) { toast('견적 품목과 수량을 입력하세요'); return; }
   const ctype = (el('q-ctype') && el('q-ctype').value) || '소비자';
