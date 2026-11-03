@@ -5390,7 +5390,12 @@ const BC_SIZES = [["800*550*180",380000,50000,80000,800],["900*550*180",400000,5
    · 2200 초과 = 별도 견적 */
 const BC_MAX_L = 2200;
 const BC_MARKUP = { dist: 60000, interior: 240000, consumer: 440000 };
-const BC_NATL = [[300000,400000,600000],[500000,600000,660000],[800000,900000,1100000]];
+/* ★ 2026-11-03 국내제작 단가 변경 (사용자 지정) — [유통, 인테리어, 소비자]
+   · 1200 이하 접합 주문 발주   : 유통·인테리어 95만, 소비자 110만 (치마 200 초과는 금액 그대로 «추가 확인» 안내만)
+   · 1200 이하 비접합 주문 발주 : 85만 통일
+   · 「1200 상판 즉시 출고」 는 뺐다 */
+const BC_NATL = [[950000, 950000, 1100000], [850000, 850000, 850000]];
+const BC_NATL_NAME = ['1200 이하 접합 주문 발주', '1200 이하 비접합 주문 발주'];
 const BC_STD = [[420000,540000,680000],[420000,540000,680000],[360000,460000,580000]];
 const BC_ROUND = [[400000,450000,550000],[480000,550000,650000]];
 const BC_BIZ = { dist: 0, interior: 1, consumer: 2 };
@@ -5477,7 +5482,7 @@ function basinCalcHtml(isBasin, d) {
       <select class="bc-cat" onchange="bcInput(this)" style="${inp}"><option value="mono">모놀리스(주문제작)</option><option value="natl">국내제작(조건별)</option><option value="std">규격 600×470×200</option><option value="round"${_round ? ' selected' : ''}>라운드형</option></select>
       <select class="bc-biz" onchange="bcBizTouched(this)" style="${inp}"><option value="dist"${_bcAuto === 'dist' ? ' selected' : ''}>유통 업체</option><option value="interior"${_bcAuto === 'interior' ? ' selected' : ''}>인테리어 업체</option><option value="consumer"${_bcAuto && _bcAuto !== 'consumer' ? '' : ' selected'}>소비자</option></select>
       <select class="bc-std" onchange="bcInput(this)" style="display:none;${inp}"><option value="0">팬텀 아이보리</option><option value="1">키프로스 라이트 그레이</option><option value="2">화이트 트라버티노</option></select>
-      <select class="bc-natl" onchange="bcInput(this)" style="display:none;${inp}"><option value="0">1200 상판 즉시출고</option><option value="1">1200 이하 주문발주</option><option value="2">1200이하·치마200이하</option></select>
+      <select class="bc-natl" onchange="bcInput(this)" style="display:none;${inp}">${BC_NATL_NAME.map((n, i) => `<option value="${i}">${n}</option>`).join('')}</select>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:6px">${num('bc-l', '기장', sz.L)}${num('bc-w', '폭', sz.W)}${num('bc-h', '높이', sz.H)}</div>
     <div class="bc-monoopt" style="display:flex;gap:8px;align-items:center;margin-top:6px">
@@ -5532,7 +5537,11 @@ function basinCalcRow(row, apply) {
   const n = c => parseInt(String(((q(c) || {}).value) || '').replace(/[^\d]/g, ''), 10) || 0;
   const L = n('bc-l'), H = n('bc-h');
   const bi = BC_BIZ[biz]; let total = null, note = '', why = '';
-  if (cat === 'natl') { total = BC_NATL[+q('bc-natl').value][bi]; why = '국내제작 · 조건별 단가'; }
+  if (cat === 'natl') {
+    const ni = Math.min(BC_NATL.length - 1, Math.max(0, +q('bc-natl').value || 0));
+    total = BC_NATL[ni][bi]; why = '국내제작 · ' + BC_NATL_NAME[ni];
+    if (ni === 0 && H > 200) why += ' · ⚠ 치마 200 초과 — 추가 비용 확인 필요';
+  }
   else if (cat === 'std') { total = BC_STD[+q('bc-std').value][bi]; why = '규격 600×470×200'; }
   else if (cat === 'round') {
     if (!(L > 0)) note = '기장을 넣어 주세요';
