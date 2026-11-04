@@ -4436,6 +4436,13 @@ async function submitItem(id) {
   let name = el('i-name').value.trim();
   if (!name && stone) name = stone;   // 세면대: 자재명 비우면 석종명으로
   if (!name) { toast(catUsesStone(cat) ? '석종을 선택하거나 자재명을 입력하세요' : '자재명을 입력하세요'); return; }
+  /* ★ 2026-11-04 사용자: "세면대 라운드 600 … 석종별로 구분해서 재고가 카운트되어야 하는데 안 되고 있음"
+     앱은 재고를 «이름»으로 찾는다(출고·홀딩·가용재고). 같은 이름에 석종만 다른 품목이 있으면 섞인다.
+     → 이미 같은 이름의 다른 품목이 있으면 이름 뒤에 «(석종)»을 자동으로 붙인다. */
+  if (stone && name !== stone && name.indexOf(stone) < 0 && (state.inventory || []).some(x => x.id !== id && _normName(x.name) === _normName(name))) {
+    name = name + ' (' + stone + ')';
+    toast('같은 이름의 품목이 있어 석종을 붙였습니다 · ' + name);
+  }
   let spec = catUsesSpec(cat) ? el('i-spec').value : ''; if (spec === '__add') spec = '';
   const ps = parseSpec(spec);
   const jang = parseFloat(el('i-jang').value) || 0;
@@ -5800,6 +5807,8 @@ function quoteMatPick(inp) {
   /* ★ 반제품 단가는 접합/비접합 버튼으로만 들어간다 — 단가표 값이 먼저 들어가면 헷갈린다 */
   const priceEl = row.querySelector('.q-price'); const p = _half ? 0 : quoteGetPrice(client, name, type); if (p && !_numv(priceEl.value)) priceEl.value = p;
   const wrap = row.querySelector('.q-stone-wrap'); if (wrap) wrap.style.display = name.includes('세면대') ? 'block' : 'none';
+  /* ★ 재고에 석종이 적힌 품목(예: 600 라운드 세면대 (실버 트라버티노))을 고르면 석종 칸도 같이 맞춘다 */
+  if (it && it.stone) { const ss = row.querySelector('.q-stone'); if (ss && Array.from(ss.options).some(o => o.value === it.stone)) ss.value = it.stone; }
   const avEl = row.querySelector('.q-avail'); if (avEl) avEl.innerHTML = qAvailText(name) + qLockNote(name);
   qLockMat(row);                                  // 등록된 자재를 고르면 이름칸 잠금
   const bc = row.querySelector('.q-bcalc'); if (bc) { const on = name.includes('세면대'); bc.style.display = on ? 'block' : 'none'; if (on) {
