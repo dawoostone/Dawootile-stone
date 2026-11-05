@@ -21629,11 +21629,22 @@ table{border-collapse:collapse;width:100%}
   /* ★ 자동 인쇄하지 않는다 — 안 뽑고 화면으로만 확인하는 경우가 많아
        인쇄창이 매번 뜨는 게 번거롭다는 요청. 요청서 위쪽 [인쇄] 버튼으로 뽑는다. */
 }
+/* ★ 2026-11-05 사용자: "출고대기열에 출고예정일자 좀 볼 수 있으면 좋겠음"
+   예전엔 «미래 날짜»일 때만 배지가 떴다. 이제 오늘·지난 날짜도 항상 보인다. */
+function chulgoSchedLabel(ymd) {
+  const d = dayDiff(ymd); if (d == null) return '<span style="font-size:11px;color:var(--t3)">출고예정일 없음</span>';
+  const wd = ['일', '월', '화', '수', '목', '금', '토'][new Date(String(ymd).slice(0, 10) + 'T00:00:00').getDay()];
+  const txt = mdLabel(ymd) + ' (' + wd + ')';
+  if (d > 0) return `<span class="pill" style="background:#e8f0ff;color:#1b4fb0;border:1px solid #c3d6f5;font-size:11px;font-weight:700;white-space:nowrap"><i class="ti ti-calendar-clock"></i> 출고예정 ${txt} · D-${d}</span>`;
+  if (d === 0) return `<span class="pill" style="background:#e8f8f0;color:#0f766e;border:1px solid #b8e6d3;font-size:11px;font-weight:700;white-space:nowrap"><i class="ti ti-calendar-event"></i> 출고예정 ${txt} · 오늘</span>`;
+  return `<span class="pill" style="background:#fdecea;color:#c0341d;border:1px solid #f3c6c0;font-size:11px;font-weight:700;white-space:nowrap"><i class="ti ti-calendar-exclamation"></i> 출고예정 ${txt} · ${-d}일 지남</span>`;
+}
 function chulgoQueueRow(r) {
   const items = (r.items || []).map(it => `${esc(it.name)} ${+it.qty || 0}${esc(it.unit || '')}`).join(', ');
   return `<label class="cq-item" style="display:flex;gap:9px;align-items:flex-start;padding:9px 8px;border-bottom:0.5px solid var(--bd)">
     <input type="checkbox" class="cq-chk" value="${r.id}" onchange="dspSyncSched(true)" style="width:19px;height:19px;margin-top:2px">
-    <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13.5px">${r.urgent ? '<span class="pill" style="background:#fde8e8;color:#c0341d;font-size:10px">긴급</span> ' : ''}${esc(r.client || '-')} ${futureBadge(r.schedDate, 'sm')}</div>
+    <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13.5px">${r.urgent ? '<span class="pill" style="background:#fde8e8;color:#c0341d;font-size:10px">긴급</span> ' : ''}${esc(r.client || '-')}</div>
+      <div style="margin-top:3px">${chulgoSchedLabel(r.schedDate)}</div>
       <div style="font-size:12px;color:var(--t2);margin-top:2px;word-break:break-word">${items}</div>
       ${(r.dispatchDest || '').trim() ? `<div style="font-size:11px;color:#1b4fb0;margin-top:2px"><i class="ti ti-map-pin" style="font-size:12px;vertical-align:-1px"></i> 하차 ${esc(r.dispatchDest)}</div>` : ''}
       <div style="font-size:10.5px;color:var(--t3);margin-top:2px">${esc(r.docNo || '')} · ${esc(r.sender || '')}</div></div>
