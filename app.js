@@ -6181,7 +6181,7 @@ function _pctTxt(p) { const n = Math.round((+p || 0) * 10) / 10; return String(n
    견적서 할인은 «부가세 포함 합계»에서 빼는 금액이다 (합계 = 공급가 + 부가세 − 할인).
    매출(공급가)에서는 ÷1.1 한 만큼만 빠진다 — 세금계산서 발행 때 쓰는 기준과 같다.
    금액은 견적서에 적은 값을 그대로 읽는다 (원가 화면에서 고치지 않는다). */
-function quoteDcRaw(q) { return Math.max(0, Math.round(+((q && q.discount) || 0)) || 0); }
+function quoteDcRaw(q) { return Math.max(0, Math.round(+((q && q.discount) || 0)) || 0) + Math.max(0, Math.round(+((q && q.billDc) || 0)) || 0); }   // ★ 청구서 총액 D/C 포함 (2026-11-05)
 function quoteDcSupply(q) { const d = quoteDcRaw(q); return d > 0 ? Math.round(d / 1.1) : 0; }
 /* 할인까지 반영한 «진짜 매출(공급가)» */
 function quoteSaleNet(q) { return Math.max(0, (Math.round(+((q && q.supply) || 0)) || 0) - quoteDcSupply(q)); }
@@ -10099,11 +10099,24 @@ function quoteRefundAmt(q) { return quoteRefundRows(q).reduce((s, r) => s + r.am
 function quoteVoided(q) { return quoteRefundRows(q).some(r => r.vd); }
 /* 이 견적의 «매출로 인정하는 금액» — 환불을 뺀 값 */
 function quoteNetTotal(q) {
-  const tot = Math.round(+((q && q.total) || 0));
+  /* ★ 2026-11-05 청구서(묶음 계산서) 총액 D/C — 끝전 절삭 등으로 계산서를 덜 끊은 만큼은 «받을 돈»에서도 뺀다.
+     사용자: "계산서 dc 절삭해서 발행하고 나면 미입금 안 잡히게" (신성그룹 10월 54,586,532 → 54,000,000) */
+  const bd = Math.max(0, Math.round(+((q && q.billDc) || 0)));
+  const tot = Math.max(0, Math.round(+((q && q.total) || 0)) - bd);
   const rs = quoteRefundRows(q);
   if (!rs.length) return tot;
   if (rs.some(r => r.vd)) return 0;                        // 통째 취소
   return Math.max(0, tot - rs.reduce((s, r) => s + r.amt, 0));
+}
+/* 청구서 총액 D/C 를 묶은 견적들에 금액 비율대로 나눈다 (끝전은 첫 견적에) */
+function billDcShares(qs, dc) {
+  dc = Math.max(0, Math.round(+dc || 0));
+  const tots = qs.map(q => Math.max(0, Math.round(+q.total || 0) - Math.max(0, Math.round(+q.billDc || 0))));
+  const sum = tots.reduce((a, b) => a + b, 0);
+  const out = qs.map((q, i) => (sum > 0 ? Math.floor(dc * tots[i] / sum) : 0));
+  let left = dc - out.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < out.length && left > 0; i++) { const room = tots[i] - out[i]; const t = Math.min(room, left); out[i] += t; left -= t; }
+  return out;
 }
 function clientRefundRows(c) { return refundIndex().byClient[String(c || '').trim()] || []; }
 function _moneyBuild() {
@@ -17214,6 +17227,10 @@ async function submitBillTaxInvoice() {
     }
     if (r.ok && j.ok) {
       const mainId = ids[0], today = todayStr(), key = j.mgtKey || d.mgtKey;
+      /* ★ 청구서 총액 D/C(끝전 절삭 등) — 견적들에 나눠 적어 두면 미수에서도 빠진다 (2026-11-05) */
+      let _dcMap = {};
+      try { const _t = billEditTotals(); const _qs = ids.map(x => (state.quotes || []).find(q => q.id === x)).filter(Boolean);
+        if (_t && _t.dc > 0) { const sh = billDcShares(_qs, _t.dc); _qs.forEach((q, i) => { if (sh[i] > 0) _dcMap[q.id] = (Math.max(0, Math.round(+q.billDc || 0))) + sh[i]; }); } } catch (e) { _dcMap = {}; }
       for (const qid of ids) {
         const patch = {
           taxInvoice: true, taxDate: today, ntsConfirmNum: j.ntsConfirmNum || '', taxMgtKey: key,
@@ -17221,6 +17238,7 @@ async function submitBillTaxInvoice() {
         };
         if (qid === mainId) { patch.taxBundleMain = true; patch.taxSupply = d.supplyCostTotal; patch.taxVat = d.taxTotal; patch.taxTotal = d.totalAmount; }
         else { patch.taxBundleRef = mainId; patch.taxSupply = 0; patch.taxVat = 0; patch.taxTotal = 0; }
+        if (_dcMap[qid]) { patch.billDc = _dcMap[qid]; patch.billDcAt = Date.now(); }
         try { await Store.update('quotes', qid, patch); } catch (e) { console.warn('bundle mark', qid, e); }
       }
       _taxDraft = null; closeModal();
