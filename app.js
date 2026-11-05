@@ -19666,8 +19666,8 @@ function basinTableHtml(list) {
 function basinSlipBtn(b, size) {
   const idx = basinStageIndex(b);
   const sm = size === 'sm' ? ' btn-sm' : '';
-  if ((b.stage || '') === '완료') return `<button class="btn${sm}" onclick="event.stopPropagation();printBasinSlip('${b.id}')"><i class="ti ti-printer"></i>출고증</button>`;
-  if (idx === 4) return `<button class="btn${sm}" style="background:#0a5b46;color:#fff;border-color:#0a5b46" onclick="event.stopPropagation();basinShipOut('${b.id}')"><i class="ti ti-truck-delivery"></i>출고 처리</button>`;
+  if ((b.stage || '') === '완료') return `<button class="btn${sm}" onclick="event.stopPropagation();openBasinShipDate('${b.id}','print')"><i class="ti ti-printer"></i>출고증</button>`;
+  if (idx === 4) return `<button class="btn${sm}" style="background:#0a5b46;color:#fff;border-color:#0a5b46" onclick="event.stopPropagation();openBasinShipDate('${b.id}','out')"><i class="ti ti-truck-delivery"></i>출고 처리</button>`;
   return `<span style="color:var(--t3);font-size:11.5px" title="국내입고 단계부터 출고증을 뽑을 수 있습니다">—</span>`;
 }
 function basinCard(b) {
@@ -19685,8 +19685,8 @@ function basinCard(b) {
   let act = '';
   if (idx > 0) act += `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();basinBack('${b.id}')" title="이전 단계"><i class="ti ti-chevron-left"></i></button>`;
   if (idx <= 3) act += `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();basinAdvance('${b.id}')">다음 단계<i class="ti ti-chevron-right"></i></button>`;
-  else if (idx === 4) act += `<button class="btn btn-sm" style="background:#0a5b46;color:#fff;border-color:#0a5b46" onclick="event.stopPropagation();basinShipOut('${b.id}')"><i class="ti ti-truck-delivery"></i>출고 처리 · 출고증</button>`;
-  else if (done) act += `<button class="btn btn-sm" onclick="event.stopPropagation();printBasinSlip('${b.id}')"><i class="ti ti-printer"></i>출고증 인쇄</button>`;
+  else if (idx === 4) act += `<button class="btn btn-sm" style="background:#0a5b46;color:#fff;border-color:#0a5b46" onclick="event.stopPropagation();openBasinShipDate('${b.id}','out')"><i class="ti ti-truck-delivery"></i>출고 처리 · 출고증</button>`;
+  else if (done) act += `<button class="btn btn-sm" onclick="event.stopPropagation();openBasinShipDate('${b.id}','print')"><i class="ti ti-printer"></i>출고증 인쇄</button>`;
   return `<div class="site" onclick="openBasinForm('${b.id}')">
     <div class="site-top">
       <div><div class="nm">${esc(b.vendor || '(업체미정)')}</div><div class="ad">${b.address ? `<i class="ti ti-map-pin" style="font-size:13px"></i>${esc(b.address)}` : `<span style="color:var(--t3)">주소 미지정</span>`}</div></div>
@@ -19722,18 +19722,52 @@ async function basinBack(id) {
   const extra = (b.stage === '완료') ? { shipDate: '' } : null;   // 완료에서 되돌리면 출고일 해제
   await basinSetStage(id, BASIN_STAGES[i - 1], extra);
 }
-async function basinShipOut(id) {
+/* ══════════════════════════════════════════════════════════
+   ★★ 세면대 출고표 — 출고예정일 고르기 (2026-11-05)
+   사용자: *"세면대 출고표 뽑을 때 출고예정일 조정 필요"*
+   · [출고 처리] / [출고증] 을 누르면 날짜 고르는 창이 먼저 뜬다 (기본: 오늘 / 이미 정한 출고일)
+   · 고른 날짜가 출고표·출고 대기열(출고예정일)·세면대 출고일에 같이 들어간다
+   ══════════════════════════════════════════════════════════ */
+function openBasinShipDate(id, mode) {
   const b = (state.basins || []).find(x => x.id === id); if (!b) return;
-  if (!confirm('출고 처리하고 완료로 옮길까요?\n출고 대기열에 등록되고 출고증을 발행합니다.')) return;
-  await basinSetStage(id, '완료', { shipDate: todayStr() });
+  const d0 = (mode === 'print' && b.shipDate) ? String(b.shipDate).slice(0, 10) : todayStr();
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-calendar-event"></i>${mode === 'out' ? '세면대 출고 처리' : '세면대 출고증'}</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:13px;color:var(--t2);margin-bottom:10px"><b>${esc(b.vendor || '')}</b> · ${esc(basinItems(b).map(it => it.stone).filter(Boolean).join(', ') || '세면대')}</div>
+    <div class="fld full"><label>출고예정일</label>
+      <div style="display:flex;gap:6px"><input type="date" id="bs-date" value="${esc(d0)}" style="flex:1;font-size:15px;padding:9px 10px;border:1.5px solid var(--bd2);border-radius:10px">
+      <button type="button" class="btn btn-sm" onclick="const e=el('bs-date');const d=new Date(e.value+'T00:00:00');d.setDate(d.getDate()+1);e.value=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')">+1일</button></div></div>
+    <div style="font-size:11.5px;color:var(--t3);margin:-2px 0 12px">이 날짜가 출고표와 출고 대기열의 «출고예정일»에 들어갑니다.${mode === 'out' ? ' 저장하면 «완료»로 옮기고 출고 대기열에 등록합니다.' : ''}</div>
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button>
+      <button class="btn btn-pri" style="flex:2" onclick="basinShipDateGo('${id}','${mode}')"><i class="ti ti-printer"></i>${mode === 'out' ? '출고 처리 · 출고증 인쇄' : '출고증 인쇄'}</button></div>`);
+}
+async function basinShipDateGo(id, mode) {
+  const d = String((el('bs-date') && el('bs-date').value) || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) { toast('출고예정일을 고르세요'); return; }
+  closeModal();
+  if (mode === 'out') { await basinShipOut(id, d); return; }
+  const b = (state.basins || []).find(x => x.id === id); if (!b) return;
+  if (String(b.shipDate || '').slice(0, 10) !== d) {
+    try { await Store.update('basins', id, { shipDate: d }); } catch (e) { }
+    /* 아직 출고 안 끝난 출고 요청이면 예정일도 같이 */
+    for (const r of (state.chulgoReqs || []).filter(x => x.sourceBasinId === id && ['대기열', '지시', '확인'].includes(x.status || '대기열'))) {
+      try { await Store.update('chulgoReqs', r.id, { schedDate: d }); } catch (e) { }
+    }
+  }
+  printBasinSlip(id, d);
+}
+async function basinShipOut(id, dPick) {
+  const b = (state.basins || []).find(x => x.id === id); if (!b) return;
+  if (!dPick) { openBasinShipDate(id, 'out'); return; }      // ★ 날짜를 먼저 고른다
+  const shipD = dPick;
+  await basinSetStage(id, '완료', { shipDate: shipD });
   // 출고 대기열(출고관리)에 등록 — 세면대 출고. 소리 알림은 '출고 지시' 낼 때만.
   try {
     const its = basinItems(b);
     const qItems = its.map(it => ({ name: it.stone || '세면대', qty: (parseInt(it.qty, 10) || 0), spec: it.spec || '', unit: '개' }));
-    if (qItems.length) await Store.add('chulgoReqs', { docNo: chulgoNextDocNo('출고'), reqType: '출고', client: b.vendor || '', items: qItems, status: '대기열', stockApplied: true, sourceBasinId: b.id, dispatchDest: b.address || '', destOrig: b.address || '', memo: b.note || '', schedDate: String(b.shipDate || '').slice(0, 10) || todayStr(), sender: (me && me.name) || '', createdAt: Date.now() });
+    if (qItems.length) await Store.add('chulgoReqs', { docNo: chulgoNextDocNo('출고'), reqType: '출고', client: b.vendor || '', items: qItems, status: '대기열', stockApplied: true, sourceBasinId: b.id, dispatchDest: b.address || '', destOrig: b.address || '', memo: b.note || '', schedDate: shipD, sender: (me && me.name) || '', createdAt: Date.now() });
   } catch (e) { }
   toast('출고 완료 · 대기열 등록 · 출고증 인쇄');
-  setTimeout(() => printBasinSlip(id), 250);
+  setTimeout(() => printBasinSlip(id, shipD), 250);
 }
 function basinStoneSelectHtml(cls, val) {
   return `<select class="${cls}" onchange="basinLenHint()" style="width:100%;font-size:15px;padding:9px 8px;border:1.5px solid var(--bd2);border-radius:9px;background:#fff">${'<option value="">— 석종(컬러) 선택 —</option>' + basinStones().map(s => `<option value="${esc(s.k)}" ${val === s.k ? 'selected' : ''}>${esc(s.k)}${s.t ? ' · ' + s.t : ''}${s.maxLen ? ' · 최대' + s.maxLen : ''}</option>`).join('')}</select>`;
@@ -19806,7 +19840,7 @@ function openBasinForm(id, pre) {
 function basinSlipFromForm(id) {
   const b = (state.basins || []).find(x => x.id === id); if (!b) return;
   closeModal();
-  if ((b.stage || '') === '완료') printBasinSlip(id); else basinShipOut(id);
+  if ((b.stage || '') === '완료') openBasinShipDate(id, 'print'); else openBasinShipDate(id, 'out');
 }
 function basinLen(spec) { const m = String(spec || '').match(/\d+/); return m ? +m[0] : 0; }
 function basinLenHint() {
@@ -20284,12 +20318,12 @@ function basinExportExcel() {
   toast('엑셀 ' + rows.length + '줄 다운로드');
 }
 /* 세면대 출고증 — 회사 양식 재사용 + 현장주소 표시 (단일 발주 건 발행) */
-function printBasinSlip(id) {
+function printBasinSlip(id, dOver) {
   const b = (state.basins || []).find(x => x.id === id);
   if (!b) { toast('발주 내역을 찾을 수 없습니다'); return; }
   const e = s => esc(s == null ? '' : String(s));
-  const date = b.shipDate || todayStr();
-  const sameDay = (state.basins || []).filter(x => x.stage === '완료' && (x.shipDate || '') === date).map(x => x.id).sort();
+  const date = dOver || b.shipDate || todayStr();
+  const sameDay = (state.basins || []).filter(x => x.id === id || (x.stage === '완료' && (x.shipDate || '') === date)).map(x => x.id).sort();
   const seq = Math.max(1, sameDay.indexOf(id) + 1);
   const docNo = date.replace(/-/g, '') + '-B' + seq;
   const route = b.address ? '다우세라믹 상차 →<br>' + e(b.address) + ' 하차' : '';
@@ -20348,7 +20382,7 @@ function printBasinSlip(id) {
       <td class="title" colspan="2">출 고 표</td>
     </tr>
     <tr>
-      <td class="issue"><div class="ik">발 행 일 자</div><div class="iv">${e(date)}</div></td>
+      <td class="issue"><div class="ik">출고예정일</div><div class="iv">${e(date)}</div></td>
       <td class="conm" colspan="2">${companyInfo().name}</td>
     </tr>
     <tr>
