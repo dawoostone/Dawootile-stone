@@ -19730,7 +19730,7 @@ async function basinShipOut(id) {
   try {
     const its = basinItems(b);
     const qItems = its.map(it => ({ name: it.stone || '세면대', qty: (parseInt(it.qty, 10) || 0), spec: it.spec || '', unit: '개' }));
-    if (qItems.length) await Store.add('chulgoReqs', { docNo: chulgoNextDocNo('출고'), reqType: '출고', client: b.vendor || '', items: qItems, status: '대기열', stockApplied: true, sourceBasinId: b.id, dispatchDest: b.address || '', destOrig: b.address || '', memo: b.note || '', sender: (me && me.name) || '', createdAt: Date.now() });
+    if (qItems.length) await Store.add('chulgoReqs', { docNo: chulgoNextDocNo('출고'), reqType: '출고', client: b.vendor || '', items: qItems, status: '대기열', stockApplied: true, sourceBasinId: b.id, dispatchDest: b.address || '', destOrig: b.address || '', memo: b.note || '', schedDate: String(b.shipDate || '').slice(0, 10) || todayStr(), sender: (me && me.name) || '', createdAt: Date.now() });
   } catch (e) { }
   toast('출고 완료 · 대기열 등록 · 출고증 인쇄');
   setTimeout(() => printBasinSlip(id), 250);
@@ -21639,12 +21639,19 @@ function chulgoSchedLabel(ymd) {
   if (d === 0) return `<span class="pill" style="background:#e8f8f0;color:#0f766e;border:1px solid #b8e6d3;font-size:11px;font-weight:700;white-space:nowrap"><i class="ti ti-calendar-event"></i> 출고예정 ${txt} · 오늘</span>`;
   return `<span class="pill" style="background:#fdecea;color:#c0341d;border:1px solid #f3c6c0;font-size:11px;font-weight:700;white-space:nowrap"><i class="ti ti-calendar-exclamation"></i> 출고예정 ${txt} · ${-d}일 지남</span>`;
 }
+/* 출고예정일 — 요청에 적힌 날짜가 없으면(세면대 출고·예전 기록) 세면대 출고일 → 출고 기록 날짜 → 등록일 순으로 */
+function chulgoSchedOf(r) {
+  const s = String((r && r.schedDate) || '').slice(0, 10); if (s) return s;
+  if (r && r.sourceBasinId) { const b = (state.basins || []).find(x => x.id === r.sourceBasinId); const d = String((b && b.shipDate) || '').slice(0, 10); if (d) return d; }
+  if (r && r.sourceShipId) { const t = (state.transactions || []).find(x => (x.shipId || x.id) === r.sourceShipId); if (t && t.date) return String(t.date).slice(0, 10); }
+  return (r && r.createdAt) ? new Date(+r.createdAt - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10) : '';
+}
 function chulgoQueueRow(r) {
   const items = (r.items || []).map(it => `${esc(it.name)} ${+it.qty || 0}${esc(it.unit || '')}`).join(', ');
   return `<label class="cq-item" style="display:flex;gap:9px;align-items:flex-start;padding:9px 8px;border-bottom:0.5px solid var(--bd)">
     <input type="checkbox" class="cq-chk" value="${r.id}" onchange="dspSyncSched(true)" style="width:19px;height:19px;margin-top:2px">
     <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13.5px">${r.urgent ? '<span class="pill" style="background:#fde8e8;color:#c0341d;font-size:10px">긴급</span> ' : ''}${esc(r.client || '-')}</div>
-      <div style="margin-top:3px">${chulgoSchedLabel(r.schedDate)}</div>
+      <div style="margin-top:3px">${chulgoSchedLabel(chulgoSchedOf(r))}</div>
       <div style="font-size:12px;color:var(--t2);margin-top:2px;word-break:break-word">${items}</div>
       ${(r.dispatchDest || '').trim() ? `<div style="font-size:11px;color:#1b4fb0;margin-top:2px"><i class="ti ti-map-pin" style="font-size:12px;vertical-align:-1px"></i> 하차 ${esc(r.dispatchDest)}</div>` : ''}
       <div style="font-size:10.5px;color:var(--t3);margin-top:2px">${esc(r.docNo || '')} · ${esc(r.sender || '')}</div></div>
