@@ -4455,9 +4455,35 @@ async function submitItem(id) {
   const patterns = [];
   if (ceramic) document.querySelectorAll('#ipat-defs .ipat-name').forEach(i => { const val = (i.value || '').trim(); if (val && !patterns.includes(val)) patterns.push(val); });
   const obj = { name, cat, stone, spec, vendor, depot: normDepot(el('i-depot').value), jang, hebePerJang: ceramic ? ps.hebePerJang : 0, safeJang: parseFloat(el('i-safe').value) || 0, patterns };
-  if (id) { await Store.update('inventory', id, obj); toast('저장됨'); }
+  if (id) {
+    const _old = (state.inventory || []).find(x => x.id === id);
+    await Store.update('inventory', id, obj); toast('저장됨');
+    if (_old && _normName(_old.name) !== _normName(name)) { try { await itemRenameCarry(_old.name, name, id); } catch (e) { } }
+  }
   else { obj.lastInDate = todayStr(); await Store.add('inventory', obj); toast('품목 추가됨'); }
   closeModal();
+}
+/* ★ 2026-11-10 재고 점검 — 품목 이름을 바꾸면 «입고·출고·조정 기록»과 «진행 중 홀딩»의 자재명도 같이 바꾼다.
+   앱은 롯트별·패턴별·창고별 재고와 홀딩(가용재고)을 «이름»으로 찾는다.
+   예전엔 품목 이름만 바뀌고 기록은 옛 이름으로 남아서, 롯트표에서 지난 입출고가 통째로 사라졌다
+   (예: 「카무스 비앙코」 → 「카무스 비앙코 12T」 로 바꾼 뒤 지난 기록 9건이 빠짐).
+   · 바꾸기 전에 몇 건인지 보여 주고 확인을 받는다.
+   · 새 이름이 «다른 품목의 이름»과 같으면 기록이 섞이므로 하지 않는다. */
+async function itemRenameCarry(oldName, newName, selfId) {
+  const ok = _normName(oldName), nk = _normName(newName);
+  if (!ok || !nk || ok === nk) return;
+  if ((state.inventory || []).some(x => x.id !== selfId && _normName(x.name) === nk)) return;
+  const tx = (state.transactions || []).filter(t => _normName(t.itemName || '') === ok);
+  const hs = (state.holdings || []).filter(h => ['홀딩', '예정'].includes(h.status || '홀딩') && holdItems(h).some(x => _normName(x.materialName || '') === ok));
+  if (!tx.length && !hs.length) return;
+  if (!confirm('품목 이름이 바뀌었습니다.\n「' + oldName + '」 → 「' + newName + '」\n\n옛 이름으로 남은 입출고·조정 기록 ' + tx.length + '건' + (hs.length ? ', 진행 중 홀딩 ' + hs.length + '건' : '') + '의 자재명도 같이 바꿀까요?\n(바꾸지 않으면 롯트별 재고·홀딩에서 지난 기록이 빠져 보입니다)')) return;
+  bulkBegin();
+  try { if (tx.length) await Store.bulk('transactions', tx.map(t => ({ id: t.id, update: { itemName: newName } }))); } finally { bulkEnd(); }
+  for (const h of hs) {
+    const its = holdItems(h).map(x => _normName(x.materialName || '') === ok ? Object.assign({}, x, { materialName: newName }) : x);
+    try { await Store.update('holdings', h.id, holdItemsPatch(its)); } catch (e) { }
+  }
+  toast('기록 ' + tx.length + '건' + (hs.length ? ' · 홀딩 ' + hs.length + '건' : '') + ' 자재명 변경');
 }
 /* 실수 삭제 방지 — 삭제하려면 '삭제' 를 직접 입력해야 진행 */
 function guardDelete(msg) {
@@ -18073,7 +18099,9 @@ async function submitOutEdit(id) {
   if (it && newJang !== oldJang) {
     await Store.update('inventory', it.id, { jang: (+it.jang || 0) + (oldJang - newJang) });
   }
-  closeModal(); toast('출고 내역이 수정되었습니다');
+  let _hb = 0;   // ★ 홀딩에서 나간 출고를 줄이면 줄인 만큼 홀딩으로 되돌린다
+  if (newJang < oldJang) { try { _hb = await holdReturnQty(t.shipId || t.id, t.itemName, oldJang - newJang); } catch (e) { } }
+  closeModal(); toast('출고 내역이 수정되었습니다' + (_hb > 0 ? ' · ' + _hb + '장 홀딩으로 되돌림' : ''));
 }
 /* ★★ 2026-09-20 — 출고증 현장 주소 / 반입 금지
    사용자: *"견적서-출고 / 견적서-현장등록-홀딩-출고 할 때 출고증에 안 나오는 것 있음"*
@@ -20617,7 +20645,7 @@ async function delShip(id) {
   if (!state.transactions.some(x => x.id !== id && x.type === 'out' && (x.shipId || x.id) === key)) {
     await revertHoldsForShip(key);
     for (const cr of (state.chulgoReqs || []).filter(r => r.sourceShipId === key)) { try { await Store.remove('chulgoReqs', cr.id); } catch (e) { } }
-  }
+  } else { try { await holdReturnQty(key, t.itemName, +t.jang || 0); } catch (e) { } }   // ★ 한 줄만 지움 → 그 수량만 홀딩으로
   const _un = await quoteUnshipIfNone([t.quoteId], [id]);          // ★ 견적서의 «출고 완료» 풀기
   toast('출고 삭제됨 (재고 복구)' + (_un.length ? ' · 견적 ' + _un.join(', ') + ' 출고 완료 취소' : ''));
 }
@@ -20650,7 +20678,10 @@ async function revertHoldsForShip(key) {
     const org = h.splitFrom ? state.holdings.find(x => x.id === h.splitFrom) : null;
     if (org && ['홀딩', '예정'].includes(org.status || '홀딩')) {
       const merged = holdItemsMerge(holdItems(org), holdItems(h));
-      await Store.update('holdings', org.id, holdItemsPatch(merged));
+      const backJ = holdItems(h).reduce((a, x) => a + (+x.jang || 0), 0);
+      /* ★ 2026-11-10 사용자: "선출고 했다가 취소하면 해당 선출고 건이 그대로 이전 홀딩에 합산되어서 돌아갈 수 있게"
+         수량은 합쳐졌는데 «선출고 n장» 표시가 그대로 남아 있었다 → 되돌린 만큼 빼 준다. */
+      await Store.update('holdings', org.id, Object.assign(holdItemsPatch(merged), { partShipped: Math.max(0, (+org.partShipped || 0) - backJ) }));
       await Store.remove('holdings', h.id);
       continue;
     }
@@ -21186,6 +21217,47 @@ async function holdSplitShip(h, pl, shipId, date) {
   }));
   /* ② 원래 홀딩 — 남은 수량으로 줄이고 상태는 그대로 */
   await Store.update('holdings', h.id, Object.assign(holdItemsPatch(pl.left), { partShipped: ((+h.partShipped || 0) + shippedJang) }));
+}
+/* ★ 2026-11-10 — 출고 «일부만» 취소(출고 한 줄 삭제 · 출고 장수 줄이기)해도 그만큼 홀딩으로 돌아가게.
+   · 선출고로 떼어 낸 출고분이면 → 원래 홀딩에 그 수량을 다시 더한다 (선출고 표시도 그만큼 줄어든다).
+   · 통째로 확정됐던 홀딩이면 → 홀딩은 돌아온 수량으로 «홀딩» 상태가 되고,
+     아직 나가 있는 수량은 «확정(선출고분)» 기록으로 따로 남긴다 (선출고와 같은 모양 — 나중에 그것도 취소하면 다시 합쳐진다).
+   돌려준 장수를 돌려준다. */
+async function holdReturnQty(key, name, qty) {
+  let left = +qty || 0; const k = _normName(name || '');
+  if (!key || !k || left <= 0) return 0;
+  let done = 0;
+  for (const h of (state.holdings || []).filter(x => x.confirmShipId === key && x.status === '확정')) {
+    if (left <= 0) break;
+    const its = holdItems(h).map(x => Object.assign({}, x)); const back = [];
+    for (const it of its) {
+      if (left <= 0) break;
+      if (_normName(it.materialName || '') !== k) continue;
+      const j = +it.jang || 0; const t = Math.min(j, left); if (t <= 0) continue;
+      const hb = j > 0 ? +((+it.hebe || 0) * t / j).toFixed(2) : 0;
+      back.push(Object.assign({}, it, { jang: t, hebe: hb }));
+      it.jang = j - t; it.hebe = +((+it.hebe || 0) - hb).toFixed(2); left -= t;
+    }
+    if (!back.length) continue;
+    const backJ = back.reduce((a, x) => a + (+x.jang || 0), 0); done += backJ;
+    const rest = its.filter(x => (+x.jang || 0) > 0);
+    const restJ = rest.reduce((a, x) => a + (+x.jang || 0), 0);
+    const org = h.splitFrom ? state.holdings.find(x => x.id === h.splitFrom) : null;
+    if (org && ['홀딩', '예정'].includes(org.status || '홀딩')) {
+      await Store.update('holdings', org.id, Object.assign(holdItemsPatch(holdItemsMerge(holdItems(org), back)), { partShipped: Math.max(0, (+org.partShipped || 0) - backJ) }));
+      if (rest.length) await Store.update('holdings', h.id, Object.assign(holdItemsPatch(rest), { shippedJang: restJ }));
+      else await Store.remove('holdings', h.id);
+      continue;
+    }
+    if (!rest.length) { await Store.update('holdings', h.id, Object.assign(holdItemsPatch(back), { status: '홀딩', shippedDate: '', shippedJang: 0, confirmShipId: '' })); continue; }
+    const base = Object.assign({}, h); delete base.id;
+    await Store.add('holdings', Object.assign(base, holdItemsPatch(rest), {
+      status: '확정', shippedDate: h.shippedDate || '', shippedJang: restJ, confirmShipId: key,
+      splitFrom: h.id, splitAt: Date.now(), splitBy: (me && me.name) || ''
+    }));
+    await Store.update('holdings', h.id, Object.assign(holdItemsPatch(back), { status: '홀딩', shippedDate: '', shippedJang: 0, confirmShipId: '', partShipped: (+h.partShipped || 0) + restJ }));
+  }
+  return done;
 }
 function holdToShip(id) {
   const h = state.holdings.find(x => x.id === id); if (!h) return;
