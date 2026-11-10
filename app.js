@@ -2164,6 +2164,11 @@ function lotStock(name) {
     if (_normName(t.itemName) !== key) return;
     const lotName = (t.lot || '').trim();
     if (t.type === 'out' && !lotName) { floatOut += (+t.jang || 0); return; }   // 롯트 미지정 출고 → 나중에 롯트별로 배분
+    /* ★ 2026-11-10 사용자: "총량 재고 조정하면 왜 출고에 수량이 잡히는지"
+       롯트 없이 «총량만» 조정한 건 예전엔 «(미지정)» 칸에 쌓였고, 롯트 미지정 출고를 나눌 때
+       그 칸이 맨 먼저(입고일 없음) 출고를 받아 가서 다른 롯트의 «출고» 숫자가 바뀌었다.
+       → 총량 조정은 여기서 빼고, 아래 «실재고 맞추기» 단계에서 잔여에만 반영한다. */
+    if (t.type === 'adjust' && !lotName) return;
     const lot = lotName || '(미지정)';
     if (!m[lot]) m[lot] = { lot, inQty: 0, outQty: 0, adjQty: 0, firstIn: '' };
     if (t.type === 'in') { m[lot].inQty += (+t.jang || 0); const d = t.date || ''; if (d && (!m[lot].firstIn || d < m[lot].firstIn)) m[lot].firstIn = d; }
@@ -2174,7 +2179,7 @@ function lotStock(name) {
   // 롯트 미지정 출고분을 입고 오래된 롯트부터(FIFO) 차감 → 롯트 합계 = 실제 총재고
   if (floatOut > 0) {
     const order = arr.slice().sort((a, b) => (a.firstIn || '').localeCompare(b.firstIn || ''));
-    for (const l of order) { if (floatOut <= 0) break; const take = Math.min(floatOut, Math.max(0, l.remain)); l.remain -= take; l.outQty += take; floatOut -= take; }
+    for (const l of order) { if (floatOut <= 0) break; const take = Math.min(floatOut, Math.max(0, l.inQty - l.outQty)); l.remain -= take; l.outQty += take; floatOut -= take; }   // ★ 조정(±)과 상관없이 «입고 − 출고» 로만 나눈다
     if (floatOut > 0 && order.length) { const last = order[order.length - 1]; last.remain -= floatOut; last.outQty += floatOut; floatOut = 0; }
   }
   // 실재고(jang) 수동 보정과 롯트 합계를 일치시킴 — 조정 트랜잭션 없이 실재고만 바꿔도 롯트별 잔여가 따라오게. 실롯트 기준으로 맞추고 (미지정) 임시버킷은 제거.
