@@ -16280,16 +16280,10 @@ function renderQuote() {
   const qy = (filters.quoteSearch || '').trim().toLowerCase();
   const all = (state.quotes || []);
   const ym = todayStr().slice(0, 7);
-  const _remQ = q => quoteRem(q);
-  const unpaid = all.reduce((a, b) => a + _remQ(b), 0);
-  const _confUnpaidList = all.filter(q => !!q.ordered && _remQ(q) > 0);
-  const unpaidConf = _confUnpaidList.reduce((a, q) => a + _remQ(q), 0);
-  const noTax = all.filter(q => !taxSettled(q)).length;   // ★ 현금영수증 건 제외
-  const monthSum = all.filter(q => (q.date || '').startsWith(ym)).reduce((a, b) => a + (+b.total || 0), 0);
   /* ★ 2026-09-11 — 위쪽 「분류별 매출」 카드는 없앴다.
      아래 목록 위의 카드와 같은 내용을 «전체·공급가» vs «필터·VAT포함» 두 기준으로 보여줘서
      숫자가 안 맞고 화면만 복잡했다. 이제 아래 카드 하나로 합쳤다(확정 건만 · 기간·필터 따라감). */
-  const view = filters.quoteView || 'all';
+  const view = filters.quoteView || 'month';   // ★ 2026-11-11 기본은 «월별» (사용자: "통계랑 견적서 목록을 기본으로 월별로")
   const _selQs = filters.quoteBundle ? (state.quotes || []).filter(x => _qSel.has(x.id)) : [];
   const _selTotal = _selQs.reduce((a, q) => a + (+q.total || 0), 0);
   const _listHtml = _quoteListInner();   // ★ 먼저 만들어야 _qShownIds 가 채워진다 (묶음 바의 '전체 선택 N건' 이 이걸 본다)
@@ -16329,11 +16323,7 @@ function renderQuote() {
   el('pg-quote').innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-file-invoice"></i>견적서</h2><p>견적 작성 → 출고 → 결제 · 세금계산서까지</p></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">${canLedger() ? `<button class="btn btn-sm" onclick="bankOpenList()"><i class="ti ti-building-bank"></i>통장 내역</button><button class="btn btn-sm" onclick="openLedger()"><i class="ti ti-book"></i>거래처 원장</button>` : ''}${canTax() ? `<button class="btn btn-sm" onclick="openTaxList()"><i class="ti ti-file-invoice"></i>계산서 내역</button>` : ''}<button class="btn btn-sm" onclick="openCutSim()"><i class="ti ti-layout-grid"></i>재단도</button><button class="btn btn-sm" onclick="openQuoteSettings()"><i class="ti ti-settings"></i>견적 설정</button><button class="btn btn-pri btn-sm" onclick="openQuoteInline()"><i class="ti ti-plus"></i>견적 작성</button></div></div>
-    <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px">
-      <button class="stat tap" onclick="quoteShowConfUnpaid()" title="확정 주문 중 미결제만 보기"><div class="ic r"><i class="ti ti-cash-off"></i></div><div class="v" style="font-size:19px">${fmtWon(unpaidConf)}</div><div class="l">확정 미수금 <i class="ti ti-chevron-right tap-arrow"></i></div><div class="s">${_confUnpaidList.length}건 · 확정 전 포함 ${fmtWon(unpaid)}</div></button>
-      <button class="stat tap" onclick="quoteSetConf('all');quoteSetStat('notax')" title="계산서 미발행만 보기"><div class="ic b"><i class="ti ti-file-off"></i></div><div class="v">${noTax}</div><div class="l">계산서 미발행 <i class="ti ti-chevron-right tap-arrow"></i></div></button>
-      <div class="stat"><div class="ic g"><i class="ti ti-calendar-stats"></i></div><div class="v" style="font-size:19px">${fmtWon(monthSum)}</div><div class="l">이번 달 견적</div></div>
-    </div>
+    <div id="q-stats">${_quoteStatsHtml()}</div>
     ${_pmBanner()}
     ${toggle}
     ${puBanner}
@@ -16464,11 +16454,14 @@ function _quoteListInner() {
   // 각 칩의 건수는 "다른 축이 걸린 상태에서" 세어야 눌렀을 때 숫자가 맞는다
   const baseForConf = fStat === 'all' ? list : list.filter(_statFn[fStat] || (() => true));
   const baseForStat = fConf === 'all' ? list : list.filter(_confFn[fConf] || (() => true));
-  const cConf = baseForConf.filter(_isConf).length, cPending = baseForConf.filter(_isPending).length;
-  const cNoTax = baseForStat.filter(_isNoTax).length, cTax = baseForStat.filter(_isTax).length;
-  const cCash = baseForStat.filter(_isCash).length;
-  const cUnpaid = baseForStat.filter(_isUnpaid).length, cPaid = baseForStat.filter(_isPaid).length;
-  const cBasin = baseForStat.filter(_isBasinPend).length;
+  /* ★ 2026-11-11 칩 옆 숫자도 지금 보고 있는 기간(월별·일별) 것만 센다 — 목록에 뜨는 건수와 맞게 */
+  const _pIn = quotePeriodPred(qy ? 'all' : (filters.quoteView || 'month'));
+  const _bConf = baseForConf.filter(_pIn), _bStat = baseForStat.filter(_pIn);
+  const cConf = _bConf.filter(_isConf).length, cPending = _bConf.filter(_isPending).length;
+  const cNoTax = _bStat.filter(_isNoTax).length, cTax = _bStat.filter(_isTax).length;
+  const cCash = _bStat.filter(_isCash).length;
+  const cUnpaid = _bStat.filter(_isUnpaid).length, cPaid = _bStat.filter(_isPaid).length;
+  const cBasin = _bStat.filter(_isBasinPend).length;
   if (_confFn[fConf]) list = list.filter(_confFn[fConf]);
   if (_statFn[fStat]) list = list.filter(_statFn[fStat]);
   /* ── 분류 축 (세라믹 / 세면대 / 석재 / 통관비용) ──
@@ -16477,7 +16470,7 @@ function _quoteListInner() {
        그래서 칩의 건수를 다 더하면 전체 건수보다 조금 많을 수 있다(섞인 견적이 두 번 세어져서). */
   const fCat = filters.qCat || 'all';
   const cCat = {}; LCATS.forEach(c => cCat[c] = 0);
-  baseForStat.forEach(q => quoteCatSet(q).forEach(c => { if (cCat[c] != null) cCat[c]++; }));
+  _bStat.forEach(q => quoteCatSet(q).forEach(c => { if (cCat[c] != null) cCat[c]++; }));
   const _preCatList = list.slice();   // ★ 분류 카드는 «분류를 고르기 전» 목록으로 만든다 (골라도 다른 분류가 안 사라지게)
   if (fCat !== 'all') list = list.filter(q => quoteCatSet(q).indexOf(fCat) >= 0);
   _qShownIds = list.map(q => q.id);   // 지금 화면(검색·필터 반영)에 뜬 견적 — 묶음청구 [전체 선택] 이 이걸 쓴다
@@ -16488,6 +16481,7 @@ function _quoteListInner() {
     const rem = list.reduce((a, q) => a + quoteRem(q), 0);
     return `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#eef4ff;border:1px solid #cfe0ff;border-radius:11px;padding:9px 12px;margin-bottom:10px">
       <span style="color:#2f6fed;font-weight:800;font-size:12.5px"><i class="ti ti-search"></i> 검색 «${esc(filters.quoteSearch || '')}» · ${n}건</span>
+      ${(filters.quoteView || 'month') !== 'all' ? '<span style="font-size:11px;color:var(--t3)">· 검색은 전체 기간에서 찾습니다</span>' : ''}
       ${_amtP ? `<span class="pill" style="background:#dbeafe;color:#1a56b8;border:1px solid #bfd8ff;font-size:10.5px"><i class="ti ti-currency-won"></i> 금액 ${esc(_amtP.label)}</span>` : ''}
       <span style="margin-left:auto;text-align:right"><b style="font-size:15px;color:var(--gd)">${fmtWon(sum)}</b><span style="font-size:11.5px;color:var(--t2)">원</span>${rem > 0 ? `<span style="font-size:11.5px;color:var(--red-t);font-weight:700;margin-left:8px">미수 ${fmtWon(rem)}원</span>` : ''}</span>
     </div>` ;
@@ -16519,7 +16513,7 @@ function _quoteListInner() {
      ★ 확정된 건만 · 공급가 기준 · 지금 보고 있는 «기간(월별·일별)»과 «필터»를 그대로 따라간다.
      ★ 한 견적에 세라믹과 세면대가 같이 있으면 품목 금액 비율대로 나눠 담는다(quoteCatSplit).
        그래서 칸마다의 건수를 다 더하면 전체 건수보다 많을 수 있다. */
-  const _cView = filters.quoteView || 'all';
+  const _cView = qy ? 'all' : (filters.quoteView || 'month');   // ★ 검색할 때는 기간 상관없이 전체에서 찾는다
   const _cMonth = filters.quoteMonth || ym;
   const _cDay = filters.quoteDay || todayStr();
   const _catList = (_cView === 'month') ? _preCatList.filter(q => (qDate(q) || '').startsWith(_cMonth))
@@ -16646,9 +16640,45 @@ function _quoteListInner() {
   }
   return `${statChips}${searchBar}${catBar}${unpaidBar}${navBar}<div id="q-list" data-keepscroll onscroll="quoteListScroll(this)" style="max-height:calc(100vh - 300px);min-height:220px;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-right:2px">${body}</div>`;
 }
+/* ★ 2026-11-11 — 사용자: "견적서 화면에서 통계랑 견적서 목록을 기본으로 월별로 볼 수 있게"
+   보기(전체·월별·일별)에 맞는 기간 조건. 월별이면 고른 달, 일별이면 고른 날. */
+function quotePeriodPred(view) {
+  const v = view || 'month';
+  if (v === 'month') { const m = filters.quoteMonth || todayStr().slice(0, 7); return q => (qDate(q) || '').startsWith(m); }
+  if (v === 'day') { const d = filters.quoteDay || todayStr(); return q => qDate(q) === d; }
+  return () => true;
+}
+function quotePeriodLabel(view) {
+  const v = view || 'month';
+  if (v === 'month') { const m = filters.quoteMonth || todayStr().slice(0, 7); return (m === todayStr().slice(0, 7) ? '이번 달' : (+m.slice(5)) + '월') ; }
+  if (v === 'day') { const d = filters.quoteDay || todayStr(); return d === todayStr() ? '오늘' : (+d.slice(5, 7)) + '/' + (+d.slice(8)); }
+  return '';
+}
+/* 견적 화면 위쪽 통계 3칸 — 월별·일별 보기면 그 기간 것만 센다. 전체 기간 숫자는 작게 같이 보여 준다. */
+function _quoteStatsHtml() {
+  const all = (state.quotes || []);
+  const view = filters.quoteView || 'month';
+  const inP = quotePeriodPred(view), per = quotePeriodLabel(view);
+  const pl = view === 'all' ? all : all.filter(inP);
+  const _cuL = l => l.filter(q => !!q.ordered && quoteRem(q) > 0);
+  const _cu = l => _cuL(l).reduce((a, q) => a + quoteRem(q), 0);
+  const _nt = l => l.filter(q => !taxSettled(q)).length;   // ★ 현금영수증 건 제외
+  const unpaidConf = _cu(pl), noTax = _nt(pl);
+  const sub = t => view === 'all' ? '' : `<div class="s">${t}</div>`;
+  const unpaidAny = pl.reduce((a, q) => a + quoteRem(q), 0);   // 확정 전 포함
+  const ym = todayStr().slice(0, 7);
+  const sumList = view === 'all' ? all.filter(q => (qDate(q) || '').startsWith(ym)) : pl;
+  const monthSum = sumList.reduce((a, b) => a + (+b.total || 0), 0);
+  return `<div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px">
+      <button class="stat tap" onclick="quoteShowConfUnpaid()" title="확정 주문 중 미결제만 보기"><div class="ic r"><i class="ti ti-cash-off"></i></div><div class="v" style="font-size:19px">${fmtWon(unpaidConf)}</div><div class="l">${per ? esc(per) + ' ' : ''}확정 미수금 <i class="ti ti-chevron-right tap-arrow"></i></div><div class="s">${_cuL(pl).length}건 · 확정 전 포함 ${fmtWon(unpaidAny)}</div>${sub('전체 기간 ' + fmtWon(_cu(all)))}</button>
+      <button class="stat tap" onclick="quoteSetConf('all');quoteSetStat('notax')" title="계산서 미발행만 보기"><div class="ic b"><i class="ti ti-file-off"></i></div><div class="v">${noTax}</div><div class="l">${per ? esc(per) + ' ' : ''}계산서 미발행 <i class="ti ti-chevron-right tap-arrow"></i></div>${sub('전체 기간 ' + _nt(all) + '건')}</button>
+      <div class="stat"><div class="ic g"><i class="ti ti-calendar-stats"></i></div><div class="v" style="font-size:19px">${fmtWon(monthSum)}</div><div class="l">${per ? esc(per) : '이번 달'} 견적</div>${sub(sumList.length + '건')}</div>
+    </div>`;
+}
 function quotesFilter() {
   const w = el('q-listwrap'); if (!w) { renderQuote(); return; }
   w.innerHTML = _quoteListInner();                                  // 이 안에서 _qShownIds 가 갱신된다
+  const st = el('q-stats'); if (st) st.innerHTML = _quoteStatsHtml();   // ★ 달을 넘기면 위 통계도 그 달로
   const b = el('q-bundlebtns'); if (b) b.innerHTML = _qBundleBtnsHtml();   // '전체 선택 N건' 만 다시 (검색칸 커서 유지)
 }
 /* 견적 필터는 두 축을 겹쳐서 쓴다: (확정/미확정) × (결제·계산서·세면대) */
