@@ -19451,10 +19451,14 @@ function basinDrawPreview() {
     : '';
   const bad = [];
   if (!(A.L > 0) || !(A.W > 0)) bad.push('기장·폭을 입력하세요');
-  if (A.bl * A.n > A.L) bad.push(`볼이 판보다 깁니다 (볼 ${A.bl}${A.n === 2 ? '×2' : ''} > 기장 ${A.L})`);
-  if (A.bw > A.W) bad.push(`볼이 판보다 넓습니다 (볼 ${A.bw} > 폭 ${A.W})`);
-  if (A.back < 0 || A.front < 0) bad.push('앞뒤 띄움값이 판을 벗어납니다');
-  if (A.m < 0 || A.gap < 0) bad.push('좌우·사이 띄움값이 판을 벗어납니다');
+  /* ★ 2026-11-12 사용자: "볼 타공 없음 체크하면 볼보다 작아서 도면 그릴 수 없다 이런 말 없도록 (선반 폭이 좁은 경우 있음)"
+     상판만(볼·타공 없음)은 볼이 없으니 볼 크기·띄움값 검사를 하지 않는다. */
+  if (!_to) {
+    if (A.bl * A.n > A.L) bad.push(`볼이 판보다 깁니다 (볼 ${A.bl}${A.n === 2 ? '×2' : ''} > 기장 ${A.L})`);
+    if (A.bw > A.W) bad.push(`볼이 판보다 넓습니다 (볼 ${A.bw} > 폭 ${A.W})`);
+    if (A.back < 0 || A.front < 0) bad.push('앞뒤 띄움값이 판을 벗어납니다');
+    if (A.m < 0 || A.gap < 0) bad.push('좌우·사이 띄움값이 판을 벗어납니다');
+  }
   if (bad.length) { box.innerHTML = `<div style="padding:22px;text-align:center;color:var(--red-t);font-size:13.5px;line-height:1.8"><i class="ti ti-alert-triangle"></i> ${bad.map(esc).join('<br>')}</div>`; return; }
   // 미리보기는 창 너비에 맞춰 줄여서 «한눈에» 보이게 한다 (내려받는 PNG는 원래 크기 그대로)
   /* 수전 타공 안내 — «볼에서 수전 센터까지» 만 쓴다. 판 밖으로 넘칠 때만 경고 */
