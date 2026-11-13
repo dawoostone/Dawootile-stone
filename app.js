@@ -5254,9 +5254,14 @@ const SHIP_DEST_ALIAS = {
   '신한': '신한스톤',
   '오씨': '오씨스톤'
 };
+/* ★ 2026-11-13 사용자 확인: 주소·전화번호와 함께 적어도 이 이름이 들어 있으면 그곳으로 본다
+   (예: «도척면 방도길 49-24 오씨스톤 010-5250-8035» → 오씨스톤) */
+const SHIP_DEST_CONTAINS = ['오씨스톤'];
 function _shipDestKey(s) {
   const k = String(s == null ? '' : s).replace(/\(주\)|㈜|주식회사/g, '').replace(/\s+/g, '').trim();
-  return SHIP_DEST_ALIAS[k] || k;
+  if (SHIP_DEST_ALIAS[k]) return SHIP_DEST_ALIAS[k];
+  for (const c of SHIP_DEST_CONTAINS) if (k.indexOf(c) >= 0) return c;   // 주소·전화번호까지 적은 경우
+  return k;
 }
 function shipDestStats() {
   const m = {};
