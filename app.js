@@ -5117,6 +5117,13 @@ function renderShip() {
       <div class="card-h"><h3><i class="ti ti-trophy"></i>출고 상위 제품 <span style="font-size:11.5px;font-weight:600;color:${selM ? '#2f6fed' : 'var(--t3)'}">· ${selMLabel}</span></h3>${top.length ? `<span class="more" style="display:inline-flex;gap:8px"><a class="tap" onclick="openMonthMatrix('item')" style="cursor:pointer;color:#2f6fed"><i class="ti ti-calendar-stats"></i> 월별</a><a class="tap" onclick="openTopProducts()" style="cursor:pointer">더보기 <i class="ti ti-chevron-right"></i></a></span>` : ''}</div>
       ${top.length ? top.map(([nm, v], i) => `<div class="abar"><span class="rk">${i + 1}</span><span class="nm">${esc(nm)}</span><span class="tr"><i style="width:${v / maxT * 100}%"></i></span><span class="vv">${v.toFixed(0)}㎡</span></div>`).join('') : `<div class="empty"><i class="ti ti-chart-dots"></i>출고 데이터가 쌓이면 표시됩니다</div>`}
     </div>
+    <div class="card ship-sec" data-tab="stats" style="${shd('stats')}">
+      <div class="card-h"><h3><i class="ti ti-map-pin"></i>출고지별 출고 자재 <span style="font-size:11.5px;font-weight:600;color:${selM ? '#2f6fed' : 'var(--t3)'}">· ${selMLabel}</span></h3>
+        <span class="more" style="display:inline-flex;gap:8px"><a class="tap" onclick="downloadShipDestXls()" style="cursor:pointer;color:#2f6fed"><i class="ti ti-file-spreadsheet"></i> 엑셀</a></span></div>
+      <div class="search-box" style="margin-bottom:8px"><i class="ti ti-search"></i>
+        <input id="sd-q" placeholder="출고지·자재 검색" value="${esc(filters.shipDestQ || '')}" oninput="filters.shipDestQ=this.value;shipDestRefresh()" autocomplete="off" lang="ko"></div>
+      <div id="ship-dest">${shipDestHtml()}</div>
+    </div>
     ${isAdmin() ? `<div class="card ship-sec" data-tab="stats" style="${shd('stats')}">
       <div class="card-h"><h3><i class="ti ti-building-store"></i>거래량 많은 업체 <span style="font-size:11.5px;font-weight:600;color:${selM ? '#2f6fed' : 'var(--t3)'}">· ${selMLabel}</span> <span style="font-size:11px;font-weight:500;color:var(--t3)">(관리자)</span></h3>${topC.length ? `<span class="more tap" onclick="openMonthMatrix('client')" style="cursor:pointer;color:#2f6fed"><i class="ti ti-calendar-stats"></i> 월별로 보기 <i class="ti ti-chevron-right"></i></span>` : ''}</div>
       ${topC.length ? topC.map(([nm, v], i) => `<div class="abar"><span class="rk">${i + 1}</span><span class="nm">${esc(nm)}</span><span class="tr"><i style="width:${v / maxC * 100}%"></i></span><span class="vv">${v.toFixed(0)}㎡</span></div>`).join('') : `<div class="empty"><i class="ti ti-chart-dots"></i>출고 데이터가 쌓이면 표시됩니다</div>`}
@@ -5226,6 +5233,84 @@ function shipTopClients() {
     m[k].jang += (+t.jang || 0); m[k].hebe += (+t.hebe || 0); m[k].cnt++;
   });
   return Object.values(m).sort((a, b) => b.hebe - a.hebe);
+}
+/* ══════════════════════════════════════════════════════════
+   ★ 출고지별 출고 자재 (2026-11-13)
+   사용자: *"출고지 별로 출고된 자재 통계 볼 수 있게 해줘"*
+   · 출고 등록 때 적은 «출고지»(공장·현장·업체 배차 …)마다 무슨 자재가 몇 장 나갔는지.
+   · 기간은 위 «월별 출고 현황»에서 고른 달(안 고르면 그 해 전체)을 그대로 따라간다.
+   · 출고지는 손으로 적는 칸이라 «(주)·주식회사·띄어쓰기»만 다른 이름은 한 곳으로 합친다.
+     (거봉 / 거봉석재 처럼 글자가 다른 건 합치지 않는다 — 같은 곳인지 앱이 알 수 없어서)
+   ══════════════════════════════════════════════════════════ */
+let _shipDestOpen = new Set();
+function _shipDestKey(s) { return String(s == null ? '' : s).replace(/\(주\)|㈜|주식회사/g, '').replace(/\s+/g, '').trim(); }
+function shipDestStats() {
+  const m = {};
+  _shipStatOuts().forEach(t => {
+    const raw = String(t.dest || t.factory || '').trim();
+    const k = _shipDestKey(raw) || '(출고지 없음)';
+    const g = m[k] || (m[k] = { key: k, names: {}, jang: 0, hebe: 0, cnt: 0, ships: new Set(), items: {} });
+    const nm = raw || '(출고지 없음)'; g.names[nm] = (g.names[nm] || 0) + 1;
+    const j = +t.jang || 0, h = +t.hebe || 0;
+    g.jang += j; g.hebe += h; g.cnt++; g.ships.add(t.shipId || t.id);
+    const ik = t.itemName || '-';
+    const it = g.items[ik] || (g.items[ik] = { name: ik, jang: 0, hebe: 0, cnt: 0 });
+    it.jang += j; it.hebe += h; it.cnt++;
+  });
+  return Object.values(m).map(g => {
+    const names = Object.entries(g.names).sort((a, b) => b[1] - a[1]);
+    return { key: g.key, name: names[0][0], alias: names.slice(1).map(x => x[0]), jang: g.jang, hebe: g.hebe, cnt: g.cnt, ships: g.ships.size,
+      items: Object.values(g.items).sort((a, b) => b.jang - a.jang || b.hebe - a.hebe) };
+  }).sort((a, b) => b.jang - a.jang || b.hebe - a.hebe);
+}
+function _sdNum(v) { return (Math.round((+v || 0) * 10) / 10).toLocaleString('ko-KR'); }
+function shipDestHtml() {
+  const q = String(filters.shipDestQ || '').trim().toLowerCase().replace(/\s+/g, '');
+  let list = shipDestStats();
+  if (q) list = list.filter(g => (g.name + ' ' + g.alias.join(' ')).toLowerCase().replace(/\s+/g, '').includes(q) || g.items.some(x => String(x.name).toLowerCase().replace(/\s+/g, '').includes(q)));
+  if (!list.length) return `<div class="empty"><i class="ti ti-map-pin-off"></i>${q ? '검색 결과가 없습니다' : '이 기간에 출고 내역이 없습니다'}</div>`;
+  const totJ = list.reduce((a, g) => a + g.jang, 0), totH = list.reduce((a, g) => a + g.hebe, 0);
+  const rows = list.map(g => {
+    const open = _shipDestOpen.has(g.key) || !!q;
+    const its = q && !(g.name + ' ' + g.alias.join(' ')).toLowerCase().replace(/\s+/g, '').includes(q)
+      ? g.items.filter(x => String(x.name).toLowerCase().replace(/\s+/g, '').includes(q)) : g.items;
+    return `<div style="border:1px solid var(--bd);border-radius:10px;margin-bottom:6px;overflow:hidden">
+      <div class="tap" data-k="${esc(g.key)}" onclick="shipDestToggle(this.dataset.k)" style="display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;background:${open ? '#f2fbf6' : '#fff'}">
+        <i class="ti ti-chevron-${open ? 'down' : 'right'}" style="color:var(--t3)"></i>
+        <div style="min-width:0;flex:1">
+          <div style="font-weight:800;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(g.name)}</div>
+          <div style="font-size:11px;color:var(--t3)">출고 ${g.ships}회 · 자재 ${g.items.length}종${g.alias.length ? ' · 같은 곳으로 합침: ' + esc(g.alias.join(', ')) : ''}</div>
+        </div>
+        <div style="text-align:right;white-space:nowrap"><b style="font-size:15px;color:var(--gd)">${_sdNum(g.jang)}</b><span style="font-size:11px;color:var(--t2)">장</span>
+          <div style="font-size:11px;color:var(--t3)">${_sdNum(g.hebe)}㎡</div></div>
+      </div>
+      ${open ? `<div style="border-top:1px dashed var(--bd);padding:4px 11px 8px">
+        <table class="tbl" style="font-size:12px"><thead><tr><th>자재</th><th style="text-align:right">건수</th><th style="text-align:right">장수</th><th style="text-align:right">헤베</th></tr></thead><tbody>
+        ${its.map(x => `<tr><td><b>${esc(x.name)}</b></td><td style="text-align:right">${x.cnt}</td><td style="text-align:right">${_sdNum(x.jang)}</td><td style="text-align:right;color:var(--t2)">${_sdNum(x.hebe)}</td></tr>`).join('')}
+        </tbody></table></div>` : ''}
+    </div>`;
+  }).join('');
+  return `<div style="font-size:12px;color:var(--t2);margin-bottom:7px">출고지 <b>${list.length}곳</b> · 합계 <b>${_sdNum(totJ)}</b>장 · ${_sdNum(totH)}㎡ <span style="color:var(--t3)">· 누르면 자재별로 펼쳐집니다</span></div>
+    <div style="max-height:460px;overflow-y:auto;padding-right:2px">${rows}</div>`;
+}
+function shipDestRefresh() { const b = el('ship-dest'); if (b) b.innerHTML = shipDestHtml(); }
+function shipDestToggle(k) { if (_shipDestOpen.has(k)) _shipDestOpen.delete(k); else _shipDestOpen.add(k); shipDestRefresh(); }
+function downloadShipDestXls() {
+  const list = shipDestStats(), label = shipStatLabel();
+  const TH = (t, w) => `<th style="background:#0F6E56;color:#fff;font-weight:bold;border:0.5pt solid #0a4f3e;padding:6px 9px;text-align:center" ${w ? 'width="' + w + '"' : ''}>${t}</th>`;
+  const TD = (t, st) => `<td style="border:0.5pt solid #cfd8d4;padding:5px 9px;${st || ''}">${t}</td>`;
+  const R = 'text-align:right';
+  let html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body>`;
+  html += `<table><tr><td colspan="6" style="font-size:15pt;font-weight:bold;color:#0F6E56;padding:6px 4px">다우세라믹앤석재 · 출고지별 출고 자재 (${esc(label)})</td></tr></table>`;
+  html += `<table style="border-collapse:collapse;margin-top:6px"><tr>${TH('출고지', 220)}${TH('자재', 200)}${TH('건수', 60)}${TH('장수', 70)}${TH('헤베(㎡)', 80)}</tr>`;
+  list.forEach(g => {
+    html += `<tr>${TD('<b>' + esc(g.name) + '</b>', 'background:#eef6f2')}${TD('<b>합계</b> · 출고 ' + g.ships + '회', 'background:#eef6f2')}${TD(g.cnt, R + ';background:#eef6f2')}${TD('<b>' + _sdNum(g.jang) + '</b>', R + ';background:#eef6f2')}${TD('<b>' + (+g.hebe).toFixed(1) + '</b>', R + ';background:#eef6f2')}</tr>`;
+    g.items.forEach(x => { html += `<tr>${TD('')}${TD(esc(x.name))}${TD(x.cnt, R)}${TD(_sdNum(x.jang), R)}${TD((+x.hebe).toFixed(1), R)}</tr>`; });
+  });
+  html += `</table></body></html>`;
+  const blob = new Blob(['\ufeff', html], { type: 'application/vnd.ms-excel' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = '출고지별출고_' + label.replace(/\s+/g, '') + '_' + todayStr() + '.xls'; document.body.appendChild(a); a.click(); a.remove();
+  toast('엑셀 다운로드');
 }
 function openTopProducts() {
   const list = shipTopProducts();
