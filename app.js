@@ -5240,10 +5240,22 @@ function shipTopClients() {
    · 출고 등록 때 적은 «출고지»(공장·현장·업체 배차 …)마다 무슨 자재가 몇 장 나갔는지.
    · 기간은 위 «월별 출고 현황»에서 고른 달(안 고르면 그 해 전체)을 그대로 따라간다.
    · 출고지는 손으로 적는 칸이라 «(주)·주식회사·띄어쓰기»만 다른 이름은 한 곳으로 합친다.
-     (거봉 / 거봉석재 처럼 글자가 다른 건 합치지 않는다 — 같은 곳인지 앱이 알 수 없어서)
+     글자가 다른 이름은 사용자가 같은 곳이라고 확인해 준 것만 SHIP_DEST_ALIAS 로 합친다.
    ══════════════════════════════════════════════════════════ */
 let _shipDestOpen = new Set();
-function _shipDestKey(s) { return String(s == null ? '' : s).replace(/\(주\)|㈜|주식회사/g, '').replace(/\s+/g, '').trim(); }
+/* ★ 2026-11-13 사용자 확인: 아래 이름들은 «같은 곳» — 통계에서 한 곳으로 합친다 (출고 기록 자체는 그대로) */
+const SHIP_DEST_ALIAS = {
+  '거봉': '거봉석재',
+  '이레': '이레석재', '이레석재산업': '이레석재',
+  '삼진': '삼진스톤',
+  '영진': '영진석재',
+  '동양석재': '동양', '토마스마블': '동양',
+  '가유산업': '가유스톤', '가유': '가유스톤'
+};
+function _shipDestKey(s) {
+  const k = String(s == null ? '' : s).replace(/\(주\)|㈜|주식회사/g, '').replace(/\s+/g, '').trim();
+  return SHIP_DEST_ALIAS[k] || k;
+}
 function shipDestStats() {
   const m = {};
   _shipStatOuts().forEach(t => {
