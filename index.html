@@ -541,6 +541,6 @@ if ('serviceWorker' in navigator) {
 <!-- Firebase 설정: 같은 폴더의 firebase-config.js 가 window.FIREBASE_CONFIG 를 설정.
      파일이 없으면 이 기기에만 저장되는 미리보기 모드로 동작합니다. -->
 <script src="firebase-config.js"></script>
-<script>document.write('<scr' + 'ipt src="app.js?t=' + Date.now() + '"></scr' + 'ipt>');</script>
+<script>/* ★ 2026-11-15 속도 — 예전엔 열 때마다 app.js(1.9MB)를 새로 받았다(?t=지금시각). 이제 서버에 «버전표(ETag)»만 물어보고, 바뀌었을 때만 새로 받는다. 실패하면 예전처럼 새로 받는다. */(function(){var v=Date.now();try{var x=new XMLHttpRequest();x.open('HEAD','app.js?h='+v,false);x.send(null);var e=x.status===200&&(x.getResponseHeader('ETag')||x.getResponseHeader('Last-Modified'));if(e)v=String(e).replace(/[^0-9A-Za-z]/g,'');}catch(err){}document.write('<scr'+'ipt src="app.js?v='+v+'"></scr'+'ipt>');})();</script>
 </body>
 </html>
