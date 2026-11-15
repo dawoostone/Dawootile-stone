@@ -16510,18 +16510,22 @@ function quoteAmtPred(qy) {
    검색·필터를 바꾸면 다시 60장부터 시작한다.                                  */
 const Q_PAGE_STEP = 60;
 let _qPage = Q_PAGE_STEP, _qFlatList = null, _qSig = '';
-function _qMoreInner(total) {
-  return `<button class="btn btn-block" onclick="quoteMore()"><i class="ti ti-chevron-down"></i> 더 보기 <span style="color:var(--t3);font-weight:500">· ${total}건 중 ${_qPage}건</span></button>`;
+/* ★ 2026-11-15 월별 보기도 나눠 그린다 — 목록에 «날짜 머리줄»({__hdr})이 섞일 수 있어서 견적 수만 센다 */
+function _qMoreInner() {
+  const L = _qFlatList || [];
+  const total = L.filter(x => !(x && x.__hdr)).length, shown = L.slice(0, _qPage).filter(x => !(x && x.__hdr)).length;
+  return `<button class="btn btn-block" onclick="quoteMore()"><i class="ti ti-chevron-down"></i> 더 보기 <span style="color:var(--t3);font-weight:500">· ${total}건 중 ${shown}건</span></button>`;
 }
+function _qItemHtml(x) { return (x && x.__hdr) ? x.__hdr : quoteCardHtml(x); }
 function quoteMore() {
   const box = el('q-list'); if (!box || !_qFlatList) return;
   const from = _qPage, to = Math.min(_qFlatList.length, _qPage + Q_PAGE_STEP);
   if (from >= to) return;
-  const html = _qFlatList.slice(from, to).map(quoteCardHtml).join('');
+  const html = _qFlatList.slice(from, to).map(_qItemHtml).join('');
   const more = el('q-more');
   if (more) more.insertAdjacentHTML('beforebegin', html); else box.insertAdjacentHTML('beforeend', html);
   _qPage = to;
-  if (more) { if (_qPage >= _qFlatList.length) more.remove(); else more.innerHTML = _qMoreInner(_qFlatList.length); }
+  if (more) { if (_qPage >= _qFlatList.length) more.remove(); else more.innerHTML = _qMoreInner(); }
 }
 /* 목록 끝까지 내리면 알아서 더 불러온다 (휴대폰에서 버튼 찾을 필요 없게) */
 function quoteListScroll(box) {
@@ -16706,11 +16710,19 @@ function _quoteListInner() {
         <button class="btn btn-sm" onclick="quoteMonthNav(1)"><i class="ti ti-chevron-right"></i></button>
       </div>
       ${days.length ? '' : _jumpHtml(_otherMonths(curMonth), 'quoteMonthSet')}</div>`;
-    body = days.length ? days.map(d => {
+    /* ★★ 2026-11-15 속도 — 월별 보기를 기본으로 바꾼 뒤 한 달치(200~400장)를 한 번에 그려서
+       화면 조각이 1만 2천 개가 됐다 (견적 화면 한 번 그리는 데 PC 0.4초 · 휴대폰은 몇 배).
+       전체 보기처럼 처음 60줄만 그리고 내리면 더 붙인다. 날짜 머리줄은 그대로 나온다. */
+    const _mItems = [];
+    days.forEach(d => {
       const qs = byDay[d]; const dSum = qs.reduce((a, b) => a + (+b.total || 0), 0);
       const dLabel = d === '날짜미상' ? d : (d.slice(5).replace('-', '/') + ' (' + WD[new Date(d + 'T00:00').getDay()] + ')');
-      return `<div style="display:flex;align-items:center;gap:8px;margin:14px 2px 8px"><div style="font-weight:800;font-size:13.5px">${esc(dLabel)}</div><div style="flex:1;height:1px;background:var(--bd)"></div><div style="font-size:12px;color:var(--t2)">${qs.length}건 · <b style="color:var(--gd)">${fmtWon(dSum)}</b>원</div></div>${qs.map(quoteCardHtml).join('')}`;
-    }).join('') : `<div class="empty"><i class="ti ti-file-invoice"></i>${esc(curMonth.replace('-', '. '))}에 ${_fLbl ? '«' + esc(_fLbl) + '» 조건에 맞는 ' : ''}견적이 없습니다</div>`;
+      _mItems.push({ __hdr: `<div style="display:flex;align-items:center;gap:8px;margin:14px 2px 8px"><div style="font-weight:800;font-size:13.5px">${esc(dLabel)}</div><div style="flex:1;height:1px;background:var(--bd)"></div><div style="font-size:12px;color:var(--t2)">${qs.length}건 · <b style="color:var(--gd)">${fmtWon(dSum)}</b>원</div></div>` });
+      qs.forEach(q => _mItems.push(q));
+    });
+    _qFlatList = _mItems;
+    if (_qPage > _mItems.length) _qPage = Math.max(Q_PAGE_STEP, Math.min(_qPage, _mItems.length));
+    body = days.length ? _mItems.slice(0, _qPage).map(_qItemHtml).join('') + (_mItems.length > _qPage ? `<div id="q-more" style="margin:10px 2px 4px">${_qMoreInner()}</div>` : '') : `<div class="empty"><i class="ti ti-file-invoice"></i>${esc(curMonth.replace('-', '. '))}에 ${_fLbl ? '«' + esc(_fLbl) + '» 조건에 맞는 ' : ''}견적이 없습니다</div>`;
   } else if (view === 'day') {
     const dlist = list.filter(q => qDate(q) === curDay);
     _qShownIds = dlist.map(q => q.id);            // ★ 이 날에 보이는 것만 «전체 선택» 대상
@@ -16739,7 +16751,7 @@ function _quoteListInner() {
     if (_qPage > list.length) _qPage = Math.max(Q_PAGE_STEP, Math.min(_qPage, list.length));
     const shown = list.slice(0, _qPage);
     body = list.length
-      ? shown.map(quoteCardHtml).join('') + (list.length > _qPage ? `<div id="q-more" style="margin:10px 2px 4px">${_qMoreInner(list.length)}</div>` : '')
+      ? shown.map(quoteCardHtml).join('') + (list.length > _qPage ? `<div id="q-more" style="margin:10px 2px 4px">${_qMoreInner()}</div>` : '')
       : `<div class="empty"><i class="ti ti-file-invoice"></i>${qy ? '검색 결과가 없습니다' : '작성한 견적이 없습니다. 견적 작성으로 시작하세요.'}</div>`;
   }
   return `${statChips}${searchBar}${catBar}${unpaidBar}${navBar}<div id="q-list" data-keepscroll onscroll="quoteListScroll(this)" style="max-height:calc(100vh - 300px);min-height:220px;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-right:2px">${body}</div>`;
@@ -19657,10 +19669,16 @@ async function basinDrawSave() {
   const list = basinDrawsOf(doc).slice();
   const i = list.findIndex(x => x.id === row.id);
   if (i >= 0) list[i] = row; else list.push(row);
-  await Store.update(_bdColl, _bdDocId, { draws: list });
-  toast('도면 저장됨 (' + list.length + '장)');
+  /* ★★ 2026-11-15 속도 — 사용자: "휴대폰으로 세면대 도면 저장할 때 너무 늦음"
+     예전엔 ① 서버가 «저장 끝» 답을 줄 때까지 창을 붙잡고 있다가 ② 견적 화면을 한 번 더 통째로 다시 그렸다
+     (자료가 바뀌면 화면은 어차피 알아서 다시 그려진다 — 두 번 그린 셈).
+     이제 창을 바로 닫고, 저장은 뒤에서 마저 한다. 화면에는 바로 반영된다.
+     ★ 혹시 저장이 거절되면(권한·연결 문제) 크게 알려 준다. */
+  const _coll = _bdColl, _doc = _bdDocId, _n = list.length;
   closeModal();
-  if (_bdColl === 'quotes') { try { renderQuote(); } catch (e) { } }
+  toast('도면 저장됨 (' + _n + '장)');
+  try { await Store.update(_coll, _doc, { draws: list }); }
+  catch (e) { alert('⚠ 도면이 저장되지 않았습니다 (' + (row.L || '') + '×' + (row.W || '') + ')\n인터넷 연결을 확인하고 다시 그려서 저장해 주세요.\n\n' + ((e && e.message) || e)); }
 }
 async function basinDrawDel(coll, docId, drawId) {
   const doc = (state[coll] || []).find(x => x.id === docId); if (!doc) return;
