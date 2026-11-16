@@ -16538,11 +16538,20 @@ function _quoteListInner() {
   const all = (state.quotes || []);
   const ym = todayStr().slice(0, 7);
   /* 검색어·필터·보기가 바뀌면 «처음 60장»으로 되돌린다. 자료만 바뀐 재렌더는 보던 만큼 유지 */
-  const _sig = [filters.quoteSearch || '', filters.qConf || '', filters.qStat || '', filters.qCat || '', filters.quoteView || '', filters.quoteMonth || '', filters.quoteDay || ''].join('|');
+  const _sig = [filters.quoteSearch || '', filters.qConf || '', filters.qStat || '', filters.qCat || '', filters.qBy || '', filters.quoteView || '', filters.quoteMonth || '', filters.quoteDay || ''].join('|');
   if (_sig !== _qSig) { _qSig = _sig; _qPage = Q_PAGE_STEP; }
   let list = all.slice().sort((a, b) => (+b.createdAt || 0) - (+a.createdAt || 0));
   const _amtP = qy ? quoteAmtPred(filters.quoteSearch) : null;      // 금액 검색 (글자 검색과 '또는' 으로 합친다)
   if (qy) list = list.filter(q => (q.client || '').toLowerCase().includes(qy) || (q.docNo || '').toLowerCase().includes(qy) || (q.items || []).some(it => (it.name || '').toLowerCase().includes(qy)) || (_amtP ? _amtP.test(q) : false));
+  /* ★ 2026-11-16 작성자 필터 — 사용자: "견적서 작성자 별로 볼 수 있는 필터"
+     견적서의 «작성자»(저장할 때 담당자 칸 · 비우면 저장한 사람)로 거른다.
+     칩 옆 숫자는 지금 보는 기간(월별·일별) 안에서 센다. */
+  const fBy = filters.qBy || 'all';
+  const _byOf = q => String(q.by || '').trim() || '(작성자 없음)';
+  const _byCnt = {}; list.filter(quotePeriodPred(qy ? 'all' : (filters.quoteView || 'month'))).forEach(q => { const k = _byOf(q); _byCnt[k] = (_byCnt[k] || 0) + 1; });
+  if (fBy !== 'all' && !_byCnt[fBy]) _byCnt[fBy] = 0;   // 고른 사람이 이 기간에 0건이어도 칩은 남겨 둔다
+  const _byNames = Object.keys(_byCnt).sort((a, b) => _byCnt[b] - _byCnt[a] || a.localeCompare(b));
+  if (fBy !== 'all') list = list.filter(q => _byOf(q) === fBy);
   // ── 상태 필터: 2단 (확정/미확정) × (계산서·결제·세면대) 를 겹쳐서 본다 ──
   const fConf = filters.qConf || 'all';    // all | conf | pending
   const fStat = filters.qStat || 'all';    // all | notax | tax | paid | unpaid | basin
@@ -16615,8 +16624,13 @@ function _quoteListInner() {
       ${chipS('notax', '계산서 미발행', cNoTax)}${chipS('tax', '계산서 발행', cTax, 'var(--gd)')}${chipS('cash', '현금영수증', cCash, '#0f766e')}
       <span style="width:1px;background:var(--bd);margin:2px 3px"></span>
       ${chipS('basin', '세면대 미발주', cBasin, 'var(--amber-t)')}
-      ${(fConf !== 'all' || fStat !== 'all' || fCat !== 'all') ? `<button class="chip" style="margin-left:auto" onclick="quoteClearFilter()"><i class="ti ti-x"></i>필터 해제</button>` : ''}
-    </div>`;
+      ${(fConf !== 'all' || fStat !== 'all' || fCat !== 'all' || fBy !== 'all') ? `<button class="chip" style="margin-left:auto" onclick="quoteClearFilter()"><i class="ti ti-x"></i>필터 해제</button>` : ''}
+    </div>
+    ${_byNames.length > 1 || fBy !== 'all' ? `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:-4px 0 10px">
+      <span style="font-size:11px;color:var(--t3);width:38px;flex:none">작성자</span>
+      <button class="chip ${fBy === 'all' ? 'active' : ''}" onclick="quoteSetBy('all')">전체</button>
+      ${_byNames.map(n => `<button class="chip ${fBy === n ? 'active' : ''}" data-by="${esc(n)}" onclick="quoteSetBy(this.dataset.by)">${esc(n)} <b style="color:${_byCnt[n] > 0 ? '#2f6fed' : 'var(--t3)'}">${_byCnt[n]}</b></button>`).join('')}
+    </div>` : ''}`;
   /* ── 분류별 매출 카드 (2026-09-11 통합) ──────────────────
      ★ 확정된 건만 · 공급가 기준 · 지금 보고 있는 «기간(월별·일별)»과 «필터»를 그대로 따라간다.
      ★ 한 견적에 세라믹과 세면대가 같이 있으면 품목 금액 비율대로 나눠 담는다(quoteCatSplit).
@@ -16675,7 +16689,7 @@ function _quoteListInner() {
   /* ★ 2026-09-10 — 예전엔 상태 필터를 걸면 월/일 묶음을 통째로 껐다(_flatUnpaid).
      그래서 «월별 고르고 필터 누르면 월별이 사라지는» 문제가 있었다.
      이제 **필터가 걸려도 월별·일별을 그대로 유지**하고, 그 달에 없으면 어느 달에 있는지 알려준다. */
-  const _fLbl = (_lbl || '').trim();
+  const _fLbl = [(_lbl || '').trim(), fBy !== 'all' ? '작성자 ' + fBy : ''].filter(Boolean).join(' · ');
   const _fTag = _fLbl ? `<span class="pill" style="background:#eef4ff;color:#1b4fb0;border:1px solid #cfe0ff;font-size:10.5px">${esc(_fLbl)}</span>` : '';
   /* 지금 필터에 걸린 건이 «다른 달» 어디에 있는지 — 빈 화면 보고 고장난 줄 알지 않게 */
   const _otherMonths = (cur) => {
@@ -16890,7 +16904,8 @@ function quoteSetView(v) { filters.quoteView = v; renderQuote(); }   // 버튼 �
 function quoteSetCat(v) { filters.qCat = v; quotesFilter(); }
 function quoteSetConf(v) { filters.qConf = v; quotesFilter(); }
 function quoteSetStat(v) { filters.qStat = v; quotesFilter(); }
-function quoteClearFilter() { filters.qConf = 'all'; filters.qStat = 'all'; filters.qCat = 'all'; quotesFilter(); }
+function quoteClearFilter() { filters.qConf = 'all'; filters.qStat = 'all'; filters.qCat = 'all'; filters.qBy = 'all'; quotesFilter(); }
+function quoteSetBy(v) { filters.qBy = v || 'all'; quotesFilter(); }
 /* 상단 '확정 미수금' 카드 → 확정 주문 중 미결제만 보기 */
 function quoteShowConfUnpaid() {
   filters.qConf = 'conf'; filters.qStat = 'unpaid'; quotesFilter();
