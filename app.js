@@ -15756,7 +15756,13 @@ function payNameScore(sup, t) {
   return best;
 }
 function payOutNeedsInv(t) { return PAYCHK_CAT_RE.test(acctCatOf(t) || ''); }
-function payOutNoInv(t) { return !!(t && t.noInv) || payMetaList('noInvPayers').indexOf(_pcNorm(t && t.payer)) >= 0; }
+/* 해외 송금(수입 대금)은 국내 매입 계산서가 없다 — 수입 부가세 계산서는 세관이 따로 끊는다.
+   ★ 실측: 「무역대전송금」이 이름 비교에서 «대전석재»로 붙어 차액이 81억으로 나왔다 → 아예 업체 비교에서 뺀다 */
+const PAYCHK_FOREIGN_RE = /무역대전송금|해외송금|외화송금|외화이체|해외이체/;
+function payOutForeign(t) { return PAYCHK_FOREIGN_RE.test(String((t && t.payer) || '') + ' ' + String((t && t.memo) || '')); }
+function payOutNoInv(t) { return !!(t && t.noInv) || payOutForeign(t) || payMetaList('noInvPayers').indexOf(_pcNorm(t && t.payer)) >= 0; }
+/* 세관(수입 부가세) 계산서는 관세사·통관업체가 대신 내고 그 업체에 한꺼번에 보낸다 — 통장에 «세관»으로 나가는 돈이 없다 */
+function paySupCustoms(name) { return /세관/.test(String(name || '')); }
 function paySupOther(key) { return payMetaList('payNoneBiz').indexOf(key) >= 0; }
 
 let _pcCache = null, _pcSrc = null;
@@ -15775,7 +15781,8 @@ function payCheckBuild() {
   const outSup = new Map();   // 출금 id → { key, how: 'manual'|'alias'|'name' }
   O.forEach(t => {
     const fix = String(t.paySup || '');
-    if (fix === 'x') return;                                       // 사람이 «어느 업체도 아님» 으로 정함
+    if (fix === 'x') return;
+    if (!fix && payOutForeign(t)) return;                         // 해외 송금은 국내 업체와 비교하지 않는다                                       // 사람이 «어느 업체도 아님» 으로 정함
     if (fix && sups.has(fix)) { outSup.set(t.id, { key: fix, how: 'manual' }); return; }
     const a = al[_pcNorm(t.payer)]; if (a && sups.has(a)) { outSup.set(t.id, { key: a, how: 'alias' }); return; }
     let best = null, bs = 0, tie = false;
@@ -15810,12 +15817,13 @@ function payCheckMonth(ym) {
     r.invM = r.inv.reduce((a, p) => a + Math.round(+p.total || 0), 0);
     r.payM = r.pay.reduce((a, t) => a + txMoney(t), 0);
     r.diff = r.invCum - r.payCum;
-    r.other = paySupOther(r.key);
+    r.customs = paySupCustoms(r.name);
+    r.other = r.customs || paySupOther(r.key);
     r.state = r.other ? 'other' : (Math.abs(r.diff) <= 1000 ? 'ok' : (r.diff > 0 ? 'unpaid' : 'noinv'));
     return r;
   }).sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
   const loose = B.O.filter(t => t.date.startsWith(ym) && payOutNeedsInv(t) && !B.outSup.has(t.id) && !payOutNoInv(t));
-  const noInv = B.O.filter(t => t.date.startsWith(ym) && payOutNoInv(t) && (payOutNeedsInv(t) || t.noInv));
+  const noInv = B.O.filter(t => t.date.startsWith(ym) && !B.outSup.has(t.id) && payOutNoInv(t) && (payOutNeedsInv(t) || t.noInv));
   return { B, rows, loose, noInv };
 }
 function payChkSetView(v) { filters.payChkView = v; renderSettle(); }
@@ -15845,7 +15853,7 @@ function payCheckCard(ym) {
             <div style="text-align:right"><a style="font-size:10.5px;color:#2f6fed;cursor:pointer" onclick="paySetSup('${t.id}','x')">이 업체 아님</a></div></div>`).join('') : '<div style="color:var(--t3)">없음</div>'}</div>
         <div style="grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
           <span style="color:var(--t3)">누적 (${esc(B.start.replace('-', '.'))}~${esc(ym.replace('-', '.'))}) 계산서 ${fmtWon(r.invCum)} · 보낸 돈 ${fmtWon(r.payCum)}</span>
-          <button class="btn btn-sm btn-ghost" style="margin-left:auto;padding:2px 8px;font-size:11px" onclick="paySupOtherToggle('${esc(r.key)}')">${r.other ? '다른 방법 결제 표시 풀기' : '이 업체는 카드·다른 방법으로 결제'}</button></div></div>` : '';
+          ${r.customs ? `<span style="margin-left:auto;color:var(--t3)">세관 계산서는 통관업체가 대신 내서 대조하지 않습니다</span>` : `<button class="btn btn-sm btn-ghost" style="margin-left:auto;padding:2px 8px;font-size:11px" onclick="paySupOtherToggle('${esc(r.key)}')">${r.other ? '다른 방법 결제 표시 풀기' : '이 업체는 카드·다른 방법으로 결제'}</button>`}</div></div>` : '';
     return `<div style="border:1px solid var(--bd);border-radius:10px;margin-bottom:6px;overflow:hidden">
       <div class="tap" onclick="payChkToggle('${esc(r.key)}')" style="display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;background:${open ? s[2] : '#fff'}">
         <i class="ti ti-chevron-${open ? 'down' : 'right'}" style="color:var(--t3)"></i>
@@ -15870,7 +15878,7 @@ function payCheckCard(ym) {
           <button class="btn btn-sm btn-ghost" style="padding:2px 8px;font-size:11.5px" onclick="payMarkNoInv('${t.id}',true)">이 상대는 늘 계산서 없음</button>
         </div></div>`;
     }).join('') : `<div class="empty"><i class="ti ti-circle-check"></i>업체를 못 찾은 출금이 없습니다</div>`;
-    if (R.noInv.length) body += `<div style="font-size:11.5px;color:var(--t3);margin-top:10px">계산서 없음으로 표시한 출금 ${R.noInv.length}건: ${R.noInv.map(t => `${fd(t.date)} ${esc(t.payer || '')} ${fmtWon(txMoney(t))} <a style="color:#2f6fed;cursor:pointer" onclick="payUnmarkNoInv('${t.id}')">되돌리기</a>`).join(' · ')}</div>`;
+    if (R.noInv.length) body += `<div style="font-size:11.5px;color:var(--t3);margin-top:10px">계산서 없는 출금 ${R.noInv.length}건: ${R.noInv.map(t => `${fd(t.date)} ${esc(t.payer || '')} ${fmtWon(txMoney(t))} ${payOutForeign(t) ? '(해외 송금)' : `<a style="color:#2f6fed;cursor:pointer" onclick="payUnmarkNoInv('${t.id}')">되돌리기</a>`}`).join(' · ')}</div>`;
   } else body = list.length ? list.map(supRow).join('') : `<div class="empty"><i class="ti ti-circle-check"></i>${view === 'bad' ? '어긋난 업체가 없습니다' : '해당하는 업체가 없습니다'}</div>`;
   return `
     <div class="banner info" style="margin-bottom:11px;font-size:12px"><i class="ti ti-info-circle"></i><span style="flex:1;min-width:0">
