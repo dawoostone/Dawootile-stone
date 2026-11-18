@@ -10285,7 +10285,9 @@ function _moneyBuild() {
   (state.quotes || []).forEach(q => {
     /* ★ 잔금 견적서로 «대체된» 원본은 매출·미수에서 뺀다 — 같은 일감을 두 번 세지 않는다 */
     if (!q.ordered || q.supersededBy) return; const c = (q.client || '').trim(); if (!c) return;
-    if (CUT[c] && (q.date || '') <= CUT[c]) return;          // ★ 초기화 기준일까지는 정산 끝
+    /* ★ 초기화(마감) 기준일까지는 정산 끝 — 매출·미수에서 빼고, 견적 목록에서도 «결제 완료»로 본다.
+       (2026-11-18 사용자 화면: 신성그룹 10월 마감 뒤 지난 견적 122건이 전부 «미결제»로 떠서 미수 1.9억으로 보였다) */
+    if (CUT[c] && (q.date || '') <= CUT[c]) { P[q.id] = quoteNetTotal(q); return; }
     const o = get(c); o.sale += quoteNetTotal(q); o.qn++;      // ★ 환불한 금액은 빼고 센다
     (byC[c] || (byC[c] = [])).push(q);
   });
@@ -16756,7 +16758,7 @@ function _quoteListInner() {
      칩 옆 숫자는 지금 보는 기간(월별·일별) 안에서 센다. */
   const fBy = filters.qBy || 'all';
   const _byOf = q => String(q.by || '').trim() || '(작성자 없음)';
-  const _byCnt = {}; list.filter(quotePeriodPred(qy ? 'all' : (filters.quoteView || 'month'))).forEach(q => { const k = _byOf(q); _byCnt[k] = (_byCnt[k] || 0) + 1; });
+  const _byCnt = {}; list.filter(quotePeriodPred(filters.quoteView || 'month')).forEach(q => { const k = _byOf(q); _byCnt[k] = (_byCnt[k] || 0) + 1; });
   if (fBy !== 'all' && !_byCnt[fBy]) _byCnt[fBy] = 0;   // 고른 사람이 이 기간에 0건이어도 칩은 남겨 둔다
   const _byNames = Object.keys(_byCnt).sort((a, b) => _byCnt[b] - _byCnt[a] || a.localeCompare(b));
   if (fBy !== 'all') list = list.filter(q => _byOf(q) === fBy);
@@ -16780,7 +16782,7 @@ function _quoteListInner() {
   const baseForConf = fStat === 'all' ? list : list.filter(_statFn[fStat] || (() => true));
   const baseForStat = fConf === 'all' ? list : list.filter(_confFn[fConf] || (() => true));
   /* ★ 2026-11-11 칩 옆 숫자도 지금 보고 있는 기간(월별·일별) 것만 센다 — 목록에 뜨는 건수와 맞게 */
-  const _pIn = quotePeriodPred(qy ? 'all' : (filters.quoteView || 'month'));
+  const _pIn = quotePeriodPred(filters.quoteView || 'month');
   const _bConf = baseForConf.filter(_pIn), _bStat = baseForStat.filter(_pIn);
   const cConf = _bConf.filter(_isConf).length, cPending = _bConf.filter(_isPending).length;
   const cNoTax = _bStat.filter(_isNoTax).length, cTax = _bStat.filter(_isTax).length;
@@ -16802,11 +16804,12 @@ function _quoteListInner() {
   /* ★ 월별·일별 보기에서는 아래에서 그 기간 것만으로 다시 좁힌다 (안 그러면 화면에 없는 견적까지 선택된다) */
   // 검색 결과 요약 — 몇 건인지, 합계가 얼마인지 바로 보이게
   const searchBar = qy ? (() => {
-    const n = list.length, sum = list.reduce((a, q) => a + (+q.total || 0), 0);
-    const rem = list.reduce((a, q) => a + quoteRem(q), 0);
+    const _pl = list.filter(_pIn);                     // ★ 월별·일별이면 그 기간 것만 센다
+    const n = _pl.length, sum = _pl.reduce((a, q) => a + (+q.total || 0), 0);
+    const rem = _pl.reduce((a, q) => a + quoteRem(q), 0);
     return `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#eef4ff;border:1px solid #cfe0ff;border-radius:11px;padding:9px 12px;margin-bottom:10px">
       <span style="color:#2f6fed;font-weight:800;font-size:12.5px"><i class="ti ti-search"></i> 검색 «${esc(filters.quoteSearch || '')}» · ${n}건</span>
-      ${(filters.quoteView || 'month') !== 'all' ? '<span style="font-size:11px;color:var(--t3)">· 검색은 전체 기간에서 찾습니다</span>' : ''}
+
       ${_amtP ? `<span class="pill" style="background:#dbeafe;color:#1a56b8;border:1px solid #bfd8ff;font-size:10.5px"><i class="ti ti-currency-won"></i> 금액 ${esc(_amtP.label)}</span>` : ''}
       <span style="margin-left:auto;text-align:right"><b style="font-size:15px;color:var(--gd)">${fmtWon(sum)}</b><span style="font-size:11.5px;color:var(--t2)">원</span>${rem > 0 ? `<span style="font-size:11.5px;color:var(--red-t);font-weight:700;margin-left:8px">미수 ${fmtWon(rem)}원</span>` : ''}</span>
     </div>` ;
@@ -16843,7 +16846,9 @@ function _quoteListInner() {
      ★ 확정된 건만 · 공급가 기준 · 지금 보고 있는 «기간(월별·일별)»과 «필터»를 그대로 따라간다.
      ★ 한 견적에 세라믹과 세면대가 같이 있으면 품목 금액 비율대로 나눠 담는다(quoteCatSplit).
        그래서 칸마다의 건수를 다 더하면 전체 건수보다 많을 수 있다. */
-  const _cView = qy ? 'all' : (filters.quoteView || 'month');   // ★ 검색할 때는 기간 상관없이 전체에서 찾는다
+  /* ★ 2026-11-18 사용자: "월별로 보게 해달라고 했는데 왜 총계로?" — 검색해도 고른 보기(월별·일별)를 그대로 지킨다.
+     그 달에 없으면 아래에 «다른 달에 n건» 버튼이 뜬다. 전체 기간은 «전체» 보기에서 본다. */
+  const _cView = filters.quoteView || 'month';
   const _cMonth = filters.quoteMonth || ym;
   const _cDay = filters.quoteDay || todayStr();
   const _catList = (_cView === 'month') ? _preCatList.filter(q => (qDate(q) || '').startsWith(_cMonth))
@@ -16876,9 +16881,10 @@ function _quoteListInner() {
   // 필터별 요약 바
   let unpaidBar = '';
   if (fConf !== 'all' || fStat !== 'all') {
-    const _amt = list.reduce((a, q) => a + (+q.total || 0), 0);
-    const _rem2 = list.reduce((a, q) => a + _remOf(q), 0);
-    const _paidIn = list.reduce((a, q) => a + quotePaid(q), 0);
+    const _fl = list.filter(_pIn);                     // ★ 월별·일별이면 그 기간 것만 센다
+    const _amt = _fl.reduce((a, q) => a + (+q.total || 0), 0);
+    const _rem2 = _fl.reduce((a, q) => a + _remOf(q), 0);
+    const _paidIn = _fl.reduce((a, q) => a + quotePaid(q), 0);
     const warm = fStat === 'unpaid' || fStat === 'notax' || fStat === 'basin';
     const _c = warm ? 'var(--red-t)' : 'var(--gd)';
     const _bg = warm ? '#fff6f5' : '#f2fbf6';
@@ -16886,7 +16892,7 @@ function _quoteListInner() {
     const _ic = fStat === 'unpaid' ? 'cash-off' : fStat === 'paid' ? 'cash' : fStat === 'notax' ? 'file-off' : fStat === 'tax' ? 'file-invoice' : fStat === 'basin' ? 'bath' : (fConf === 'conf' ? 'clipboard-check' : 'clock-pause');
     unpaidBar = `<div class="card" style="margin-bottom:10px;padding:11px 13px;border:1.5px solid ${_bd};background:${_bg}">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-        <div style="font-size:12.5px"><b style="color:${_c}"><i class="ti ti-${_ic}"></i> ${esc(_lbl || '전체')}</b> · <b>${list.length}건</b>${_paidIn > 0 && fStat !== 'paid' ? ` · 입금 ${fmtWon(_paidIn)}원` : ''}</div>
+        <div style="font-size:12.5px"><b style="color:${_c}"><i class="ti ti-${_ic}"></i> ${esc(_lbl || '전체')}</b> · <b>${_fl.length}건</b>${_paidIn > 0 && fStat !== 'paid' ? ` · 입금 ${fmtWon(_paidIn)}원` : ''}</div>
         <div style="font-size:16px;font-weight:800;color:${_c};text-align:right">${fmtWon(_amt)}<span style="font-size:12px;font-weight:600">원</span>${_rem2 > 0 ? `<div style="font-size:12px;font-weight:700;color:var(--red-t)">미수 ${fmtWon(_rem2)}원</div>` : ''}</div>
       </div>
     </div>`;
