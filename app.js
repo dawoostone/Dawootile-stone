@@ -15722,22 +15722,19 @@ function _purCopyFallback(t, done) {
    사용자: *"월별 정산에서 출금내역이랑 세금계산서 매입 발행 내역 검증해서
             발행 안된거 / 결제 안된거 상호 체크 할 수 있는지?"*
 
-   · 결제 안 된 계산서 = 매입 계산서는 받았는데, 그 돈이 나간 출금을 못 찾은 것
-   · 계산서 없는 출금   = 매입·외주·운반·통관으로 돈이 나갔는데, 받은 계산서를 못 찾은 것
-
-   ── 짝 짓는 순서 ──
-   ① 사람이 직접 연결한 것 (purchases.payLinks)
-   ② 금액이 «원 단위까지 같은» 출금 — 계산서 날짜 31일 전 ~ 100일 뒤 사이
-        이름도 비슷하면 확실, 이름이 달라도 그 금액이 그 기간에 딱 하나뿐이면 «금액만 일치»로 잡는다
-   ③ 한 업체의 한 달치 계산서를 «합쳐서» 한 번에 보낸 출금 (이름이 비슷해야 함)
-   ── 이름 비교 ──
-   통장 적요는 잘리고(10자) 「동양7월가공」처럼 써서 계산서 상호와 글자가 다르다.
-   «(주)·석재·스톤·가공 …» 같은 흔한 말과 숫자·«n월»을 떼고, 남은 글자가 2자 이상 겹치면 같은 곳으로 본다.
-   대표자 이름이 적요에 찍혀도 같은 곳으로 본다. 한 번 직접 연결하면 그 적요 이름은 그 업체로 기억한다.
-   ★ 출금 기록·계산서 자체는 고치지 않는다. 짝·표시만 붙인다.
+   ── 왜 «업체별»로 맞추나 ──
+   실제 자료를 보니 한 업체에 계산서는 여러 장(동양석재 8월 31장) 받고 돈은 한 달치를 몰아서 보낸다.
+   한 장씩 금액을 맞추면 거의 안 맞는다. 그래서 «업체마다 받은 계산서 합계 vs 보낸 돈 합계»를 쌓아서 본다.
+     · 누적 차액 > 0  → 계산서는 받았는데 돈을 덜 보냄 (결제 안 된 것)
+     · 누적 차액 < 0  → 돈은 보냈는데 계산서를 덜 받음 (발행 안 된 것)
+   ── 출금이 어느 업체 것인지 ──
+   통장 적요는 잘리고(10자) 「동양7월가공」처럼 적어서 계산서 상호와 글자가 다르다.
+   «(주)·석재·스톤·가공 …» 같은 흔한 말과 숫자·«n월»을 떼고 남은 글자가 겹치면 같은 업체로 본다.
+   대표자 이름이 적요에 있어도 같은 업체로 본다. 사람이 한 번 고르면 그 적요 이름은 그 업체로 기억한다.
+   ★ 계산서·출금 기록 자체는 고치지 않는다. 꼬리표(paySup·noInv)와 기억(appmeta)만 붙인다.
    ══════════════════════════════════════════════════════════ */
 const PAYCHK_CAT_RE = /^(매입|외주가공|외주시공|운반비|통관비)/;
-const PAYCHK_GENERIC = ['주식회사', '유한회사', '관세법인', '석재산업', '엔지니어링', '인테리어', '컴퍼니', '글로벌', '코리아', '로지스', '대리석', '세라믹', '석재', '스톤', '산업', '타일', '건설', '건재', '상사', '무역', '물류', '기업', '디자인', '쉬핑', '쉽핑', '가공', '운송', '운반', '통관', '법인', '지점', '본점', '종합', '공업', '개발'];
+const PAYCHK_GENERIC = ['주식회사', '유한회사', '관세법인', '석재산업', '엔지니어링', '인테리어', '컴퍼니', '글로벌', '코리아', '로지스', '대리석', '세라믹', '석재', '스톤', '산업', '타일', '건설', '건재', '상사', '무역', '물류', '기업', '디자인', '쉬핑', '쉽핑', '가공', '운송', '운반', '통관', '법인', '지점', '본점', '종합', '공업', '개발', '시공', '송금'];
 function _pcNorm(s) { return String(s == null ? '' : s).replace(/\(주\)|㈜|（주）|\(유\)|주식회사|유한회사/g, '').replace(/\d+\s*월/g, '').replace(/[^A-Za-z가-힣]/g, '').toLowerCase(); }
 function _pcCore(s) { let x = _pcNorm(s); PAYCHK_GENERIC.forEach(g => { x = x.split(g).join(''); }); return x; }
 function _pcLcs(a, b) { let best = 0; for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++) { let k = 0; while (i + k < a.length && j + k < b.length && a[i + k] === b[j + k]) k++; if (k > best) best = k; } return best; }
@@ -15747,175 +15744,163 @@ async function payMetaSave(key, patch) {
   const m = (state.appmeta || []).find(x => x.key === key);
   if (m) await Store.update('appmeta', m.id, patch); else await Store.add('appmeta', Object.assign({ key }, patch));
 }
-function payNameSim(p, t) {
-  const pk = _pcNorm((t && t.payer) || '');
-  const biz = String((p && p.supplierBiz) || '');
-  const al = payAliasMap()[pk]; if (al && biz && al === biz) return true;
-  const a = _pcCore((p && p.supplier) || '');
+function paySupKey(p) { return String((p && p.supplierBiz) || ('n:' + _pcNorm(p && p.supplier))); }
+/* 이름이 얼마나 닮았나 (0 = 다름). 대표자 이름이 적요에 있으면 크게 친다 */
+function payNameScore(sup, t) {
   const hay = [_pcCore((t && t.payer) || ''), _pcCore((t && t.memo) || '')];
-  const ceo = _pcNorm((p && p.supplierCeo) || '');
-  if (ceo.length >= 2 && hay.some(h => h.indexOf(ceo) >= 0)) return true;
-  if (a.length < 2) return false;
-  return hay.some(h => { if (h.length < 2) return false; const l = _pcLcs(a, h); return l >= 2 && l >= Math.min(3, a.length, h.length); });
+  const ceo = _pcNorm(sup.ceo || '');
+  if (ceo.length >= 2 && hay.some(h => h.indexOf(ceo) >= 0)) return 10;
+  const a = sup.core; if (a.length < 2) return 0;
+  let best = 0;
+  hay.forEach(h => { if (h.length < 2) return; const l = _pcLcs(a, h); if (l >= 2 && l >= Math.min(3, a.length, h.length)) best = Math.max(best, l); });
+  return best;
 }
-function _pcDays(a, b) { return Math.round((new Date(b + 'T00:00') - new Date(a + 'T00:00')) / 864e5); }
-function _pcInWin(pDate, tDate) { const d = _pcDays(pDate, tDate); return d >= -31 && d <= 100; }
-/* 출금 한 건이 «계산서가 있어야 하는» 출금인가 — 매입·외주·운반·통관 계정만 */
 function payOutNeedsInv(t) { return PAYCHK_CAT_RE.test(acctCatOf(t) || ''); }
 function payOutNoInv(t) { return !!(t && t.noInv) || payMetaList('noInvPayers').indexOf(_pcNorm(t && t.payer)) >= 0; }
-function payPurOther(p) { return !!(p && p.payNone) || payMetaList('payNoneBiz').indexOf(String((p && p.supplierBiz) || '')) >= 0; }
+function paySupOther(key) { return payMetaList('payNoneBiz').indexOf(key) >= 0; }
 
 let _pcCache = null, _pcSrc = null;
 function payCheckBuild() {
   const src = [state.purchases, state.banktx, state.appmeta];
   if (_pcCache && _pcSrc && src.every((x, i) => x === _pcSrc[i])) return _pcCache;
-  const P = purAll().filter(p => !p.exclude && Math.round(+p.total || 0) > 0 && p.date).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const P = purAll().filter(p => !p.exclude && Math.round(+p.total || 0) !== 0 && p.date);
   const O = (state.banktx || []).filter(t => txIsOut(t) && t.date);
-  const oById = new Map(O.map(t => [t.id, t]));
-  const pLink = new Map();   // 계산서 id → { tx:[출금], how }
-  const tLink = new Map();   // 출금 id → [계산서 id]
-  const tie = (p, ts, how) => { pLink.set(p.id, { tx: ts, how }); ts.forEach(t => { const a = tLink.get(t.id) || []; a.push(p.id); tLink.set(t.id, a); }); };
-  // ① 직접 연결
-  P.forEach(p => { const ts = (p.payLinks || []).map(id => oById.get(id)).filter(Boolean); if (ts.length) tie(p, ts, 'manual'); });
-  const freeT = t => !tLink.has(t.id) && !payOutNoInv(t);
-  const notOf = p => new Set(p.payNot || []);
-  // ② 같은 금액
+  const sups = new Map();
   P.forEach(p => {
-    if (pLink.has(p.id) || payPurOther(p)) return;
-    const amt = Math.round(+p.total || 0), no = notOf(p);
-    const c = O.filter(t => freeT(t) && !no.has(t.id) && Math.round(txMoney(t)) === amt && _pcInWin(p.date, t.date));
-    if (!c.length) return;
-    const sim = c.filter(t => payNameSim(p, t));
-    if (sim.length) { sim.sort((a, b) => Math.abs(_pcDays(p.date, a.date)) - Math.abs(_pcDays(p.date, b.date))); tie(p, [sim[0]], 'auto'); return; }
-    /* 이름이 안 맞으면 «매입·외주·운반·통관(또는 미분류) 출금» 이면서 그 금액이 딱 하나일 때만 — 밥값·택시비와 우연히 같은 금액은 안 붙인다 */
-    const c2 = c.filter(t => payOutNeedsInv(t) || !acctCatOf(t));
-    const twin = P.filter(x => x.id !== p.id && !pLink.has(x.id) && Math.round(+x.total || 0) === amt && Math.abs(_pcDays(x.date, p.date)) <= 100);
-    if (c.length === 1 && c2.length === 1 && !twin.length) tie(p, [c2[0]], 'amt');
+    const k = paySupKey(p);
+    let s = sups.get(k); if (!s) { s = { key: k, name: p.supplier || '(상호없음)', biz: p.supplierBiz || '', ceo: p.supplierCeo || '', core: _pcCore(p.supplier), invs: [] }; sups.set(k, s); }
+    s.invs.push(p);
   });
-  // ③ 한 업체 한 달치를 합쳐서 한 번에
-  const grp = {};
-  P.forEach(p => { if (pLink.has(p.id) || payPurOther(p)) return; const k = (p.supplierBiz || _pcNorm(p.supplier)) + '|' + p.date.slice(0, 7); (grp[k] = grp[k] || []).push(p); });
-  Object.values(grp).forEach(ps => {
-    if (ps.length < 2) return;
-    const sum = ps.reduce((a, p) => a + Math.round(+p.total || 0), 0), last = ps[ps.length - 1].date;
-    const c = O.filter(t => freeT(t) && Math.round(txMoney(t)) === sum && _pcInWin(last, t.date) && payNameSim(ps[0], t));
-    if (c.length) { c.sort((a, b) => Math.abs(_pcDays(last, a.date)) - Math.abs(_pcDays(last, b.date))); ps.forEach(p => tie(p, [c[0]], 'group')); }
+  const al = payAliasMap(), supArr = [...sups.values()];
+  const outSup = new Map();   // 출금 id → { key, how: 'manual'|'alias'|'name' }
+  O.forEach(t => {
+    const fix = String(t.paySup || '');
+    if (fix === 'x') return;                                       // 사람이 «어느 업체도 아님» 으로 정함
+    if (fix && sups.has(fix)) { outSup.set(t.id, { key: fix, how: 'manual' }); return; }
+    const a = al[_pcNorm(t.payer)]; if (a && sups.has(a)) { outSup.set(t.id, { key: a, how: 'alias' }); return; }
+    let best = null, bs = 0, tie = false;
+    supArr.forEach(s => { const sc = payNameScore(s, t); if (sc > bs) { bs = sc; best = s; tie = false; } else if (sc && sc === bs && best && best.key !== s.key) tie = true; });
+    if (best && !tie) outSup.set(t.id, { key: best.key, how: 'name' });
   });
-  _pcCache = { P, O, pLink, tLink }; _pcSrc = src;
+  /* 누적은 «출금 기록이 제대로 들어온 첫 달»부터 센다 — 그 전 계산서는 비교할 출금이 없다 */
+  const om = {}; O.forEach(t => { const m = t.date.slice(0, 7); om[m] = (om[m] || 0) + 1; });
+  const start = Object.keys(om).sort().find(m => om[m] >= 30) || (Object.keys(om).sort()[0] || '');
+  _pcCache = { P, O, sups, outSup, start, outMonths: om }; _pcSrc = src;
   return _pcCache;
 }
-/* 이 달 대조 결과 */
+function _pcEnd(ym) { return ym + '-31'; }
+/* 이 달 업체별 대조 */
 function payCheckMonth(ym) {
   const B = payCheckBuild();
-  const pm = B.P.filter(p => p.date.startsWith(ym));
-  const paid = [], other = [], unpaid = [];
-  pm.forEach(p => { const l = B.pLink.get(p.id); if (l) paid.push({ p, l }); else if (payPurOther(p)) other.push(p); else unpaid.push(p); });
-  const om = B.O.filter(t => t.date.startsWith(ym) && (payOutNeedsInv(t) || B.tLink.has(t.id)));
-  const okT = [], noInv = [], miss = [];
-  om.forEach(t => { if (B.tLink.has(t.id)) okT.push(t); else if (payOutNoInv(t)) noInv.push(t); else miss.push(t); });
-  return { B, pm, paid, other, unpaid, om, okT, noInv, miss };
+  const end = _pcEnd(ym), st = B.start ? B.start + '-01' : '0000';
+  const rowsBy = new Map();
+  const row = k => { let r = rowsBy.get(k); if (!r) { const s = B.sups.get(k); r = { key: k, name: s.name, inv: [], pay: [], invCum: 0, payCum: 0 }; rowsBy.set(k, r); } return r; };
+  B.P.forEach(p => {
+    const k = paySupKey(p), d = p.date;
+    if (d.startsWith(ym)) row(k).inv.push(p);
+    if (d >= st && d <= end) row(k).invCum += Math.round(+p.total || 0);
+  });
+  B.O.forEach(t => {
+    const m = B.outSup.get(t.id); if (!m) return;
+    const d = t.date;
+    if (d.startsWith(ym)) row(m.key).pay.push(t);
+    if (d >= st && d <= end) row(m.key).payCum += txMoney(t);
+  });
+  const rows = [...rowsBy.values()].filter(r => r.inv.length || r.pay.length).map(r => {
+    r.invM = r.inv.reduce((a, p) => a + Math.round(+p.total || 0), 0);
+    r.payM = r.pay.reduce((a, t) => a + txMoney(t), 0);
+    r.diff = r.invCum - r.payCum;
+    r.other = paySupOther(r.key);
+    r.state = r.other ? 'other' : (Math.abs(r.diff) <= 1000 ? 'ok' : (r.diff > 0 ? 'unpaid' : 'noinv'));
+    return r;
+  }).sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+  const loose = B.O.filter(t => t.date.startsWith(ym) && payOutNeedsInv(t) && !B.outSup.has(t.id) && !payOutNoInv(t));
+  const noInv = B.O.filter(t => t.date.startsWith(ym) && payOutNoInv(t) && (payOutNeedsInv(t) || t.noInv));
+  return { B, rows, loose, noInv };
 }
-const _pcHow = { manual: ['직접 연결', '#1b4fb0'], auto: ['금액·이름 일치', '#0f766e'], amt: ['금액만 일치', '#b45309'], group: ['한 달치 합산', '#6d28d9'] };
 function payChkSetView(v) { filters.payChkView = v; renderSettle(); }
+function payChkToggle(k) { filters.payChkOpen = filters.payChkOpen === k ? '' : k; renderSettle(); }
+const _pcState = { unpaid: ['결제 덜 됨', 'var(--red-t)', '#fff6f5'], noinv: ['계산서 덜 받음', '#b45309', '#fff8ec'], ok: ['맞음', 'var(--gd)', '#f2fbf6'], other: ['카드·다른 방법 결제', 'var(--t3)', 'var(--soft)'] };
 function payCheckCard(ym) {
   if (!isAdmin()) return `<div class="empty"><i class="ti ti-lock"></i>출금 대조는 관리자만 볼 수 있습니다</div>`;
-  const R = payCheckMonth(ym);
-  const sum = (a, f) => a.reduce((s, x) => s + f(x), 0);
-  const unpaidAmt = sum(R.unpaid, p => +p.total || 0), missAmt = sum(R.miss, t => txMoney(t));
-  const view = filters.payChkView || 'unpaid';
-  const outsAll = (state.banktx || []).filter(t => txIsOut(t) && (t.date || '').startsWith(ym)).length;
-  const thin = R.pm.length >= 10 && outsAll < R.pm.length * 0.5;
-  const chip = (v, lab, n, col) => `<button class="chip ${view === v ? 'active' : ''}" onclick="payChkSetView('${v}')">${lab} <b style="color:${view === v ? 'inherit' : (n ? col : 'var(--t3)')}">${n}</b></button>`;
+  const R = payCheckMonth(ym), B = R.B;
+  const view = filters.payChkView || 'bad';
+  const nUnpaid = R.rows.filter(r => r.state === 'unpaid'), nNoinv = R.rows.filter(r => r.state === 'noinv');
+  const sumAbs = a => a.reduce((s, r) => s + Math.abs(r.diff), 0);
+  const thinN = B.outMonths[ym] || 0;
+  const invN = B.P.filter(p => p.date.startsWith(ym)).length;
+  const thin = invN >= 10 && thinN < 30;
   const fd = d => esc(String(d || '').slice(5));
-  const outLine = t => `${fd(t.date)} · ${esc(t.payer || '-')} · <b>${fmtWon(txMoney(t))}</b>`;
-  const purLine = p => `${fd(p.date)} · ${esc(p.supplier || '-')} · <b>${fmtWon(p.total)}</b>`;
-  let rows = '';
-  if (view === 'unpaid') {
-    rows = R.unpaid.length ? R.unpaid.map(p => {
-      const cand = R.B.O.filter(t => !R.B.tLink.has(t.id) && !payOutNoInv(t) && _pcInWin(p.date, t.date) && (payNameSim(p, t) || Math.round(txMoney(t)) === Math.round(+p.total || 0)))
-        .sort((a, b) => (payNameSim(p, b) - payNameSim(p, a)) || Math.abs(_pcDays(p.date, a.date)) - Math.abs(_pcDays(p.date, b.date))).slice(0, 3);
-      return `<div style="border:1px solid var(--bd);border-radius:10px;padding:9px 11px;margin-bottom:7px">
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="font-size:11.5px;color:var(--t3)">${fd(p.date)}</span><b style="font-size:13.5px">${esc(p.supplier || '-')}</b>
-          <span style="font-size:11.5px;color:var(--t3)">${esc(p.item || '')}</span><b style="margin-left:auto;color:var(--red-t)">${fmtWon(p.total)}원</b></div>
-        ${cand.length ? `<div style="font-size:11.5px;color:var(--t2);margin-top:6px">이 출금일까요? ${cand.map(t => `<button class="btn btn-sm" style="margin:3px 4px 0 0;padding:2px 8px;font-size:11.5px" onclick="payLink('${p.id}','${t.id}')"><i class="ti ti-link"></i> ${outLine(t)}</button>`).join('')}</div>`
-          : `<div style="font-size:11.5px;color:var(--t3);margin-top:5px">비슷한 출금을 못 찾았습니다</div>`}
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px">
-          <button class="btn btn-sm" style="padding:2px 8px;font-size:11.5px" onclick="payMarkOther('${p.id}',false)"><i class="ti ti-credit-card"></i>카드·다른 방법으로 결제 (이 건만)</button>
-          ${p.supplierBiz ? `<button class="btn btn-sm btn-ghost" style="padding:2px 8px;font-size:11.5px" onclick="payMarkOther('${p.id}',true)">이 업체는 늘 다른 방법</button>` : ''}
-        </div></div>`;
-    }).join('') : `<div class="empty"><i class="ti ti-circle-check"></i>결제를 못 찾은 계산서가 없습니다</div>`;
-  } else if (view === 'miss') {
-    rows = R.miss.length ? R.miss.map(t => {
-      const cand = R.B.P.filter(p => !R.B.pLink.has(p.id) && !payPurOther(p) && _pcInWin(p.date, t.date) && (payNameSim(p, t) || Math.round(+p.total || 0) === Math.round(txMoney(t))))
-        .sort((a, b) => (payNameSim(b, t) - payNameSim(a, t)) || Math.abs(_pcDays(a.date, t.date)) - Math.abs(_pcDays(b.date, t.date))).slice(0, 3);
+  const chip = (v, lab, n, col) => `<button class="chip ${view === v ? 'active' : ''}" onclick="payChkSetView('${v}')">${lab} <b style="color:${view === v ? 'inherit' : (n ? col : 'var(--t3)')}">${n}</b></button>`;
+  let list = R.rows;
+  if (view === 'bad') list = R.rows.filter(r => r.state === 'unpaid' || r.state === 'noinv');
+  else if (view === 'unpaid') list = nUnpaid; else if (view === 'noinv') list = nNoinv;
+  const supRow = r => {
+    const s = _pcState[r.state], open = filters.payChkOpen === r.key;
+    const det = open ? `<div style="border-top:1px dashed var(--bd);padding:8px 11px;display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px">
+        <div><div style="font-weight:700;color:var(--t2);margin-bottom:4px">이 달 받은 계산서 ${r.inv.length}장</div>
+          ${r.inv.length ? r.inv.sort((a, b) => a.date.localeCompare(b.date)).map(p => `<div>${fd(p.date)} · ${esc(p.item || '')} <b style="float:right">${fmtWon(p.total)}</b></div>`).join('') : '<div style="color:var(--t3)">없음</div>'}</div>
+        <div><div style="font-weight:700;color:var(--t2);margin-bottom:4px">이 달 보낸 돈 ${r.pay.length}건</div>
+          ${r.pay.length ? r.pay.sort((a, b) => a.date.localeCompare(b.date)).map(t => `<div>${fd(t.date)} · ${esc(t.payer || '')} <b style="float:right">${fmtWon(txMoney(t))}</b>
+            <div style="text-align:right"><a style="font-size:10.5px;color:#2f6fed;cursor:pointer" onclick="paySetSup('${t.id}','x')">이 업체 아님</a></div></div>`).join('') : '<div style="color:var(--t3)">없음</div>'}</div>
+        <div style="grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <span style="color:var(--t3)">누적 (${esc(B.start.replace('-', '.'))}~${esc(ym.replace('-', '.'))}) 계산서 ${fmtWon(r.invCum)} · 보낸 돈 ${fmtWon(r.payCum)}</span>
+          <button class="btn btn-sm btn-ghost" style="margin-left:auto;padding:2px 8px;font-size:11px" onclick="paySupOtherToggle('${esc(r.key)}')">${r.other ? '다른 방법 결제 표시 풀기' : '이 업체는 카드·다른 방법으로 결제'}</button></div></div>` : '';
+    return `<div style="border:1px solid var(--bd);border-radius:10px;margin-bottom:6px;overflow:hidden">
+      <div class="tap" onclick="payChkToggle('${esc(r.key)}')" style="display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;background:${open ? s[2] : '#fff'}">
+        <i class="ti ti-chevron-${open ? 'down' : 'right'}" style="color:var(--t3)"></i>
+        <div style="min-width:0;flex:1"><div style="font-weight:800;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</div>
+          <div style="font-size:11px;color:var(--t3)">이 달 계산서 ${fmtWon(r.invM)} (${r.inv.length}장) · 보낸 돈 ${fmtWon(r.payM)} (${r.pay.length}건)</div></div>
+        <div style="text-align:right;white-space:nowrap"><span class="pill" style="font-size:10.5px;color:${s[1]};background:${s[2]};border:1px solid ${s[1]}">${s[0]}</span>
+          ${r.state === 'unpaid' || r.state === 'noinv' ? `<div style="font-size:13px;font-weight:800;color:${s[1]};margin-top:2px">${fmtWon(Math.abs(r.diff))}원</div>` : ''}</div>
+      </div>${det}</div>`;
+  };
+  let body;
+  if (view === 'loose') {
+    body = R.loose.length ? R.loose.map(t => {
+      const amt = txMoney(t);
+      const cand = [...B.sups.values()].map(s => ({ s, sc: payNameScore(s, t) + (s.invs.some(p => Math.round(+p.total || 0) === amt) ? 5 : 0) })).filter(x => x.sc > 0).sort((a, b) => b.sc - a.sc).slice(0, 3);
       return `<div style="border:1px solid var(--bd);border-radius:10px;padding:9px 11px;margin-bottom:7px">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="font-size:11.5px;color:var(--t3)">${fd(t.date)}</span><b style="font-size:13.5px">${esc(t.payer || '-')}</b>
-          <span class="pill" style="font-size:10.5px">${esc(acctCatOf(t) || '')}</span>${t.memo ? `<span style="font-size:11.5px;color:var(--t3)">${esc(t.memo)}</span>` : ''}<b style="margin-left:auto;color:var(--red-t)">${fmtWon(txMoney(t))}원</b></div>
-        ${cand.length ? `<div style="font-size:11.5px;color:var(--t2);margin-top:6px">이 계산서일까요? ${cand.map(p => `<button class="btn btn-sm" style="margin:3px 4px 0 0;padding:2px 8px;font-size:11.5px" onclick="payLink('${p.id}','${t.id}')"><i class="ti ti-link"></i> ${purLine(p)}</button>`).join('')}</div>`
-          : `<div style="font-size:11.5px;color:var(--t3);margin-top:5px">비슷한 계산서를 못 찾았습니다 — 계산서를 아직 안 받았을 수 있습니다</div>`}
+          <span class="pill" style="font-size:10.5px">${esc(acctCatOf(t) || '')}</span><b style="margin-left:auto;color:var(--red-t)">${fmtWon(amt)}원</b></div>
+        ${cand.length ? `<div style="font-size:11.5px;color:var(--t2);margin-top:6px">이 업체에 보낸 돈일까요? ${cand.map(x => `<button class="btn btn-sm" style="margin:3px 4px 0 0;padding:2px 8px;font-size:11.5px" onclick="paySetSup('${t.id}','${esc(x.s.key)}')"><i class="ti ti-link"></i> ${esc(x.s.name)}</button>`).join('')}</div>`
+          : `<div style="font-size:11.5px;color:var(--t3);margin-top:5px">계산서를 보낸 업체 중에 비슷한 이름이 없습니다 — 계산서를 아직 못 받았을 수 있습니다</div>`}
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px">
           <button class="btn btn-sm" style="padding:2px 8px;font-size:11.5px" onclick="payMarkNoInv('${t.id}',false)"><i class="ti ti-file-off"></i>계산서 없는 게 맞음 (이 건만)</button>
           <button class="btn btn-sm btn-ghost" style="padding:2px 8px;font-size:11.5px" onclick="payMarkNoInv('${t.id}',true)">이 상대는 늘 계산서 없음</button>
         </div></div>`;
-    }).join('') : `<div class="empty"><i class="ti ti-circle-check"></i>계산서를 못 찾은 출금이 없습니다</div>`;
-  } else {
-    const pr = R.paid.map(x => `<tr><td style="padding:6px 8px;white-space:nowrap">${purLine(x.p)}</td>
-        <td style="padding:6px 8px">${x.l.tx.map(outLine).join('<br>')}</td>
-        <td style="padding:6px 8px;white-space:nowrap"><span style="font-size:10.5px;font-weight:700;color:${_pcHow[x.l.how][1]}">${_pcHow[x.l.how][0]}</span>
-          ${(() => { const d = sum(x.l.tx, t => txMoney(t)) - (+x.p.total || 0); return (x.l.how !== 'group' && Math.abs(d) > 0) ? `<div style="font-size:10.5px;color:var(--red-t)">차이 ${fmtWon(d)}</div>` : ''; })()}</td>
-        <td style="padding:6px 8px"><button class="btn btn-sm btn-ghost" style="padding:1px 7px;font-size:11px" onclick="payUnlink('${x.p.id}')">아님</button></td></tr>`).join('');
-    const oth = R.other.map(p => `<tr><td style="padding:6px 8px;white-space:nowrap">${purLine(p)}</td><td style="padding:6px 8px;color:var(--t3)">카드·다른 방법 결제${p.payNone ? '' : ' (업체 늘)'}</td><td></td>
-        <td style="padding:6px 8px"><button class="btn btn-sm btn-ghost" style="padding:1px 7px;font-size:11px" onclick="payUnmarkOther('${p.id}')">되돌리기</button></td></tr>`).join('');
-    const ni = R.noInv.map(t => `<tr><td style="padding:6px 8px;color:var(--t3)">계산서 없음${t.noInv ? '' : ' (상대 늘)'}</td><td style="padding:6px 8px">${outLine(t)}</td><td></td>
-        <td style="padding:6px 8px"><button class="btn btn-sm btn-ghost" style="padding:1px 7px;font-size:11px" onclick="payUnmarkNoInv('${t.id}')">되돌리기</button></td></tr>`).join('');
-    rows = (pr + oth + ni) ? `<div class="tbl-wrap" style="max-height:56vh;overflow:auto"><table class="tbl" style="font-size:12px"><thead><tr><th>매입 계산서</th><th>출금</th><th>짝 지은 방법</th><th></th></tr></thead><tbody>${pr}${oth}${ni}</tbody></table></div>`
-      : `<div class="empty"><i class="ti ti-arrows-exchange"></i>확인된 짝이 없습니다</div>`;
-  }
+    }).join('') : `<div class="empty"><i class="ti ti-circle-check"></i>업체를 못 찾은 출금이 없습니다</div>`;
+    if (R.noInv.length) body += `<div style="font-size:11.5px;color:var(--t3);margin-top:10px">계산서 없음으로 표시한 출금 ${R.noInv.length}건: ${R.noInv.map(t => `${fd(t.date)} ${esc(t.payer || '')} ${fmtWon(txMoney(t))} <a style="color:#2f6fed;cursor:pointer" onclick="payUnmarkNoInv('${t.id}')">되돌리기</a>`).join(' · ')}</div>`;
+  } else body = list.length ? list.map(supRow).join('') : `<div class="empty"><i class="ti ti-circle-check"></i>${view === 'bad' ? '어긋난 업체가 없습니다' : '해당하는 업체가 없습니다'}</div>`;
   return `
     <div class="banner info" style="margin-bottom:11px;font-size:12px"><i class="ti ti-info-circle"></i><span style="flex:1;min-width:0">
-      <b>매입 계산서</b>와 <b>통장 출금</b>을 서로 맞춰 봅니다. 금액이 원 단위까지 같거나, 한 업체 한 달치 합계와 같은 출금을 찾아 자동으로 짝을 짓습니다.
-      출금은 <b>매입·외주가공·외주시공·운반·통관</b> 계정만 봅니다. 결제는 다음 달에 나가는 경우가 많아 <b>계산서 날짜 31일 전 ~ 100일 뒤</b> 출금까지 찾습니다.
-      <br>짝을 직접 연결하면 그 적요 이름은 그 업체로 기억해서 다음부터 자동으로 잡습니다. 계산서·출금 기록 자체는 바뀌지 않습니다.</span></div>
-    ${thin ? `<div class="banner warn" style="margin-bottom:10px;font-size:12.5px"><i class="ti ti-alert-triangle"></i><span style="flex:1;min-width:0">이 달 출금 기록이 <b>${outsAll}건</b>뿐입니다 (계산서 ${R.pm.length}건). 출금 통장 엑셀을 아직 안 올렸으면 «결제 못 찾음»이 많이 나옵니다 — 통장 내역에서 출금 파일을 먼저 올려 주세요.</span></div>` : ''}
-    <div class="stat-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:11px">
-      <button class="stat tap" onclick="payChkSetView('unpaid')"><div class="ic r"><i class="ti ti-file-alert"></i></div><div class="v" style="font-size:17px;color:${R.unpaid.length ? 'var(--red-t)' : 'var(--gd)'}">${R.unpaid.length}건</div><div class="l">결제 못 찾은 계산서</div><div class="s">${fmtWon(unpaidAmt)}원 · 이 달 계산서 ${R.pm.length}건 중</div></button>
-      <button class="stat tap" onclick="payChkSetView('miss')"><div class="ic b"><i class="ti ti-file-off"></i></div><div class="v" style="font-size:17px;color:${R.miss.length ? 'var(--red-t)' : 'var(--gd)'}">${R.miss.length}건</div><div class="l">계산서 못 찾은 출금</div><div class="s">${fmtWon(missAmt)}원 · 이 달 해당 출금 ${R.om.length}건 중</div></button>
+      <b>업체마다</b> 받은 매입 계산서 합계와 통장에서 보낸 돈 합계를 <b>${esc((B.start || '').replace('-', '.'))}부터 쌓아서</b> 맞춰 봅니다.
+      <b style="color:var(--red-t)">결제 덜 됨</b> = 계산서는 받았는데 돈을 덜 보냄 · <b style="color:#b45309">계산서 덜 받음</b> = 돈은 보냈는데 계산서를 덜 받음.
+      <br>출금이 어느 업체 것인지는 적요 이름으로 찾습니다. 틀리면 업체를 펼쳐 «이 업체 아님», 못 찾은 출금은 «업체 못 찾은 출금»에서 골라 주세요 — 한 번 고르면 다음부터 자동입니다.</span></div>
+    ${thin ? `<div class="banner warn" style="margin-bottom:10px;font-size:12.5px"><i class="ti ti-alert-triangle"></i><span style="flex:1;min-width:0">이 달 출금 기록이 <b>${thinN}건</b>뿐입니다 (계산서 ${invN}장). 출금 통장 엑셀을 아직 안 올렸으면 «결제 덜 됨»으로 잘못 나옵니다 — 통장 내역에서 출금 파일을 먼저 올려 주세요.</span></div>` : ''}
+    <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:11px">
+      <button class="stat tap" onclick="payChkSetView('unpaid')"><div class="ic r"><i class="ti ti-file-alert"></i></div><div class="v" style="font-size:17px;color:${nUnpaid.length ? 'var(--red-t)' : 'var(--gd)'}">${nUnpaid.length}곳</div><div class="l">결제 덜 된 업체</div><div class="s">${fmtWon(sumAbs(nUnpaid))}원</div></button>
+      <button class="stat tap" onclick="payChkSetView('noinv')"><div class="ic b"><i class="ti ti-file-off"></i></div><div class="v" style="font-size:17px;color:${nNoinv.length ? '#b45309' : 'var(--gd)'}">${nNoinv.length}곳</div><div class="l">계산서 덜 받은 업체</div><div class="s">${fmtWon(sumAbs(nNoinv))}원</div></button>
+      <button class="stat tap" onclick="payChkSetView('loose')"><div class="ic g"><i class="ti ti-question-mark"></i></div><div class="v" style="font-size:17px;color:${R.loose.length ? '#b45309' : 'var(--gd)'}">${R.loose.length}건</div><div class="l">업체 못 찾은 출금</div><div class="s">${fmtWon(R.loose.reduce((a, t) => a + txMoney(t), 0))}원</div></button>
     </div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
-      ${chip('unpaid', '결제 못 찾은 계산서', R.unpaid.length, 'var(--red-t)')}${chip('miss', '계산서 못 찾은 출금', R.miss.length, 'var(--red-t)')}${chip('ok', '확인된 것', R.paid.length + R.other.length + R.noInv.length, 'var(--gd)')}
+      ${chip('bad', '어긋난 업체', nUnpaid.length + nNoinv.length, 'var(--red-t)')}${chip('all', '이 달 전체 업체', R.rows.length, 'var(--t2)')}${chip('loose', '업체 못 찾은 출금', R.loose.length, '#b45309')}
     </div>
-    <div>${rows}</div>`;
+    <div>${body}</div>`;
 }
-async function payLink(pid, tid) {
-  const p = (state.purchases || []).find(x => x.id === pid), t = (state.banktx || []).find(x => x.id === tid);
-  if (!p || !t) { toast('내역을 찾을 수 없습니다'); return; }
-  const links = Array.from(new Set([...(p.payLinks || []), tid]));
-  await Store.update('purchases', pid, { payLinks: links, payNot: (p.payNot || []).filter(x => x !== tid), payNone: '', payBy: (me && me.name) || '', payAt: Date.now() });
-  /* 이 적요 이름은 이 업체로 기억 — 다음 달부터 자동으로 짝을 짓는다 */
-  const k = _pcNorm(t.payer); if (k && p.supplierBiz) { const map = Object.assign({}, payAliasMap()); if (map[k] !== p.supplierBiz) { map[k] = p.supplierBiz; try { await payMetaSave('payAlias', { map }); } catch (e) { } } }
-  toast('연결됨 · ' + (p.supplier || '') + ' ↔ ' + (t.payer || ''));
+async function paySetSup(tid, key) {
+  const t = (state.banktx || []).find(x => x.id === tid); if (!t) return;
+  await Store.update('banktx', tid, { paySup: key, paySupBy: (me && me.name) || '', paySupAt: Date.now() });
+  /* 이 적요 이름은 이 업체로 기억 — 다음부터 자동 */
+  const k = _pcNorm(t.payer);
+  if (k && key && key !== 'x') { const map = Object.assign({}, payAliasMap()); if (map[k] !== key) { map[k] = key; try { await payMetaSave('payAlias', { map }); } catch (e) { } } }
+  if (k && key === 'x') { const map = Object.assign({}, payAliasMap()); if (map[k]) { delete map[k]; try { await payMetaSave('payAlias', { map }); } catch (e) { } } }
+  toast(key === 'x' ? '이 업체에서 뺐습니다' : '연결했습니다 · 같은 적요는 다음부터 자동');
 }
-async function payUnlink(pid) {
-  const p = (state.purchases || []).find(x => x.id === pid); if (!p) return;
-  const l = payCheckBuild().pLink.get(pid); if (!l) return;
-  const ids = l.tx.map(t => t.id);
-  if (l.how === 'manual') await Store.update('purchases', pid, { payLinks: (p.payLinks || []).filter(x => ids.indexOf(x) < 0) });
-  else await Store.update('purchases', pid, { payNot: Array.from(new Set([...(p.payNot || []), ...ids])) });   // 자동으로 붙은 짝 → «이 출금은 아님» 으로 기억
-  toast('짝을 풀었습니다');
-}
-async function payMarkOther(pid, always) {
-  const p = (state.purchases || []).find(x => x.id === pid); if (!p) return;
-  if (always) {
-    if (!confirm('「' + (p.supplier || '') + '」 계산서는 앞으로도 «통장 출금 없이 결제»로 볼까요?\n(카드 결제·관세 납부 등)')) return;
-    const L = payMetaList('payNoneBiz'); if (L.indexOf(p.supplierBiz) < 0) await payMetaSave('payNoneBiz', { items: L.concat([p.supplierBiz]) });
-  } else await Store.update('purchases', pid, { payNone: '기타', payBy: (me && me.name) || '', payAt: Date.now() });
-  toast('카드·다른 방법 결제로 표시');
-}
-async function payUnmarkOther(pid) {
-  const p = (state.purchases || []).find(x => x.id === pid); if (!p) return;
-  if (p.payNone) await Store.update('purchases', pid, { payNone: '' });
-  const L = payMetaList('payNoneBiz'); if (L.indexOf(p.supplierBiz) >= 0) await payMetaSave('payNoneBiz', { items: L.filter(x => x !== p.supplierBiz) });
-  toast('되돌렸습니다');
+async function paySupOtherToggle(key) {
+  const L = payMetaList('payNoneBiz');
+  await payMetaSave('payNoneBiz', { items: L.indexOf(key) >= 0 ? L.filter(x => x !== key) : L.concat([key]) });
+  toast(L.indexOf(key) >= 0 ? '다시 대조합니다' : '카드·다른 방법 결제 업체로 표시');
 }
 async function payMarkNoInv(tid, always) {
   const t = (state.banktx || []).find(x => x.id === tid); if (!t) return;
@@ -16567,7 +16552,7 @@ function renderSettle() {
   const _tb = (v, ic, lab, cnt) => `<button type="button" class="${stab === v ? 'on' : ''}" onclick="settleSetTab('${v}')"><i class="ti ti-${ic}" style="font-size:14px"></i> ${lab}${cnt ? ` <b style="font-size:11px">${cnt}</b>` : ''}</button>`;
   const _saleN = salesRows(ym + '-01', _ymd(new Date(+ym.slice(0, 4), +ym.slice(5, 7), 0))).length;
   const seg = `<div class="seg" style="margin:2px 0 12px">
-    ${_tb('sum', 'chart-pie', '요약')}${_tb('sale', 'file-invoice', '매출', _saleN)}${_tb('buy', 'file-download', '매입', purMonthAll.n)}${isAdmin() ? _tb('out', 'arrow-down-right', '출금', acctOuts(ym).length) : ''}${isAdmin() ? _tb('chk', 'arrows-exchange', '대조', (() => { try { const R = payCheckMonth(ym); return R.unpaid.length + R.miss.length; } catch (e) { return 0; } })()) : ''}${_tb('cost', 'calculator', '원가')}${_tb('exp', 'wallet', '지출', expMonth.length)}
+    ${_tb('sum', 'chart-pie', '요약')}${_tb('sale', 'file-invoice', '매출', _saleN)}${_tb('buy', 'file-download', '매입', purMonthAll.n)}${isAdmin() ? _tb('out', 'arrow-down-right', '출금', acctOuts(ym).length) : ''}${isAdmin() ? _tb('chk', 'arrows-exchange', '대조', (() => { try { const R = payCheckMonth(ym); return R.rows.filter(r => r.state === 'unpaid' || r.state === 'noinv').length + R.loose.length; } catch (e) { return 0; } })()) : ''}${_tb('cost', 'calculator', '원가')}${_tb('exp', 'wallet', '지출', expMonth.length)}
   </div>`;
   const body =
     stab === 'sale' ? salesCard(ym) :
