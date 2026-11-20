@@ -3124,15 +3124,110 @@ function issuesSorted() {
 }
 function renderIssues() {
   const f = 'issue';
-  const list = issuesSorted();
-  const open = list.filter(i => i.status !== '처리완료').length;
+  const all = issuesSorted();
+  const open = all.filter(i => i.status !== '처리완료').length;
+  const view = filters.issueView || _viewPref('issue', 'card');
   el('pg-sites').innerHTML = `
     <div class="ph"><div><h2><i class="ti ti-alert-triangle"></i>현장 이슈</h2><p>미해결 <b style="color:#f04438">${open}건</b> · 이슈를 처리 완료해야 현장을 완료할 수 있어요</p></div>
       <button class="btn btn-pri btn-sm" onclick="openIssueForm()"><i class="ti ti-plus"></i>이슈 등록</button></div>
     <div class="chips">
       ${chip('every', '전체', f)}${chip('all', '진행중', f)}${chip('wait', '견적·결제', f)}${chip('construct', '발주·시공', f)}${chip('done', '완료', f)}${chip('issue', '이슈', f)}
     </div>
-    <div class="site-grid">${list.length ? list.map(issueCard).join('') : `<div class="empty" style="grid-column:1/-1"><i class="ti ti-shield-check"></i>등록된 이슈가 없습니다<br><button class="btn btn-pri btn-sm" style="margin-top:12px" onclick="openIssueForm()"><i class="ti ti-plus"></i>이슈 등록하기</button></div>`}</div>`;
+    <div class="search-box">
+      <i class="ti ti-search"></i>
+      <input id="iss-search" placeholder="현장·업체·내용·처리자 검색" value="${esc(filters.issueSearch || '')}" oninput="filterIssues()" autocomplete="off" lang="ko">
+    </div>
+    <div class="chips" style="margin-bottom:8px">
+      <button class="chip ${view === 'card' ? 'active' : ''}" onclick="setIssueView('card')"><i class="ti ti-layout-grid"></i> 카드</button>
+      <button class="chip ${view === 'month' ? 'active' : ''}" onclick="setIssueView('month')"><i class="ti ti-calendar-month"></i> 월별 내역</button>
+      <span style="width:1px;background:var(--bd);margin:2px 3px"></span>
+      ${['all', 'open', 'done'].map(k => `<button class="chip ${(filters.issueStat || 'all') === k ? 'active' : ''}" onclick="issueSetStat('${k}')">${{ all: '전체', open: '미해결', done: '처리완료' }[k]}</button>`).join('')}
+      <button class="chip" style="margin-left:auto" onclick="downloadIssuesXls()"><i class="ti ti-file-spreadsheet"></i> 엑셀</button>
+    </div>
+    <div id="iss-body">${issuesBodyHtml()}</div>`;
+}
+/* ══════════════════════════════════════════════════════════
+   ★ 2026-11-20 현장 이슈 «월별 내역» — 사용자: "현장 이슈 칸도 카드로만 말고 월별 내역으로 쭉 모아볼 수 있게"
+   · 등록한 달마다 묶어서 최신 달부터 한 줄씩 쭉 보여준다 (달마다 건수 · 미해결 수)
+   · 위쪽 «전체 · 미해결 · 처리완료»와 검색은 카드·월별 둘 다에 걸린다
+   · 고른 보기(카드/월별)는 그 기기에 기억된다
+   ══════════════════════════════════════════════════════════ */
+function setIssueView(v) { filters.issueView = v; _viewSave('issue', v); renderIssues(); }
+function issueSetStat(v) { filters.issueStat = v; renderIssues(); }
+function filterIssues() { filters.issueSearch = el('iss-search') ? el('iss-search').value : ''; const b = el('iss-body'); if (b) b.innerHTML = issuesBodyHtml(); }
+function _issDate(i) { return i.createdAt ? _ymd(new Date(+i.createdAt)) : String(i.date || ''); }
+function _issWhere(i) {
+  const isBasin = i.kind === 'basin';
+  const site = isBasin ? null : (state.sites || []).find(x => x.id === i.siteId);
+  const basin = isBasin ? (state.basins || []).find(x => x.id === i.basinId) : null;
+  return { isBasin, site, basin, client: isBasin ? ((basin && basin.vendor) || '') : ((site && site.client) || '') };
+}
+function issuesFiltered() {
+  const st = filters.issueStat || 'all';
+  const q = String(filters.issueSearch || '').trim().toLowerCase();
+  return issuesSorted().filter(i => {
+    const done = i.status === '처리완료';
+    if (st === 'open' && done) return false;
+    if (st === 'done' && !done) return false;
+    if (!q) return true;
+    const w = _issWhere(i);
+    return [i.siteName, i.reason, i.by, i.resolvedBy, w.client].some(v => String(v || '').toLowerCase().includes(q));
+  });
+}
+function issuesBodyHtml() {
+  const list = issuesFiltered();
+  const view = filters.issueView || _viewPref('issue', 'card');
+  if (!list.length) return `<div class="empty"><i class="ti ti-shield-check"></i>${(filters.issueSearch || '').trim() || (filters.issueStat || 'all') !== 'all' ? '해당하는 이슈가 없습니다' : '등록된 이슈가 없습니다'}</div>`;
+  if (view !== 'month') return `<div class="site-grid">${list.map(issueCard).join('')}</div>`;
+  const by = {};
+  list.forEach(i => { const m = _issDate(i).slice(0, 7) || '날짜 없음'; (by[m] = by[m] || []).push(i); });
+  const months = Object.keys(by).sort((a, b) => b.localeCompare(a));
+  const WD = ['일', '월', '화', '수', '목', '금', '토'];
+  return months.map(m => {
+    const rows = by[m].slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const openN = rows.filter(i => i.status !== '처리완료').length;
+    return `<div style="display:flex;align-items:center;gap:8px;margin:16px 2px 8px">
+        <div style="font-weight:800;font-size:15px">${esc(m === '날짜 없음' ? m : m.replace('-', '년 ') + '월')}</div>
+        <div style="flex:1;height:1px;background:var(--bd)"></div>
+        <div style="font-size:12px;color:var(--t2)">${rows.length}건${openN ? ` · <b style="color:#f04438">미해결 ${openN}</b>` : ' · 모두 처리'}</div></div>
+      <div class="card" style="padding:0;overflow:hidden">${rows.map(i => {
+        const done = i.status === '처리완료', w = _issWhere(i), d = _issDate(i);
+        const dl = d ? d.slice(5).replace('-', '/') + ' (' + WD[new Date(d + 'T00:00').getDay()] + ')' : '';
+        const go = w.isBasin ? (w.basin ? `openBasinForm('${i.basinId}')` : '') : (w.site ? `openSiteDetail('${i.siteId}')` : '');
+        return `<div data-iss="${i.id}" data-iss-k="row" style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-bottom:1px solid #eef1ef;${done ? '' : 'background:#fff8f7'}">
+          <div style="flex:none;width:62px;font-size:12px;color:var(--t3);padding-top:2px">${esc(dl)}</div>
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              ${w.isBasin ? '<span class="pill p-hold" style="font-size:10px">세면대</span>' : ''}
+              <b class="${go ? 'tap' : ''}" style="font-size:13.5px;${go ? 'cursor:pointer;text-decoration:underline;text-decoration-color:#cfd8d3' : ''}" ${go ? `onclick="${go}"` : ''}>${esc(i.siteName || (w.isBasin ? '세면대 발주' : '현장'))}</b>
+              ${w.client ? `<span style="font-size:11.5px;color:var(--t3)">${esc(w.client)}</span>` : ''}
+              ${(!w.site && !w.basin) ? `<span style="font-size:11px;color:var(--t3)">(${w.isBasin ? '삭제된 발주' : '삭제된 현장'})</span>` : ''}
+            </div>
+            <div style="font-size:13px;color:var(--t1);white-space:pre-wrap;line-height:1.55;margin-top:3px">${esc(i.reason || '')}</div>
+            <div style="font-size:11px;color:var(--t3);margin-top:3px">${i.by ? '등록 ' + esc(i.by) : ''}${done ? ` · <span style="color:#0F6E56;font-weight:700"><i class="ti ti-check"></i> ${esc(i.resolvedDate || '')} ${esc(i.resolvedBy || '')} 처리</span>` : ''}</div>
+          </div>
+          <div style="flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+            <span class="pill ${done ? 'p-done' : 'p-issue'}" data-isspill>${done ? '처리완료' : '미해결'}</span>
+            ${done ? '' : `<button class="btn btn-sm btn-pri" data-issbtn style="padding:3px 9px;font-size:11.5px" onclick="resolveIssue('${i.id}')"><i class="ti ti-circle-check"></i>처리</button>`}
+          </div></div>`;
+      }).join('')}</div>`;
+  }).join('');
+}
+function downloadIssuesXls() {
+  const list = issuesFiltered().slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  const TH = t => `<th style="background:#0F6E56;color:#fff;font-weight:bold;border:0.5pt solid #0a4f3e;padding:6px 9px">${t}</th>`;
+  const TD = (t, st) => `<td style="border:0.5pt solid #cfd8d4;padding:5px 9px;vertical-align:top;${st || ''}">${t}</td>`;
+  let html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body>`;
+  html += `<table><tr><td colspan="9" style="font-size:15pt;font-weight:bold;color:#0F6E56;padding:6px 4px">다우세라믹앤석재 · 현장 이슈 내역 (${todayStr()})</td></tr></table>`;
+  html += `<table style="border-collapse:collapse"><tr>${['월', '등록일', '구분', '현장 / 발주', '업체', '이슈 내용', '상태', '처리일 · 처리자', '등록자'].map(TH).join('')}</tr>`;
+  list.forEach(i => {
+    const w = _issWhere(i), d = _issDate(i), done = i.status === '처리완료';
+    html += `<tr>${TD(esc(d.slice(0, 7)))}${TD(esc(d))}${TD(w.isBasin ? '세면대' : '현장')}${TD('<b>' + esc(i.siteName || '') + '</b>')}${TD(esc(w.client))}${TD(esc(i.reason || '').replace(/\n/g, '<br>'), 'mso-data-placement:same-cell;width:320px')}${TD(done ? '처리완료' : '미해결', done ? 'color:#0F6E56' : 'color:#c0341d;font-weight:bold')}${TD(done ? esc((i.resolvedDate || '') + ' ' + (i.resolvedBy || '')) : '')}${TD(esc(i.by || ''))}</tr>`;
+  });
+  html += `</table></body></html>`;
+  const blob = new Blob(['\ufeff', html], { type: 'application/vnd.ms-excel' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = '현장이슈_' + todayStr() + '.xls'; document.body.appendChild(a); a.click(); a.remove();
+  toast('엑셀 다운로드');
 }
 function issueCard(i) {
   const done = i.status === '처리완료';
