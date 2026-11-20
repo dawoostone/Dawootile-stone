@@ -3154,6 +3154,8 @@ function renderIssues() {
    ══════════════════════════════════════════════════════════ */
 function setIssueView(v) { filters.issueView = v; _viewSave('issue', v); renderIssues(); }
 function issueSetStat(v) { filters.issueStat = v; renderIssues(); }
+function issueMonthSet(v) { const m = String(v || '').slice(0, 7); if (!/^\d{4}-\d{2}$/.test(m)) return; filters.issueMonth = m; const b = el('iss-body'); if (b) b.innerHTML = issuesBodyHtml(); }
+function issueMonthNav(d) { const cur = filters.issueMonth || todayStr().slice(0, 7); const p = cur.split('-').map(Number); const x = new Date(p[0], p[1] - 1 + d, 1); issueMonthSet(x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0')); }
 function filterIssues() { filters.issueSearch = el('iss-search') ? el('iss-search').value : ''; const b = el('iss-body'); if (b) b.innerHTML = issuesBodyHtml(); }
 function _issDate(i) { return i.createdAt ? _ymd(new Date(+i.createdAt)) : String(i.date || ''); }
 function _issWhere(i) {
@@ -3179,18 +3181,27 @@ function issuesBodyHtml() {
   const view = filters.issueView || _viewPref('issue', 'card');
   if (!list.length) return `<div class="empty"><i class="ti ti-shield-check"></i>${(filters.issueSearch || '').trim() || (filters.issueStat || 'all') !== 'all' ? '해당하는 이슈가 없습니다' : '등록된 이슈가 없습니다'}</div>`;
   if (view !== 'month') return `<div class="site-grid">${list.map(issueCard).join('')}</div>`;
-  const by = {};
-  list.forEach(i => { const m = _issDate(i).slice(0, 7) || '날짜 없음'; (by[m] = by[m] || []).push(i); });
-  const months = Object.keys(by).sort((a, b) => b.localeCompare(a));
+  /* ★ 2026-11-20 사용자: "월별 내역을 월별 눌러서 보게 해야 · 한꺼번에 띄우면 나중에 무거워진다"
+     → 한 번에 «한 달»만 그린다. ◀ ▶ 또는 달 선택으로 넘기고, 다른 달 건수는 버튼으로 보여준다. */
+  const cnt = {}; list.forEach(i => { const m = _issDate(i).slice(0, 7); if (m) cnt[m] = (cnt[m] || 0) + 1; });
+  const cur = filters.issueMonth || todayStr().slice(0, 7);
+  const rowsM = list.filter(i => _issDate(i).startsWith(cur)).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const openN = rowsM.filter(i => i.status !== '처리완료').length;
+  const others = Object.keys(cnt).filter(m => m !== cur).sort((a, b) => b.localeCompare(a)).slice(0, 12);
   const WD = ['일', '월', '화', '수', '목', '금', '토'];
-  return months.map(m => {
-    const rows = by[m].slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    const openN = rows.filter(i => i.status !== '처리완료').length;
-    return `<div style="display:flex;align-items:center;gap:8px;margin:16px 2px 8px">
-        <div style="font-weight:800;font-size:15px">${esc(m === '날짜 없음' ? m : m.replace('-', '년 ') + '월')}</div>
-        <div style="flex:1;height:1px;background:var(--bd)"></div>
-        <div style="font-size:12px;color:var(--t2)">${rows.length}건${openN ? ` · <b style="color:#f04438">미해결 ${openN}</b>` : ' · 모두 처리'}</div></div>
-      <div class="card" style="padding:0;overflow:hidden">${rows.map(i => {
+  const nav = `<div style="background:var(--soft);border-radius:11px;padding:8px 12px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <button class="btn btn-sm" onclick="issueMonthNav(-1)"><i class="ti ti-chevron-left"></i></button>
+        <div style="text-align:center"><input type="month" value="${esc(cur)}" onchange="issueMonthSet(this.value)" style="font-size:15px;font-weight:800;padding:2px 6px;border:1.5px solid var(--bd2);border-radius:8px;background:#fff">
+          <div style="font-size:11.5px;color:var(--t3);margin-top:3px">${rowsM.length}건${rowsM.length ? (openN ? ` · <b style="color:#f04438">미해결 ${openN}</b>` : ' · 모두 처리') : ''}</div></div>
+        <button class="btn btn-sm" onclick="issueMonthNav(1)"><i class="ti ti-chevron-right"></i></button>
+      </div>
+      ${others.length ? `<div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:center;margin-top:7px">${others.map(m => `<button class="btn btn-sm" style="padding:2px 8px;font-size:11.5px" onclick="issueMonthSet('${m}')">${esc(m.replace('-', '. '))} <b style="color:var(--gd)">${cnt[m]}</b></button>`).join('')}</div>` : ''}
+    </div>`;
+  if (!rowsM.length) return nav + `<div class="empty"><i class="ti ti-shield-check"></i>${esc(cur.replace('-', '년 '))}월에는 이슈가 없습니다</div>`;
+  return nav + [cur].map(m => {
+    const rows = rowsM;
+    return `<div class="card" style="padding:0;overflow:hidden">${rows.map(i => {
         const done = i.status === '처리완료', w = _issWhere(i), d = _issDate(i);
         const dl = d ? d.slice(5).replace('-', '/') + ' (' + WD[new Date(d + 'T00:00').getDay()] + ')' : '';
         const go = w.isBasin ? (w.basin ? `openBasinForm('${i.basinId}')` : '') : (w.site ? `openSiteDetail('${i.siteId}')` : '');
