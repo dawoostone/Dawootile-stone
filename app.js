@@ -3130,7 +3130,7 @@ function renderIssues() {
     <div class="ph"><div><h2><i class="ti ti-alert-triangle"></i>현장 이슈</h2><p>미해결 <b style="color:#f04438">${open}건</b> · 이슈를 처리 완료해야 현장을 완료할 수 있어요</p></div>
       <button class="btn btn-pri btn-sm" onclick="openIssueForm()"><i class="ti ti-plus"></i>이슈 등록</button></div>
     <div class="chips">
-      ${chip('all', '전체', f)}${chip('wait', '견적·결제', f)}${chip('construct', '발주·시공', f)}${chip('done', '완료', f)}${chip('issue', '이슈', f)}
+      ${chip('every', '전체', f)}${chip('all', '진행중', f)}${chip('wait', '견적·결제', f)}${chip('construct', '발주·시공', f)}${chip('done', '완료', f)}${chip('issue', '이슈', f)}
     </div>
     <div class="site-grid">${list.length ? list.map(issueCard).join('') : `<div class="empty" style="grid-column:1/-1"><i class="ti ti-shield-check"></i>등록된 이슈가 없습니다<br><button class="btn btn-pri btn-sm" style="margin-top:12px" onclick="openIssueForm()"><i class="ti ti-plus"></i>이슈 등록하기</button></div>`}</div>`;
 }
@@ -3250,14 +3250,18 @@ async function submitBasinIssue() {
     toast('세면대 이슈 등록됨'); closeModal();
   } finally { setTimeout(() => { _busy = false; }, 800); }
 }
-function sitesFilteredList() {
-  const f = filters.sites;
+/* ★ 2026-11-20 사용자: "전체 탭에서 검색할 때는 완료된 것도 나와야 함 · 진행중과 전체를 혼동하고 있는 것 같음"
+   예전 «전체»는 사실 완료를 뺀 «진행중»이었다. 이름을 «진행중»으로 바로잡고, 완료까지 다 보는 진짜 «전체»(every)를 따로 둔다.
+   기본 화면은 예전처럼 진행중. */
+function sitesFilteredList(fOver) {
+  const f = fOver || filters.sites;
   let list = state.sites.slice();
   if (f === 'wait') list = list.filter(s => ['접수', '가견적', '견적', '결제'].includes(s.stage));
   else if (f === 'construct') list = list.filter(s => ['발주', '시공'].includes(s.stage));
   else if (f === 'done') list = list.filter(s => s.stage === '완료');
   else if (f === 'issue') list = []; // 이슈는 renderIssues() 전용 화면에서 처리
-  else list = list.filter(s => s.stage !== '완료'); // 전체(기본): 완료 현장 숨김
+  else if (f === 'every') { }                    // 전체: 완료 포함 모두
+  else list = list.filter(s => s.stage !== '완료'); // 진행중(기본): 완료 현장 숨김
   // 시공일 임박순 정렬 (시공일 없는 건 맨 뒤). 이슈 보기는 그대로 임박순.
   list.sort((a, b) => (a.constructDate || '9999-99-99').localeCompare(b.constructDate || '9999-99-99'));
   const q = (filters.siteSearch || '').trim().toLowerCase();
@@ -3351,6 +3355,13 @@ function filterSites() {
   const tbl = (filters.siteView || _viewPref('site', 'list')) === 'table';
   if (el('sites-grid')) el('sites-grid').innerHTML = tbl ? siteTableHtml(list) : siteGridHtml(list);
   if (el('sites-count')) el('sites-count').textContent = list.length + '건';
+  if (el('sites-more')) el('sites-more').innerHTML = siteMoreHint(list.length);
+}
+/* 검색했는데 지금 칸(진행중 등) 밖에도 맞는 현장이 있으면 알려준다 */
+function siteMoreHint(n) {
+  if (!(filters.siteSearch || '').trim() || filters.sites === 'every') return '';
+  const more = sitesFilteredList('every').length - n;
+  return more > 0 ? ` <a style="color:#2f6fed;cursor:pointer;margin-left:6px" onclick="filters.sites='every';renderSites()">· 다른 칸(완료 포함)에 ${more}건 더 — 전체에서 보기</a>` : '';
 }
 function renderSites() {
   keepScrolls();
@@ -3362,7 +3373,7 @@ function renderSites() {
     <div class="ph"><div><h2><i class="ti ti-building-community"></i>시공 현장</h2><p>진행 단계를 한눈에 · 탭하면 상세</p></div>
       <button class="btn btn-pri btn-sm" onclick="openSiteForm()"><i class="ti ti-plus"></i>현장 등록</button></div>
     <div class="chips">
-      ${chip('all', '전체', f)}${chip('wait', '견적·결제', f)}${chip('construct', '발주·시공', f)}${chip('done', '완료', f)}${chip('issue', '이슈', f)}
+      ${chip('every', '전체', f)}${chip('all', '진행중', f)}${chip('wait', '견적·결제', f)}${chip('construct', '발주·시공', f)}${chip('done', '완료', f)}${chip('issue', '이슈', f)}
     </div>
     <div class="search-box">
       <i class="ti ti-search"></i>
@@ -3375,7 +3386,7 @@ function renderSites() {
       <button class="chip ${view === 'cal' ? 'active' : ''}" onclick="setSiteView('cal')"><i class="ti ti-calendar"></i> 캘린더</button>
       <button class="chip" style="margin-left:auto" onclick="downloadSiteStatsXls()"><i class="ti ti-file-spreadsheet"></i> 통계 엑셀</button>
     </div>
-    ${view === 'cal' ? staffCalendarHtml(list) : `<div style="font-size:12px;color:var(--t3);margin:2px 0 8px">검색 결과 <b id="sites-count" style="color:var(--t1)">${list.length}건</b></div><div class="${view === 'table' ? '' : 'site-grid'}" id="sites-grid">${view === 'table' ? siteTableHtml(list) : siteGridHtml(list)}</div>`}`;
+    ${view === 'cal' ? staffCalendarHtml(list) : `<div style="font-size:12px;color:var(--t3);margin:2px 0 8px">검색 결과 <b id="sites-count" style="color:var(--t1)">${list.length}건</b><span id="sites-more">${siteMoreHint(list.length)}</span></div><div class="${view === 'table' ? '' : 'site-grid'}" id="sites-grid">${view === 'table' ? siteTableHtml(list) : siteGridHtml(list)}</div>`}`;
 }
 function chip(v, label, cur) { return `<button class="chip ${cur === v ? 'active' : ''}" onclick="filters.sites='${v}';renderSites()">${label}</button>`; }
 /* 직원용 현장 캘린더 (전체 현장 · 공휴일 빨강 · 탭하면 상세) */
@@ -19962,6 +19973,7 @@ function basinDrawListHtml(doc, coll) {
 const BASIN_BOWLS = ['중방볼', '좌방볼', '우방볼', '타원볼', '물방울볼', '기둥볼', '무봉(심리스)', '평판', '기타'];
 function basinStoneMeta(name) { return basinStones().find(s => s.k === name) || null; }
 const BASIN_FILTERS = [
+  { k: 'every', label: '전체', match: () => true },                            // ★ 2026-11-20 완료까지 모두
   { k: 'all', label: '진행중', match: b => (b.stage || '견적') !== '완료' },
   { k: '견적', label: '견적', match: b => (b.stage || '견적') === '견적' },
   { k: '발주', label: '발주', match: b => b.stage === '발주' },
@@ -19970,8 +19982,8 @@ const BASIN_FILTERS = [
   { k: '국내입고', label: '국내입고', match: b => b.stage === '국내입고' },
   { k: '완료', label: '완료', match: b => b.stage === '완료' }
 ];
-function basinFilteredList() {
-  const f = filters.basinTab || 'all';
+function basinFilteredList(fOver) {
+  const f = fOver || filters.basinTab || 'all';
   const fdef = BASIN_FILTERS.find(x => x.k === f) || BASIN_FILTERS[0];
   let l = (state.basins || []).filter(fdef.match);
   const q = (filters.basinSearch || '').trim().toLowerCase();
@@ -20011,7 +20023,7 @@ function renderBasin() {
       <button class="chip ${_bView === 'card' ? 'active' : ''}" onclick="setBasinView('card')"><i class="ti ti-layout-grid"></i> 카드</button>
       <button class="chip ${_bView === 'table' ? 'active' : ''}" onclick="setBasinView('table')"><i class="ti ti-table"></i> 표</button>
     </div>
-    <div style="font-size:12px;color:var(--t3);margin:2px 0 8px">검색 결과 <b id="basin-count" style="color:var(--t1)">${list.length}건</b></div>
+    <div style="font-size:12px;color:var(--t3);margin:2px 0 8px">검색 결과 <b id="basin-count" style="color:var(--t1)">${list.length}건</b><span id="basin-more">${basinMoreHint(list.length)}</span></div>
     <div class="${_bView === 'table' ? '' : 'site-grid'}" id="basin-list">${_bView === 'table' ? basinTableHtml(list) : basinListHtml(list)}</div>`;
 }
 function basinListHtml(list) {
@@ -20024,6 +20036,12 @@ function filterBasin() {
   const tbl = (filters.basinView || _viewPref('basin', 'card')) === 'table';
   if (el('basin-list')) el('basin-list').innerHTML = tbl ? basinTableHtml(list) : basinListHtml(list);
   if (el('basin-count')) el('basin-count').textContent = list.length + '건';
+  if (el('basin-more')) el('basin-more').innerHTML = basinMoreHint(list.length);
+}
+function basinMoreHint(n) {
+  if (!(filters.basinSearch || '').trim() || (filters.basinTab || 'all') === 'every') return '';
+  const more = basinFilteredList('every').length - n;
+  return more > 0 ? ` <a style="color:#2f6fed;cursor:pointer;margin-left:6px" onclick="filters.basinTab='every';renderBasin()">· 다른 칸(완료 포함)에 ${more}건 더 — 전체에서 보기</a>` : '';
 }
 function basinPill(stage) {
   const m = BASIN_STAGE_META[stage] || BASIN_STAGE_META['견적'];
@@ -21286,16 +21304,26 @@ function holdListTableHtml(list) {
   </div>`;
 }
 /* 홀딩 목록 본문만 계산 (검색 시 이 부분만 갱신 → 입력 포커스 유지) */
+/* ★ 2026-11-20 — 검색했는데 지금 보는 칸(진행 홀딩 등) 밖에도 맞는 홀딩이 있으면 알려주고 바로 넘어가게 */
+function holdMoreHint() {
+  if (!(filters.holdSearch || '').trim()) return '';
+  const cur = filters.holdArchive ? 'released' : (filters.holdDone ? 'done' : 'active');
+  const inV = { active: h => !['해제', '확정'].includes(h.status), done: h => h.status === '확정', released: h => h.status === '해제' };
+  const lab = { active: '진행 홀딩', done: '출고완료', released: '지난·해제' };
+  const parts = Object.keys(inV).filter(v => v !== cur).map(v => ({ v, n: state.holdings.filter(h => inV[v](h) && holdMatchesSearch(h)).length })).filter(x => x.n > 0);
+  if (!parts.length) return '';
+  return `<div style="font-size:12px;color:var(--t3);margin:2px 0 8px">다른 칸에도 있습니다: ${parts.map(x => `<a style="color:#2f6fed;cursor:pointer;margin-right:8px" onclick="goHoldView('${x.v}')">${lab[x.v]} ${x.n}건 보기</a>`).join('')}</div>`;
+}
 function holdBodyHtml() {
   const list = holdFilteredList();
-  if ((filters.holdLayout || 'card') === 'table') return holdListTableHtml(list);
+  if ((filters.holdLayout || 'card') === 'table') return holdMoreHint() + holdListTableHtml(list);
   const g = filters.holdGroup || 'none';
   let inner;
   if (!list.length) inner = `<div class="empty"><i class="ti ti-lock-off"></i>${(filters.holdSearch || '').trim() ? '검색 결과가 없습니다' : '홀딩이 없습니다'}</div>`;
   else if (g === 'material') inner = holdGroupedHtml(list, h => { const ms = holdItems(h).map(it => it.materialName || '(자재 미지정)'); return ms.length ? [...new Set(ms)] : ['(자재 미지정)']; }, 'ti-box');
   else if (g === 'vendor') inner = holdGroupedHtml(list, h => [h.vendor || '(업체 미지정)'], 'ti-briefcase');
   else inner = holdTableHtml(list);
-  return `<div class="hold-scroll">${inner}</div>`;
+  return `${holdMoreHint()}<div class="hold-scroll">${inner}</div>`;
 }
 /* 검색어 입력 시: 전체 재렌더 없이 목록 영역만 교체 (모바일 한글 입력 끊김 방지) */
 function filterHold() {
