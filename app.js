@@ -13835,6 +13835,42 @@ const CL_REPS = [
 ];
 const CL_FILL = { '자재': 'DEEBF7', '가공': 'E2EFDA', '시공': 'FFF2CC', '운송': 'FDEADA', '부속': 'F2F2F2', '기타': 'EDEDED', '이슈': 'FFD9D4', '할인': 'FCE0E6' };
 /* aoa(줄 목록) + meta(줄 종류) → 색까지 입힌 시트 */
+/* ★★ 2026-11-21 사용자: "원가 단가 넣었는데 왜 원가 원장 엑셀에 반영 안 되는지?"
+   원가·마진·소계 칸은 «수식»만 넣고 «계산된 값»은 안 넣었다.
+   PC 엑셀은 열 때 다시 계산해서 괜찮지만, 휴대폰·카톡·드라이브 미리보기처럼 다시 계산을 안 하는 곳에서는
+   원가단가가 있어도 원가·마진 칸이 «빈칸»으로 보였다.
+   → 수식은 그대로 두고, 앱이 같은 수식을 미리 계산해서 값도 같이 넣는다 (어디서 열어도 숫자가 보인다).
+   계산할 수 있는 건 이 원장에서 쓰는 함수(IF·N·ROUND·OR·AND·SUM·SUMIF)뿐이다. 모르는 수식은 값 없이 둔다. */
+function _clFillCached(XS, ws, fx) {
+  const val = ref => { const c = ws[ref.replace(/\$/g, '')]; if (!c) return ''; return c.v == null ? '' : c.v; };
+  const rng = (a, b) => {
+    const A = XS.utils.decode_cell(a.replace(/\$/g, '')), B = XS.utils.decode_cell(b.replace(/\$/g, '')), out = [];
+    for (let r = Math.min(A.r, B.r); r <= Math.max(A.r, B.r); r++) for (let c = Math.min(A.c, B.c); c <= Math.max(A.c, B.c); c++) out.push(val(XS.utils.encode_cell({ r, c })));
+    return out;
+  };
+  const LIB = {
+    IF: (c, a, b) => (c ? a : (b === undefined ? false : b)),
+    N: x => (typeof x === 'number' && isFinite(x)) ? x : 0,
+    ROUND: (x, d) => { const m = Math.pow(10, d || 0); return Math.round((+x || 0) * m) / m; },
+    OR: (...a) => a.some(Boolean), AND: (...a) => a.every(Boolean),
+    SUM: arr => arr.reduce((s, x) => s + ((typeof x === 'number' && isFinite(x)) ? x : 0), 0),
+    SUMIF: (r, crit, sr) => r.reduce((s, x, i) => s + ((x === crit && typeof sr[i] === 'number') ? sr[i] : 0), 0)
+  };
+  fx.forEach(f => {
+    const a = XS.utils.encode_cell({ r: f.r, c: f.c });
+    try {
+      const keep = [];
+      let js = String(f.f).replace(/"[^"]*"/g, m => { keep.push(m); return '\u0001' + (keep.length - 1) + '\u0001'; });
+      js = js.replace(/(\$?[A-Z]{1,2}\$?\d+):(\$?[A-Z]{1,2}\$?\d+)/g, (m, x, y) => { keep.push('RNG("' + x + '","' + y + '")'); return '\u0001' + (keep.length - 1) + '\u0001'; });
+      js = js.replace(/\$?\b([A-Z]{1,2})\$?(\d+)\b/g, (m, c, r) => 'VAL("' + c + r + '")');
+      js = js.replace(/<>/g, '!=').replace(/([^<>!=])=(?!=)/g, '$1==');
+      js = js.replace(/\u0001(\d+)\u0001/g, (m, i) => keep[+i]);
+      const v = new Function('VAL', 'RNG', 'IF', 'N', 'ROUND', 'OR', 'AND', 'SUM', 'SUMIF', 'return (' + js + ');')(val, rng, LIB.IF, LIB.N, LIB.ROUND, LIB.OR, LIB.AND, LIB.SUM, LIB.SUMIF);
+      if (typeof v === 'number' && isFinite(v)) ws[a] = { t: 'n', f: f.f, v: v };
+      else if (v === '' || v == null || v === false) ws[a] = { t: 's', f: f.f, v: '' };
+    } catch (e) { /* 모르는 수식 — 값 없이 수식만 둔다 (PC 엑셀은 그대로 계산) */ }
+  });
+}
 function _clSheet(XS, aoa, meta, opt) {
   opt = opt || {};
   const ws = XS.utils.aoa_to_sheet(aoa);
@@ -13843,6 +13879,7 @@ function _clSheet(XS, aoa, meta, opt) {
     const a = XS.utils.encode_cell({ r: f.r, c: f.c });
     ws[a] = { t: 'n', f: f.f };
   });
+  _clFillCached(XS, ws, opt.fx || []);
   const NEED = opt.need || [];
   const N = CL_HEAD.length;
   const bd = { style: 'thin', color: { rgb: 'FFBFBFBF' } };
