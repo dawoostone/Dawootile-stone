@@ -14036,7 +14036,10 @@ async function downloadCostLedger() {
     const sup = quoteSaleNet(q);
     const pc = +q.processCost || 0;
     const ic = (q.issueLines || []).reduce((a, b) => a + (+b.cost || 0), 0);
-    const has = (q.costLines && q.costLines.length) || pc > 0 || ic > 0 || (q.costTotal != null);
+    /* ★ 2026-11-21 사용자: "이 파일 왜 총계 안 나오는지?" — 원가를 저장했지만 줄이 하나도 없는 견적(원가 0원으로 저장)이
+       «원가 입력됨»으로 잡혀 상세 줄 없이 소계만 나왔고, 소계 수식이 자기 칸을 더하는 «순환 참조»가 돼서 엑셀 총계가 안 나왔다.
+       → 실제 원가 줄이 있어야 «입력됨». 줄이 없으면 미입력처럼 품목을 펼쳐 노란 칸으로 보여준다. */
+    const has = (q.costLines && q.costLines.length) || pc > 0 || ic > 0;
     const rep = quoteSalesRepOf(q) || '';
     if (rep) reps[rep] = 1;
     const who = ' · 담당 ' + (q.by || '-') + (rep ? ' · 영업 ' + rep : '');
@@ -14075,8 +14078,10 @@ async function downloadCostLedger() {
       if (_dc0 > 0) { const n = push([D, C, NO, '할인', '', '할인 (D/C)', '', '', '', '', '', -_dc0, '', '', rep, q.discountNote || ''], '할인'); addMargin(n); }
       const last0 = aoa.length;
       const sb0 = push(['', '', NO, '소계', '', tag, '', '', '', '', '', '', '', '', rep, '※ 원가 미입력 — 노란 칸에 원가단가를 넣으세요'], 'none');
-      F(sb0, 10, 'SUM(K' + first + ':K' + last0 + ')');
-      F(sb0, 11, 'SUM(L' + first + ':L' + last0 + ')');
+      if (last0 >= first) {
+        F(sb0, 10, 'SUM(K' + first + ':K' + last0 + ')');
+        F(sb0, 11, 'SUM(L' + first + ':L' + last0 + ')');
+      }
       addSum(sb0);
       tSup += sup;
       push([], 'gap');
@@ -14110,8 +14115,10 @@ async function downloadCostLedger() {
     if (_dc > 0) { const n = push([D, C, NO, '할인', '', '할인 (D/C)', '', '', '', '', '', -_dc, '', '', rep, q.discountNote || ''], '할인'); addMargin(n); }
     const last = aoa.length;
     const sb = push(['', '', NO, '소계', '', tag, '', '', '', '', '', '', '', '', rep, ''], 'sub');
-    F(sb, 10, 'SUM(K' + first + ':K' + last + ')');
-    F(sb, 11, 'SUM(L' + first + ':L' + last + ')');
+    if (last >= first) {                          // ★ 상세 줄이 있을 때만 — 없으면 자기 칸을 더하는 순환 참조가 된다
+      F(sb, 10, 'SUM(K' + first + ':K' + last + ')');
+      F(sb, 11, 'SUM(L' + first + ':L' + last + ')');
+    }
     addSum(sb);
     push([], 'gap');
   });
