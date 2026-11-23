@@ -3898,14 +3898,84 @@ function _goHoldAndFocus(hid) {
    =================================================================== */
 /* ── 제품 종류(카테고리) & 단위 ──
    세라믹·석재·무늬목 = '장', 세면대·기타(폽업·수전 등) = '개'. 규격·헤베·패턴은 세라믹/석재만 사용. */
-const ITEM_CATS = ['세라믹', '석재', '세면대', '무늬목', '기타'];
-function itemCat(it) { return (it && it.cat) ? it.cat : '세라믹'; }
-function itemUnit(cat) { return (cat === '세면대' || cat === '기타') ? '개' : '장'; }
-function catIsCeramicLike(cat) { return cat === '세라믹' || cat === '석재'; }   // 헤베(㎡)·패턴 사용
-function catUsesSpec(cat) { return cat !== '기타'; }   // 규격: 세라믹·석재·무늬목·세면대
-function catUsesStone(cat) { return cat === '세면대'; }   // 석종(자재종류) 선택
-function basinStoneNames() { const set = new Set(basinStones().map(s => s.k)); (state.inventory || []).forEach(i => { if (itemCat(i) === '세면대' && i.stone) set.add(i.stone); }); return [...set]; }
-function catColor(c) { return { '세라믹': '#0F6E56', '석재': '#7a5b2e', '세면대': '#2f6fed', '무늬목': '#9a6a12', '기타': '#6b7280' }[c || '세라믹'] || '#6b7280'; }
+const ITEM_CATS = ['세라믹', '석재', '세면대', '무늬목', '기타'];   // 기본 종류 (= 동작 방식 5가지)
+/* ★★ 2026-11-23 사용자: "제품 종류도 추가 / 수정 가능하게 해줘"
+   종류 목록은 appmeta(key:'itemCats') 에 { name, type } 로 저장한다.
+   type 은 그 종류가 «어떻게 동작하는지»(위 기본 5가지 중 하나) — 단위·헤베·패턴·규격·석종 칸이 여기에 따라 정해진다.
+     세라믹형·석재형 = 장 · 헤베·패턴 / 세면대형 = 개 · 석종 / 무늬목형 = 장 · 규격 / 기타형 = 개 · 규격 없음
+   예) «포세린»(세라믹형) 추가, «기타» → «부자재»로 이름 바꾸기 */
+const ITEM_CAT_TYPES = ITEM_CATS;
+function itemCatDefs() {
+  const m = (state.appmeta || []).find(x => x.key === 'itemCats');
+  const arr = (m && Array.isArray(m.items) && m.items.length) ? m.items : ITEM_CATS.map(c => ({ name: c, type: c }));
+  return arr.filter(x => x && String(x.name || '').trim()).map(x => ({ name: String(x.name).trim(), type: ITEM_CAT_TYPES.indexOf(x.type) >= 0 ? x.type : '기타' }));
+}
+function itemCatList() { return itemCatDefs().map(x => x.name); }
+/* 이 종류가 어떻게 동작하는지 — 목록에 없는 옛 이름은 기본 5가지 이름이면 그대로, 아니면 기타형 */
+function catType(cat) {
+  const c = String(cat || '').trim(); if (!c) return '세라믹';
+  const d = itemCatDefs().find(x => x.name === c); if (d) return d.type;
+  return ITEM_CAT_TYPES.indexOf(c) >= 0 ? c : '기타';
+}
+/* 종류를 안 고른 옛 품목 → 첫 번째 «세라믹형» 종류 이름 */
+function itemCatDefault() { const d = itemCatDefs().find(x => x.type === '세라믹'); return d ? d.name : '세라믹'; }
+function itemCat(it) { return (it && it.cat) ? it.cat : itemCatDefault(); }
+function itemUnit(cat) { const t = catType(cat); return (t === '세면대' || t === '기타') ? '개' : '장'; }
+function catIsCeramicLike(cat) { const t = catType(cat); return t === '세라믹' || t === '석재'; }   // 헤베(㎡)·패턴 사용
+function catUsesSpec(cat) { return catType(cat) !== '기타'; }   // 규격: 세라믹·석재·무늬목·세면대
+function catUsesStone(cat) { return catType(cat) === '세면대'; }   // 석종(자재종류) 선택
+/* ── 제품 종류 관리 (관리자) ── */
+const ITEM_CAT_TYPE_LABEL = { '세라믹': '세라믹형 (장 · 헤베 · 패턴)', '석재': '석재형 (장 · 헤베 · 패턴)', '세면대': '세면대형 (개 · 석종)', '무늬목': '무늬목형 (장 · 규격)', '기타': '기타형 (개 · 규격 없음)' };
+let _icDraft = null;
+function openItemCatManage() {
+  if (!isAdmin()) { toast('관리자만 바꿀 수 있습니다'); return; }
+  _icDraft = itemCatDefs().map(x => ({ name: x.name, type: x.type, orig: x.name }));
+  _icRender();
+}
+function _icCount(name) { const n = String(name || ''); return (state.inventory || []).filter(i => itemCat(i) === n).length; }
+function _icRender() {
+  const rows = _icDraft.map((x, i) => `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <input class="inp" style="flex:1.2;min-width:0" value="${esc(x.name)}" oninput="_icDraft[${i}].name=this.value" placeholder="종류 이름">
+      <select class="inp" style="flex:1.4;min-width:0" onchange="_icDraft[${i}].type=this.value">${ITEM_CAT_TYPES.map(t => `<option value="${t}" ${x.type === t ? 'selected' : ''}>${ITEM_CAT_TYPE_LABEL[t]}</option>`).join('')}</select>
+      <span style="flex:none;width:44px;text-align:right;font-size:11.5px;color:var(--t3)">${x.orig ? _icCount(x.orig) + '종' : '새로'}</span>
+      <button class="btn btn-sm" style="flex:none;padding:3px 7px;color:var(--red-t)" title="${x.orig && _icCount(x.orig) ? '품목이 있는 종류는 지울 수 없습니다' : '지우기'}" ${x.orig && _icCount(x.orig) ? 'disabled style="flex:none;padding:3px 7px;opacity:.35"' : ''} onclick="_icDraft.splice(${i},1);_icRender()"><i class="ti ti-trash"></i></button>
+    </div>`).join('');
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-category"></i>제품 종류 관리</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:12px;color:var(--t3);margin-bottom:10px;line-height:1.6">이름은 마음대로 짓고, 오른쪽에서 <b>어떻게 동작할지</b>(단위·헤베·패턴·석종)를 고르세요.<br>
+      이름을 바꾸면 그 종류로 등록된 <b>품목들도 같이 바뀝니다</b>. 품목이 있는 종류는 지울 수 없습니다.</div>
+    ${rows}
+    <button class="btn btn-sm btn-block" style="margin:4px 0 6px" onclick="_icDraft.push({name:'',type:'세라믹',orig:''});_icRender()"><i class="ti ti-plus"></i>종류 추가</button>
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="saveItemCats()"><i class="ti ti-check"></i>저장</button></div>`);
+}
+async function saveItemCats() {
+  if (!isAdmin()) return;
+  const list = _icDraft.map(x => ({ name: String(x.name || '').trim(), type: x.type, orig: x.orig }));
+  if (!list.length) { toast('종류가 하나는 있어야 합니다'); return; }
+  if (list.some(x => !x.name)) { toast('이름이 빈 종류가 있습니다'); return; }
+  const names = list.map(x => x.name);
+  if (new Set(names).size !== names.length) { toast('같은 이름의 종류가 두 개 있습니다'); return; }
+  if (!list.some(x => x.type === '세라믹')) { toast('세라믹형 종류가 하나는 있어야 합니다 (종류를 안 고른 옛 품목이 여기로 들어갑니다)'); return; }
+  /* 이름이 바뀐 종류 → 그 종류의 품목들도 새 이름으로 */
+  const oldDefault = itemCatDefault();
+  const ren = list.filter(x => x.orig && x.orig !== x.name);
+  const ops = [];
+  ren.forEach(x => (state.inventory || []).forEach(i => {
+    const cur = i.cat ? i.cat : oldDefault;
+    if (cur === x.orig) ops.push({ id: i.id, update: { cat: x.name } });
+  }));
+  /* 기본(세라믹형 첫 번째)이 바뀌면, 종류를 안 고른 옛 품목은 지금 이름으로 고정해 둔다 */
+  const newDefault = (list.find(x => x.type === '세라믹') || {}).name;
+  if (newDefault !== oldDefault && !ren.some(x => x.orig === oldDefault)) (state.inventory || []).forEach(i => { if (!i.cat) ops.push({ id: i.id, update: { cat: oldDefault } }); });
+  if (ops.length && !confirm('종류 이름이 바뀐 품목 ' + ops.length + '종의 종류도 같이 바꿀까요?\n' + ren.map(x => '«' + x.orig + '» → «' + x.name + '»').join('\n'))) return;
+  try {
+    await payMetaSave('itemCats', { items: list.map(x => ({ name: x.name, type: x.type })), at: Date.now(), by: (me && me.name) || '' });
+    if (ops.length) { bulkBegin(); try { await Store.bulk('inventory', ops); } finally { bulkEnd(); } }
+    if (filters.stockCat && filters.stockCat !== 'all') { const r = ren.find(x => x.orig === filters.stockCat); if (r) filters.stockCat = r.name; }
+    closeModal(); toast('제품 종류 저장됨' + (ops.length ? ' · 품목 ' + ops.length + '종 변경' : ''));
+  } catch (e) { toast('저장 실패: ' + ((e && e.message) || e)); }
+}
+function basinStoneNames() { const set = new Set(basinStones().map(s => s.k)); (state.inventory || []).forEach(i => { if (catType(itemCat(i)) === '세면대' && i.stone) set.add(i.stone); }); return [...set]; }
+function catColor(c) { const base = { '세라믹': '#0F6E56', '석재': '#7a5b2e', '세면대': '#2f6fed', '무늬목': '#9a6a12', '기타': '#6b7280' }; return base[c || '세라믹'] || base[catType(c)] || '#6b7280'; }
 function catBadge(cat) { const c = cat || '세라믹'; const col = catColor(c); return `<span style="display:inline-block;font-size:9.5px;font-weight:700;color:${col};background:${col}1a;border:1px solid ${col}55;border-radius:7px;padding:1px 6px;vertical-align:middle;margin-left:4px">${esc(c)}</span>`; }
 /* ★★ 2026-09-18 — 재고를 두께별로 보고, 머리글을 눌러 정렬한다
    사용자: *"재고볼 때 6티, 12티, 이름순, 오름차 내림차 순 정렬로 볼 수 있게 해줘"*
@@ -4204,7 +4274,7 @@ function renderStock() {
       <input id="stock-search" placeholder="품명·규격·공급처 검색" value="${esc(filters.stockSearch || '')}" oninput="filterStockTable()" autocomplete="off">
       ${filters.stockSearch ? `<button class="search-x" onclick="el('stock-search').value='';filterStockTable()"><i class="ti ti-x"></i></button>` : ''}
     </div>
-    <div class="chips">${['all'].concat(ITEM_CATS).map(chipCat).join('')}</div>
+    <div class="chips">${['all'].concat(itemCatList()).map(chipCat).join('')}${isAdmin() ? `<button class="chip" onclick="openItemCatManage()" title="제품 종류 추가·수정"><i class="ti ti-settings"></i> 종류 관리</button>` : ''}</div>
     <div class="chips">${chipThick('all', '전체두께')}${stockThickList().map(x => chipThick(x.t, x.t === 'none' ? '두께없음' : x.t, x.n)).join('')}</div>
     <div class="chips">${chipS('all', '전체', f)}${chipS('none', '없음', f)}${chipS('short', '부족', f)}${chipS('ok', '정상', f)}${chipS('dmg', '파손', f)}</div>
     ${f === 'low' ? `<div class="banner warn"><i class="ti ti-alert-triangle"></i><span><b>입고가 필요한 자재</b>만 모았습니다. 자재명과 현재 수량을 확인하세요.</span></div>` : ''}
@@ -4287,7 +4357,7 @@ function openItemForm(id) {
     <div class="sheet-h"><h3><i class="ti ti-box"></i>${it ? '품목 수정' : '품목 추가'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="frm">
       <div class="fld"><label>제품 종류<span class="req">*</span></label>
-        <select id="i-cat" onchange="onItemCatChange()">${ITEM_CATS.map(c => `<option value="${c}" ${itemCat(v) === c ? 'selected' : ''}>${c}${c === '기타' ? ' (폽업·수전 등)' : ''}</option>`).join('')}</select>
+        <select id="i-cat" onchange="onItemCatChange()">${(() => { const L = itemCatList(); const cur = itemCat(v); if (L.indexOf(cur) < 0) L.push(cur); return L; })().map(c => `<option value="${esc(c)}" ${itemCat(v) === c ? 'selected' : ''}>${esc(c)}${c === '기타' ? ' (폽업·수전 등)' : ''}</option>`).join('')}</select>
       </div>
       <div class="fld" id="i-stone-fld"><label>석종(자재종류) <span style="color:var(--t3);font-weight:500">— 세면대 (기존 목록 선택 또는 새로 입력)</span></label>${searchBox('i-stone', '석종 검색·입력', v.stone || '', 'basinStoneNames', '')}</div>
       <div class="fld"><label>자재명<span class="req">*</span> <span style="color:var(--t3);font-weight:500" id="i-name-hint"></span></label><input id="i-name" value="${esc(v.name || '')}" placeholder="자재명"></div>
@@ -5082,7 +5152,7 @@ function invByName(n) {
 function txThickKey(t) {
   const it = invByName(t.itemName);
   const spec = t.spec || (it ? it.spec : '') || '';
-  const isBasin = /세면대/.test(t.itemName || '') || (it && itemCat(it) === '세면대');
+  const isBasin = /세면대/.test(t.itemName || '') || (it && catType(itemCat(it)) === '세면대');
   return isBasin ? '세면대' : (parseThick(t.itemName, spec) || '기타');
 }
 /* 두께 칸 줄세우기 — 두꺼운 것부터, 세면대·기타는 뒤로 */
@@ -18346,7 +18416,7 @@ function shipMonthlyStats(yr) {
     mHebe[mi] += (+t.hebe || 0); mJang[mi] += j;
     const it = (state.inventory || []).find(i => _normName(i.name) === _normName(t.itemName));
     let spec = t.spec || (it ? it.spec : '');
-    const isB = /세면대/.test(t.itemName || '') || (it && itemCat(it) === '세면대');
+    const isB = /세면대/.test(t.itemName || '') || (it && catType(itemCat(it)) === '세면대');
     const key = isB ? '세면대' : (parseThick(t.itemName, spec) || '기타');
     (thick[key] = thick[key] || Array(12).fill(0))[mi] += j;
   });
