@@ -19058,7 +19058,7 @@ function basinDrawNew() {
     topOnly: false,                          // ★ 상판만 (볼·타공 없음) — 하부 선반 등
     mold: 'square-550x350', moldD: 150, bowls: 1,
     moldFlip: '',                            // ★ 물방울형 좌우 반전 ('' | 'flip' | 'out' | 'in')
-    offL: '', offR: '', offF: '', offB: '', offMid: '',   // 비우면 센터
+    offL: '', offR: '', offF: '', offB: '', offMid: '', offCC: '',   // 비우면 센터 · offCC = 쌍볼 센터↔센터 간격
     tap: true, tapDia: 35, tapFromBowl: 60, tapFromBack: '',   // ★ 기본은 «볼 뒤쪽 → 수전 중심 60» (뒤 모서리 기준은 예전 도면 호환용)
     tapPos: 'back', tapN: 1, tapGap: 150, tapDia2: 0, tapDir: 'lr',   // ★ 타공 위치 · 개수(1~4) · 구멍 사이 간격 · 손잡이 Ø(0=수전과 같음) · 줄 방향(lr 좌우 / fb 앞뒤)
     drainOut: 62, drainIn: 45,                // ★ 배수구 타공 Ø62 / Ø45
@@ -19278,19 +19278,39 @@ function basinDrawLayout(d) {
   const front = W - bw - back;
   // 좌우(기장 방향)
   let m, gap;
-  const ol = num(d.offL), or = num(d.offR), om = num(d.offMid);
+  const ol = num(d.offL), or = num(d.offR), om = num(d.offMid), occ = num(d.offCC);
+  let xs, warn = '';
   if (n === 2) {
-    if (ol != null) { m = ol; gap = L - 2 * m - 2 * bl; }
+    /* ★ 2026-11-24 사용자: "좌볼 좌에서 몇 띄우고 센터값을 지정하면 우볼의 위치가 지정되어야 하는데
+                            좌우 동일한 띄움값으로 지정된다고 함"
+       예전엔 좌측 여백을 넣으면 «볼 사이»를 무시하고 우측 여백을 좌측과 똑같이 맞췄다.
+       이제는 볼 사이(볼 끝↔끝) 또는 센터 간격(볼 중심↔중심)을 넣으면 그 값대로 우볼 자리가 정해진다.
+         · 좌측 + 볼 사이/센터 간격 → 우측 여백은 남는 값
+         · 우측 + 볼 사이/센터 간격 → 좌측 여백은 남는 값
+         · 좌측 + 우측               → 볼 사이는 남는 값
+         · 좌측만 / 우측만           → 예전처럼 좌우 같은 여백
+       볼 사이와 센터 간격을 둘 다 넣으면 «볼 사이»를 쓰고 맞지 않으면 알려준다. */
+    let gIn = null;
+    if (om != null) { gIn = om; if (occ != null && Math.abs((occ - bl) - om) > 0.5) warn = `볼 사이 ${om} 와 센터 간격 ${occ} 가 맞지 않습니다 (볼 길이 ${bl}) — 볼 사이 ${om} 로 그립니다`; }
+    else if (occ != null) gIn = occ - bl;
+    if (ol != null && gIn != null) {
+      m = ol; gap = gIn;
+      const rr = L - ol - 2 * bl - gIn;
+      if (or != null && Math.abs(rr - or) > 0.5) warn = (warn ? warn + ' · ' : '') + `우측 여백은 남는 값 ${Math.round(rr)} 로 그립니다 (입력한 ${or} 와 다름)`;
+    }
+    else if (or != null && gIn != null) { gap = gIn; m = L - or - 2 * bl - gIn; }
+    else if (ol != null && or != null) { m = ol; gap = L - ol - or - 2 * bl; }
+    else if (ol != null) { m = ol; gap = L - 2 * m - 2 * bl; }
     else if (or != null) { m = or; gap = L - 2 * m - 2 * bl; }
-    else if (om != null) { gap = om; m = (L - gap - 2 * bl) / 2; }
+    else if (gIn != null) { gap = gIn; m = (L - gap - 2 * bl) / 2; }
     else { m = gap = (L - 2 * bl) / 3; }
   } else {
     if (ol != null) m = ol; else if (or != null) m = L - bl - or; else m = (L - bl) / 2;
     gap = 0;
   }
-  const xs = n === 2 ? [m, m + bl + gap] : [m];
+  xs = n === 2 ? [m, m + bl + gap] : [m];
   const right = L - (xs[xs.length - 1] + bl);
-  return { M, L, W, bl, bw, n, back, front, m, gap, xs, right };
+  return { M, L, W, bl, bw, n, back, front, m, gap, xs, right, warn };
 }
 /* ── SVG 조각 도우미 ───────────────────────────────────────────
    ★ 2026-09-09 (2차 개정) — 양식을 통째로 다시 짰다.
@@ -19585,6 +19605,7 @@ function basinDrawSvg(d, lang) {
     s += _bdDimH(px, cenX, py + ph + 54, String(Math.round(A.xs[0] + A.bl / 2)), { from: py + ph + 8, fs: 13.5 });
     if (A.n === 2) {
       const cen2 = px + (A.xs[1] + A.bl / 2) * sc;
+      s += _bdDimH(cenX, cen2, py + ph + 54, String(Math.round(A.xs[1] - A.xs[0])), { from: py + ph + 8, fs: 13.5 });   // ★ 볼 센터↔센터 (2026-11-24)
       s += _bdDimH(cen2, px + pw, py + ph + 54, String(Math.round(A.L - (A.xs[1] + A.bl / 2))), { from: py + ph + 8, fs: 13.5 });
     }
   }
@@ -19863,6 +19884,7 @@ function _openDrawFor(coll, docId, drawId, itemIdx) {
           <input id="bd-offB" inputmode="numeric" placeholder="뒤쪽 여백" value="${esc(_bdCur.offB)}" oninput="basinDrawPreview()" style="${inp}">
           <input id="bd-offF" inputmode="numeric" placeholder="앞쪽 여백" value="${esc(_bdCur.offF)}" oninput="basinDrawPreview()" style="${inp}">
           <input id="bd-offMid" inputmode="numeric" placeholder="볼 사이 (쌍볼)" value="${esc(_bdCur.offMid)}" oninput="basinDrawPreview()" style="${inp}">
+          <input id="bd-offCC" inputmode="numeric" placeholder="센터 간격 (쌍볼)" value="${esc(_bdCur.offCC || '')}" oninput="basinDrawPreview()" style="${inp};${+_bdCur.bowls === 2 ? '' : 'display:none'}">
         </div>
         <div id="bd-offnote" style="font-size:11.5px;margin-top:6px;line-height:1.6"></div>
       </div>
@@ -19947,7 +19969,7 @@ function basinDrawRead() {
   d.skirtJoin = (g('bd-sjoin') === 'plain') ? 'plain' : 'join';      // ★ 치마 접합 / 비접합
   d.topOnly = g('bd-toponly') === '1';                               // ★ 상판만 (볼·타공 없음)
   if (d.sfRound) { d.offF = String(BD_ROUND_OFF_F); d.offB = ''; }   // ★ 라운드는 앞쪽 80 고정 · 뒤쪽은 자동
-  ['offL', 'offR', 'offF', 'offB', 'offMid'].forEach(k => { d[k] = String(g('bd-' + k) || '').trim(); });
+  ['offL', 'offR', 'offF', 'offB', 'offMid', 'offCC'].forEach(k => { d[k] = String(g('bd-' + k) || '').trim(); });
   d.tap = g('bd-tap') !== '0'; d.tapDia = _numv(g('bd-tapDia')) || 35;
   /* ★ 볼에서부터가 기준. 비우면 60. 값을 넣는 순간 예전 «뒤에서부터» 값은 버린다. */
   const _tfw = String(g('bd-tapFromBowl') || '').trim();
@@ -20022,10 +20044,18 @@ function basinDrawPreview() {
   const _rnd = bdIsRound(d), _oF = el('bd-offF'), _oB = el('bd-offB'), _on = el('bd-offnote');
   if (_oF) { if (_rnd) _oF.value = String(BD_ROUND_OFF_F); _oF.disabled = _rnd; _oF.style.background = _rnd ? '#f1f3f5' : ''; }
   if (_oB) { if (_rnd) _oB.value = ''; _oB.disabled = _rnd; _oB.style.background = _rnd ? '#f1f3f5' : ''; }
-  if (_on) _on.innerHTML = _rnd
+  /* ★ 쌍볼일 때만 «센터 간격» 칸을 보인다 · 좌/볼 사이/센터 간격/우 가 실제로 몇으로 그려지는지 한 줄로 보여준다 */
+  const _occ = el('bd-offCC'); if (_occ) _occ.style.display = (A.n === 2) ? '' : 'none';
+  const _two2 = (!_to && A.n === 2 && A.L > 0)
+    ? `<div style="color:#1b4fb0">쌍볼 좌우 → 좌측 <b>${Math.round(A.m)}</b> · 볼 사이 <b>${Math.round(A.gap)}</b> (센터 간격 <b>${Math.round(A.gap + A.bl)}</b>) · 우측 <b>${Math.round(A.right)}</b>`
+      + ((String(d.offL).trim() !== '' || String(d.offR).trim() !== '') && String(d.offMid).trim() === '' && String(d.offCC || '').trim() === '' && (String(d.offL).trim() === '' || String(d.offR).trim() === '')
+        ? ` <span style="color:var(--t3)">— 좌우 여백이 같게 그려집니다. 다르게 하려면 볼 사이·센터 간격·반대쪽 여백 중 하나를 넣으세요</span>` : '')
+      + `</div>` + (A.warn ? `<div style="color:#b42318;font-weight:700"><i class="ti ti-alert-triangle"></i> ${esc(A.warn)}</div>` : '')
+    : '';
+  if (_on) _on.innerHTML = (_rnd
     ? `<span style="color:#b42318;font-weight:700"><i class="ti ti-lock"></i> 전면 라운드는 <b>앞쪽 여백 ${BD_ROUND_OFF_F} 고정</b></span>`
     + `<span style="color:var(--t3)"> — 뒤쪽 여백은 폭에서 자동으로 <b>${Math.round(A.back)}</b> 로 정해집니다</span>`
-    : '';
+    : '') + _two2;
   const bad = [];
   if (!(A.L > 0) || !(A.W > 0)) bad.push('기장·폭을 입력하세요');
   /* ★ 2026-11-12 사용자: "볼 타공 없음 체크하면 볼보다 작아서 도면 그릴 수 없다 이런 말 없도록 (선반 폭이 좁은 경우 있음)"
@@ -20034,7 +20064,7 @@ function basinDrawPreview() {
     if (A.bl * A.n > A.L) bad.push(`볼이 판보다 깁니다 (볼 ${A.bl}${A.n === 2 ? '×2' : ''} > 기장 ${A.L})`);
     if (A.bw > A.W) bad.push(`볼이 판보다 넓습니다 (볼 ${A.bw} > 폭 ${A.W})`);
     if (A.back < 0 || A.front < 0) bad.push('앞뒤 띄움값이 판을 벗어납니다');
-    if (A.m < 0 || A.gap < 0) bad.push('좌우·사이 띄움값이 판을 벗어납니다');
+    if (A.m < 0 || A.gap < 0 || A.right < 0) bad.push('좌우·사이 띄움값이 판을 벗어납니다');
   }
   if (bad.length) { box.innerHTML = `<div style="padding:22px;text-align:center;color:var(--red-t);font-size:13.5px;line-height:1.8"><i class="ti ti-alert-triangle"></i> ${bad.map(esc).join('<br>')}</div>`; return; }
   // 미리보기는 창 너비에 맞춰 줄여서 «한눈에» 보이게 한다 (내려받는 PNG는 원래 크기 그대로)
