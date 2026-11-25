@@ -1131,7 +1131,7 @@ function downloadClientLedger(id) {
     rows.push([qDate(q), q.docNo || '', quoteSiteText(q), quoteAttnText(q), names,
       Math.round(+q.supply || 0), Math.round(+q.vat || 0), _t, _p, Math.max(0, _t - _p),
       (_t > 0 && _p >= _t) ? '완료' : (_p > 0 ? '일부' : '미결제'), q.paidDate || '',
-      q.taxInvoice ? '발행' : (isCashRcpt(q) ? '현금영수증' : '미발행'), q.ntsConfirmNum || '']);
+      q.taxInvoice ? '발행' : (isCashRcpt(q) ? '현금영수증' : (isDeductPay(q) ? '시공비 차감' : '미발행')), q.ntsConfirmNum || '']);
   });
   const supplySum = qs.reduce((a, b) => a + Math.round(+b.supply || 0), 0);
   const vatSum = qs.reduce((a, b) => a + Math.round(+b.vat || 0), 0);
@@ -1423,7 +1423,7 @@ function renderClientDetail() {
     const when = qDate(qq);
     const _p = quotePaid(qq); const _t = +qq.total || 0;
     const paidPill = (_t > 0 && _p >= _t) ? `<button class="pill p-done" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${qq.id}')">결제완료</button>` : (_p > 0 ? `<button class="pill p-prog" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${qq.id}')">입금 ${fmtWon(_p)}·미수 ${fmtWon(_t - _p)}</button>` : `<button class="pill p-wait" style="border:none;cursor:pointer" onclick="quoteMarkPaid('${qq.id}')">미결제</button>`);
-    const taxPill = isCashRcpt(qq) ? `<span class="pill p-done">현금영수증</span>` : (qq.taxInvoice ? `<span class="pill p-prog">계산서발행</span>` : `<span class="pill p-gray">계산서미발행</span>`);
+    const taxPill = isDeductPay(qq) ? `<span class="pill" style="background:#f3e8ff;color:#6d28d9">시공비 차감</span>` : isCashRcpt(qq) ? `<span class="pill p-done">현금영수증</span>` : (qq.taxInvoice ? `<span class="pill p-prog">계산서발행</span>` : `<span class="pill p-gray">계산서미발행</span>`);
     return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 2px;border-bottom:1px solid var(--bd)">
       <div style="min-width:0"><div style="font-size:12.5px;font-weight:600">${esc(qq.docNo || '')} <span style="color:var(--t3);font-weight:400">· ${esc(when)}</span></div>
         <div style="display:flex;gap:4px;margin-top:3px">${paidPill}${taxPill}</div></div>
@@ -7554,7 +7554,82 @@ function taxNet(q) {
 }
 /* 수정발행으로 전액 취소된 계산서 — 다시 «미발행» 으로 본다 */
 function taxVoided(q) { return !!(q && q.taxInvoice && taxModRows(q).length > 0 && taxNet(q).total <= 0); }
-function taxSettled(q) { return !!(q && ((q.taxInvoice && !taxVoided(q)) || q.cashRcpt)); }
+function taxSettled(q) { return !!(q && ((q.taxInvoice && !taxVoided(q)) || q.cashRcpt || q.deductPay)); }
+/* ══════════════════════════════════════════════════════════
+   ★★ 시공비 차감 정산 (2026-11-25)
+   사용자: *"견적서 중에 시공팀 같은 경우는 계산서 처리 안하고 우리가 결제할 시공비에서
+            차감하고 진행하는 경우도 있으니 현금영수증 / 계산서 발행 외에도
+            시공비 차감 정산 버튼도 있어야 함"*
+
+   누르면 두 가지를 한 번에 한다.
+     ① 증빙 — 현금영수증처럼 «계산서 할 일 끝» 으로 본다
+        (계산서 버튼 숨김 · «계산서 미발행» 목록·개수에서 빠짐)
+     ② 결제 — 차감한 금액을 «입금 직접 넣기» 와 똑같이 통장 내역(banktx)에 «직접» 한 줄로 넣고
+        이 견적에 «지정»(payFor) 해 둔다 → 원장·미수에서 이 견적이 결제된 것으로 잡힌다.
+        (통장에 안 찍힌 돈을 넣는 기존 방식 그대로 — 미수 계산 기준을 하나로 둔다)
+   해제하면 그 한 줄을 지우고 표시도 되돌린다.
+   ══════════════════════════════════════════════════════════ */
+function isDeductPay(q) { return !!(q && q.deductPay); }
+function openDeductPay(qid) {
+  const q = (state.quotes || []).find(x => x.id === qid); if (!q) { toast('견적을 찾을 수 없습니다'); return; }
+  if (!canLedger()) { toast('거래처 원장 권한이 있어야 차감 정산을 넣을 수 있습니다'); return; }
+  if (!q.ordered) { toast('주문 확정된 견적만 차감 정산할 수 있습니다 — 먼저 확정해 주세요'); return; }
+  const rem = Math.max(0, Math.round(quoteRem(q)));
+  const _i = 'width:100%;font-size:14px;padding:8px 10px;border:1.5px solid var(--bd2);border-radius:9px';
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-arrows-exchange"></i>시공비 차감 정산</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:12.5px;color:var(--t2);margin-bottom:10px"><b>${esc(q.client || '')}</b> · ${esc(q.docNo || '')} · ${fmtWon(quoteNetTotal(q))}원${rem > 0 ? ` · <span style="color:var(--red-t);font-weight:700">미수 ${fmtWon(rem)}원</span>` : ' · <span style="color:var(--gd);font-weight:700">이미 결제 완료</span>'}</div>
+    <div class="banner info" style="margin-bottom:11px;font-size:12px"><i class="ti ti-info-circle"></i><span style="flex:1;min-width:0">
+      계산서 없이 <b>우리가 줄 시공비에서 빼고</b> 끝내는 건입니다.<br>
+      · 이 건은 <b>계산서 버튼이 숨겨지고</b> «계산서 미발행» 목록에서 빠집니다.<br>
+      · 아래 금액이 이 견적의 <b>결제</b>로 원장에 «직접» 한 줄 들어갑니다 (통장 입금 아님).</span></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      <div class="fld" style="flex:1;min-width:140px;margin:0"><label>차감한 날</label><input type="date" id="dp-date" value="${todayStr()}" style="${_i}"></div>
+      <div class="fld" style="flex:1;min-width:140px;margin:0"><label>차감 금액</label><input id="dp-amt" inputmode="numeric" value="${rem > 0 ? rem : ''}" placeholder="0" style="${_i}"></div>
+    </div>
+    <div class="fld full" style="margin-bottom:12px"><label>메모 <span style="color:var(--t3);font-weight:500">(어느 시공비에서 뺐는지)</span></label><input id="dp-memo" lang="ko" placeholder="예: 11월 ○○현장 시공비에서 차감" style="${_i}"></div>
+    ${rem > 0 ? '' : '<div style="font-size:11.5px;color:var(--t3);margin:-4px 0 10px">이미 결제가 끝난 건이면 금액을 비워 두세요 — 증빙 표시만 합니다.</div>'}
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button>
+      <button class="btn btn-pri" style="flex:2;background:#6d28d9;border-color:#6d28d9" onclick="saveDeductPay('${qid}')"><i class="ti ti-check"></i>차감 정산으로 처리</button></div>`);
+}
+let _dpBusy = false;
+async function saveDeductPay(qid) {
+  if (_dpBusy) return;
+  const q = (state.quotes || []).find(x => x.id === qid); if (!q) { toast('견적을 찾을 수 없습니다'); return; }
+  if (!canLedger()) { toast('거래처 원장 권한이 없습니다'); return; }
+  const c = (q.client || '').trim(); if (!c) { toast('거래처가 없는 견적입니다'); return; }
+  const amt = Math.round(_numv((el('dp-amt') || {}).value || 0));
+  if (amt < 0) { toast('금액을 확인하세요'); return; }
+  const d = (el('dp-date') || {}).value || todayStr();
+  const memo = ((el('dp-memo') || {}).value || '').trim();
+  const by = (me && me.name) || '';
+  _dpBusy = true;
+  try {
+    let txId = '';
+    if (amt > 0) {
+      txId = await Store.add('banktx', {
+        date: d, dt: d, payer: c, pkey: _bankKey(c), amount: amt, out: 0,
+        bankNm: '', way: '시공비 차감' + (memo ? ' · ' + memo : ''), client: c, manual: true,
+        deduct: true, payFor: qid, syncedAt: Date.now(), by: by
+      }) || '';
+    }
+    await Store.update('quotes', qid, { deductPay: true, deductDate: d, deductAmt: amt, deductMemo: memo, deductBy: by, deductTx: txId });
+    closeModal(); toast('시공비 차감 정산으로 처리했습니다' + (amt > 0 ? ' · ' + fmtWon(amt) + '원' : ''));
+    setTimeout(() => { if (filters.ledger) renderLedger(); else renderQuote(); }, 400);
+  } catch (e) { toast('실패: ' + ((e && e.message) || e)); }
+  finally { _dpBusy = false; }
+}
+async function deductPayUnmark(qid) {
+  const q = (state.quotes || []).find(x => x.id === qid); if (!q) return;
+  if (!canLedger()) { toast('거래처 원장 권한이 없습니다'); return; }
+  const tx = (state.banktx || []).filter(t => t && t.deduct && (t.id === q.deductTx || t.payFor === qid));
+  if (!confirm('시공비 차감 정산을 해제할까요?' + (tx.length ? '\n원장에 넣었던 차감 ' + fmtWon(tx.reduce((a, t) => a + txMoney(t), 0)) + '원도 같이 지워져 다시 미수로 잡힙니다.' : ''))) return;
+  try {
+    for (const t of tx) await Store.remove('banktx', t.id);
+    await Store.update('quotes', qid, { deductPay: false, deductDate: '', deductAmt: 0, deductMemo: '', deductTx: '' });
+    toast('시공비 차감 정산을 해제했습니다');
+  } catch (e) { toast('저장 실패'); }
+  closeModal(); renderQuote();
+}
 async function cashRcptMark(qid) {
   const q = (state.quotes || []).find(x => x.id === qid); if (!q) { toast('견적을 찾을 수 없습니다'); return; }
   try {
@@ -7572,6 +7647,7 @@ async function cashRcptUnmark(qid) {
 function taxPillHtml(q, clickable) {
   const go = clickable ? ` style="border:none;cursor:pointer" onclick="event.stopPropagation();openTaxMark('${q.id}')"` : ' style="border:none"';
   const tag = clickable ? 'button' : 'span';
+  if (isDeductPay(q)) return `<${tag} class="pill" style="background:#f3e8ff;color:#6d28d9;border:1px solid #ddc8fb${clickable ? ';cursor:pointer' : ''}"${clickable ? ` onclick="event.stopPropagation();openTaxMark('${q.id}')"` : ''} title="시공비에서 차감 정산함 · 바꾸려면 누르세요"><i class="ti ti-arrows-exchange"></i> 시공비 차감${q.deductDate ? ' ' + esc(String(q.deductDate).slice(5)) : ''}</${tag}>`;
   if (isCashRcpt(q)) return `<${tag} class="pill p-done"${go} title="현금영수증 발행함 · 바꾸려면 누르세요"><i class="ti ti-receipt"></i> 현금영수증${q.cashRcptDate ? ' ' + esc(String(q.cashRcptDate).slice(5)) : ''}</${tag}>`;
   /* ★ 수정발행으로 전액 취소된 건 (2026-10-19) */
   if (taxVoided(q)) return `<${tag} class="pill" style="background:#fdecea;color:#c0341d;border:1px solid #f3c6c0${clickable ? ';cursor:pointer' : ''}"${clickable ? ` onclick="event.stopPropagation();openTaxResult('${q.id}')"` : ''} title="수정발행으로 전액 취소됐습니다"><i class="ti ti-file-off"></i> 계산서 취소됨</${tag}>`;
@@ -7603,8 +7679,18 @@ function openTaxMark(qid) {
       <i class="ti ${ic}" style="font-size:19px;color:${col};flex:none;margin-top:1px"></i>
       <span style="flex:1;min-width:0"><span style="display:block;font-size:13.5px;font-weight:700">${title}</span>
       <span style="display:block;font-size:11.5px;color:var(--t3);font-weight:500;line-height:1.5;margin-top:2px">${desc}</span></span></button>`;
-  const cash = isCashRcpt(q);
-  openModal(`<div class="sheet-h"><h3><i class="ti ti-file-invoice"></i>증빙 표시 (계산서 · 현금영수증)</h3><button class="x" onclick="closeModal()">×</button></div>
+  const cash = isCashRcpt(q), ded = isDeductPay(q);
+  if (ded) {
+    openModal(`<div class="sheet-h"><h3><i class="ti ti-file-invoice"></i>증빙 표시 (계산서 · 현금영수증 · 시공비 차감)</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:12.5px;color:var(--t2);margin-bottom:10px"><b>${esc(q.client || '')}</b> · ${esc(q.docNo || '')} · ${fmtWon(q.total)}원</div>
+    <div class="banner" style="margin-bottom:10px;font-size:12px;background:#f3e8ff;border:1px solid #ddc8fb;color:#5b21b6"><i class="ti ti-arrows-exchange"></i><span style="flex:1;min-width:0">
+      <b>시공비 차감 정산</b>으로 처리되어 있습니다${q.deductDate ? ' (' + esc(q.deductDate) + ')' : ''}${q.deductBy ? ' · ' + esc(q.deductBy) : ''}.
+      ${(+q.deductAmt || 0) > 0 ? '<br>차감 금액 <b>' + fmtWon(q.deductAmt) + '원</b>이 이 견적 결제로 원장에 들어가 있습니다.' : '<br>금액 없이 증빙만 표시했습니다.'}
+      ${q.deductMemo ? '<br>메모: ' + esc(q.deductMemo) : ''}</span></div>
+    ${row('ti-arrow-back-up', 'var(--red-t)', '시공비 차감 해제', '«계산서 미발행» 으로 되돌리고, 원장에 넣었던 차감 금액도 지웁니다 (다시 미수로 잡힙니다).', "deductPayUnmark('" + qid + "')")}`);
+    return;
+  }
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-file-invoice"></i>증빙 표시 (계산서 · 현금영수증 · 시공비 차감)</h3><button class="x" onclick="closeModal()">×</button></div>
     <div style="font-size:12.5px;color:var(--t2);margin-bottom:10px"><b>${esc(q.client || '')}</b> · ${esc(q.docNo || '')} · ${fmtWon(q.total)}원</div>
     ${linked ? `<div class="banner info" style="margin-bottom:10px;font-size:12px"><i class="ti ti-link"></i><span style="flex:1;min-width:0">
         홈택스 계산서와 연결되어 있습니다 — <b>${esc(linked.date || '')}</b> · ${esc((linked.item || '').slice(0, 24))} · <b>${fmtWon(linked.total)}원</b>
@@ -7617,6 +7703,9 @@ function openTaxMark(qid) {
     ${cash ? '' : row('ti-receipt', '#0f766e', '현금영수증 발행함',
       '홈택스에서 직접 발급한 현금영수증입니다. 오늘 날짜로 표시하고, 이 건의 <b>계산서 버튼을 숨깁니다</b>. «계산서 미발행» 목록에서도 빠집니다.',
       "cashRcptMark('" + qid + "')")}
+    ${(cash || q.taxInvoice) ? '' : row('ti-arrows-exchange', '#6d28d9', '시공비 차감 정산',
+      '시공팀처럼 계산서 없이 <b>우리가 줄 시공비에서 빼고</b> 끝내는 건입니다. 계산서 버튼을 숨기고, 차감 금액을 이 견적 결제로 원장에 넣습니다.',
+      "openDeductPay('" + qid + "')")}
     ${cash ? row('ti-arrow-back-up', 'var(--red-t)', '현금영수증 표시 해제',
       '«계산서 미발행» 으로 되돌립니다. 계산서 버튼이 다시 보입니다.',
       "cashRcptUnmark('" + qid + "')") : ''}
@@ -8323,7 +8412,7 @@ function taxLedgerHtml(client, curId) {
       <td style="white-space:nowrap">${esc(qDate(q))}</td>
       <td>${cur ? '<b style="color:var(--gd)">▶ ' + esc(q.docNo || '') + '</b>' : esc(q.docNo || '')}${q.ordered ? '' : '<div style="font-size:10px;color:var(--amber-t)">미확정</div>'}</td>
       ${cell(q.total)}${paidCell(q)}${cell(r, r > 0 ? 'var(--red-t)' : '')}
-      <td style="white-space:nowrap;font-size:11px">${q.ntsConfirmNum ? '<span style="color:var(--gd);font-weight:700">발행</span>' : (q.taxInvoice ? '<span style="color:var(--t3)">표시만</span>' : (isCashRcpt(q) ? '<span style="color:#0f766e;font-weight:700">현금영수증</span>' : '<span style="color:var(--red-t)">미발행</span>'))}</td>
+      <td style="white-space:nowrap;font-size:11px">${q.ntsConfirmNum ? '<span style="color:var(--gd);font-weight:700">발행</span>' : (q.taxInvoice ? '<span style="color:var(--t3)">표시만</span>' : (isCashRcpt(q) ? '<span style="color:#0f766e;font-weight:700">현금영수증</span>' : isDeductPay(q) ? '<span style="color:#6d28d9;font-weight:700">시공비 차감</span>' : '<span style="color:var(--red-t)">미발행</span>'))}</td>
       <td>${cur ? '<span style="font-size:11px;color:var(--t3)">현재</span>' : `<button class="btn btn-sm btn-ghost" title="이 건으로 발행" onclick="openTaxForm('${q.id}')"><i class="ti ti-arrow-right"></i></button>`}</td>
     </tr>`; }).join('');
   /* 통장 입금 줄 — 최근 것이 위로 */
@@ -10078,6 +10167,7 @@ function ledgerAgg() {
     const _tdA = taxDepOf(q) ? Math.round(+q.taxDep.total || 0) : 0;   // ★ 계약금 계산서 (2026-10-29)
     if (q.taxInvoice && !taxVoided(q)) o.taxAmt += (taxModRows(q).length ? taxNet(q).total : (+q.taxTotal || tot)) + _tdA;
     else if (isCashRcpt(q)) { o.cashAmt = (o.cashAmt || 0) + tot; o.cashN = (o.cashN || 0) + 1; }
+    else if (isDeductPay(q)) { o.dedAmt = (o.dedAmt || 0) + tot; o.dedN = (o.dedN || 0) + 1; }   // ★ 시공비 차감 — 계산서 할 일 아님
     else if (!quoteVoided(q)) { o.taxAmt += _tdA; o.noTaxAmt += tot - _tdA; o.noTaxN++; }
     const d = q.date || ''; if (d > o.last) o.last = d;
   });
@@ -13286,8 +13376,8 @@ function quoteCardHtml(q) {
           <button class="btn btn-sm btn-ghost" title="이미지 복사" onclick="copyQuoteImage('${q.id}')"><i class="ti ti-clipboard"></i></button>
         </span>
         ${(() => { const d = taxDepOf(q); return d ? `<button class="pill" style="border:1px solid #cfe0ff;background:#eaf2ff;color:#1a56b8;cursor:pointer" onclick="taxViewDoc('${esc(d.mgtKey || '')}','print')" title="계약금 계산서 보기${d.nts ? ' · 승인 ' + esc(d.nts) : ''}"><i class="ti ti-file-check"></i> 계약금 계산서 ${fmtWon(d.total)}${d.test ? ' (테스트)' : ''}</button>` : ''; })()}
-        ${(canTax() && !q.ordered && !isCashRcpt(q) && taxScopeCanDep(q)) ? `<button class="btn btn-sm" style="color:#1a56b8" onclick="openTaxForm('${q.id}')" title="계약금만 세금계산서 발행"><i class="ti ti-file-invoice"></i>계약금 계산서</button>` : ''}
-        ${(canTax() && q.ordered && !isCashRcpt(q)) ? (q.taxMgtKey
+        ${(canTax() && !q.ordered && !isCashRcpt(q) && !isDeductPay(q) && taxScopeCanDep(q)) ? `<button class="btn btn-sm" style="color:#1a56b8" onclick="openTaxForm('${q.id}')" title="계약금만 세금계산서 발행"><i class="ti ti-file-invoice"></i>계약금 계산서</button>` : ''}
+        ${(canTax() && q.ordered && !isCashRcpt(q) && !isDeductPay(q)) ? (q.taxMgtKey
           /* 이미 발행한 건은 '조회'만 보여준다. 수정발행은 조회 창 안에서 넘어간다. */
           ? `<button class="btn btn-sm" style="color:var(--gd)" onclick="openTaxResult('${q.id}')" title="발행한 계산서 조회"><i class="ti ti-file-search"></i>계산서 조회</button>`
           : `<button class="btn btn-sm" style="color:var(--gd)" onclick="openTaxForm('${q.id}')" title="세금계산서 발행"><i class="ti ti-file-invoice"></i>계산서</button>`) : ''}
@@ -13308,6 +13398,7 @@ function openQuoteView(id) {
   const badge = (on, cls, ic, txt) => on ? `<span class="pill ${cls}"><i class="ti ${ic}"></i> ${txt}</span>` : '';
   const badges = [
     (_tt > 0 && _pa >= _tt) ? badge(1, 'p-done', 'ti-cash', '결제완료') : (_pa > 0 ? badge(1, 'p-prog', 'ti-cash', '입금 ' + fmtWon(_pa)) : badge(1, 'p-wait', 'ti-cash', '미결제')),
+    isDeductPay(q) ? `<span class="pill" style="background:#f3e8ff;color:#6d28d9"><i class="ti ti-arrows-exchange"></i> 시공비 차감${q.deductDate ? ' ' + esc(String(q.deductDate).slice(5)) : ''}${(+q.deductAmt || 0) > 0 ? ' · ' + fmtWon(q.deductAmt) : ''}</span>` :
     isCashRcpt(q) ? badge(1, 'p-done', 'ti-receipt', '현금영수증 발행' + (q.cashRcptDate ? ' ' + esc(String(q.cashRcptDate).slice(5)) : ''))
       : (q.taxInvoice ? badge(1, 'p-prog', 'ti-file-check', '계산서 발행') : badge(1, 'p-gray', 'ti-file-off', '계산서 미발행')),
     badge(q.shipped, 'p-done', 'ti-truck-delivery', '출고 완료' + (quoteShipDate(q) ? (' ' + _shortDate(quoteShipDate(q))) : '')),
@@ -17003,13 +17094,14 @@ function _quoteListInner() {
   const _isNoTax = q => !taxSettled(q);            // ★ 현금영수증 건은 «미발행» 이 아니다
   const _isTax = q => !!q.taxInvoice;
   const _isCash = q => isCashRcpt(q);
+  const _isDed = q => isDeductPay(q);           // ★ 시공비 차감 정산 (2026-11-25)
   const _remOf = q => quoteRem(q);
   const _isUnpaid = q => _remOf(q) > 0;                                   // 미수가 남은 것 (부분 결제 포함)
   const _isPaid = q => (+q.total || 0) > 0 && _remOf(q) <= 0;             // 완납
   const _isConf = q => !!q.ordered;
   const _isPending = q => !q.ordered;
   const _confFn = { conf: _isConf, pending: _isPending };
-  const _statFn = { notax: _isNoTax, tax: _isTax, cash: _isCash, paid: _isPaid, unpaid: _isUnpaid, basin: _isBasinPend };
+  const _statFn = { notax: _isNoTax, tax: _isTax, cash: _isCash, deduct: _isDed, paid: _isPaid, unpaid: _isUnpaid, basin: _isBasinPend };
   // 각 칩의 건수는 "다른 축이 걸린 상태에서" 세어야 눌렀을 때 숫자가 맞는다
   const baseForConf = fStat === 'all' ? list : list.filter(_statFn[fStat] || (() => true));
   const baseForStat = fConf === 'all' ? list : list.filter(_confFn[fConf] || (() => true));
@@ -17018,7 +17110,7 @@ function _quoteListInner() {
   const _bConf = baseForConf.filter(_pIn), _bStat = baseForStat.filter(_pIn);
   const cConf = _bConf.filter(_isConf).length, cPending = _bConf.filter(_isPending).length;
   const cNoTax = _bStat.filter(_isNoTax).length, cTax = _bStat.filter(_isTax).length;
-  const cCash = _bStat.filter(_isCash).length;
+  const cCash = _bStat.filter(_isCash).length, cDed = _bStat.filter(_isDed).length;
   const cUnpaid = _bStat.filter(_isUnpaid).length, cPaid = _bStat.filter(_isPaid).length;
   const cBasin = _bStat.filter(_isBasinPend).length;
   if (_confFn[fConf]) list = list.filter(_confFn[fConf]);
@@ -17050,7 +17142,7 @@ function _quoteListInner() {
   const chipC = (v, label, cnt, col) => `<button class="chip ${fConf === v ? 'active' : ''}" onclick="quoteSetConf('${v}')">${label}${cnt != null ? ` <b style="color:${cnt > 0 ? (col || 'var(--t2)') : 'var(--t3)'}">${cnt}</b>` : ''}</button>`;
   const chipS = (v, label, cnt, col) => `<button class="chip ${fStat === v ? 'active' : ''}" onclick="quoteSetStat('${v}')">${label}${cnt != null ? ` <b style="color:${cnt > 0 ? (col || 'var(--red-t)') : 'var(--t3)'}">${cnt}</b>` : ''}</button>`;
   const _lbl = { all: '', conf: '확정', pending: '미확정' }[fConf] + (fConf !== 'all' && fStat !== 'all' ? ' · ' : '') +
-    ({ all: '', notax: '계산서 미발행', tax: '계산서 발행', cash: '현금영수증', paid: '결제 완료', unpaid: '미결제', basin: '세면대 미발주' }[fStat] || '');
+    ({ all: '', notax: '계산서 미발행', tax: '계산서 발행', cash: '현금영수증', deduct: '시공비 차감', paid: '결제 완료', unpaid: '미결제', basin: '세면대 미발주' }[fStat] || '');
   const statChips = `
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
       <span style="font-size:11px;color:var(--t3);width:38px;flex:none">분류</span>
@@ -17064,7 +17156,7 @@ function _quoteListInner() {
       <span style="font-size:11px;color:var(--t3);width:38px;flex:none">상태</span>
       ${chipS('all', '전체')}${chipS('unpaid', '미결제', cUnpaid)}${chipS('paid', '결제 완료', cPaid, 'var(--gd)')}
       <span style="width:1px;background:var(--bd);margin:2px 3px"></span>
-      ${chipS('notax', '계산서 미발행', cNoTax)}${chipS('tax', '계산서 발행', cTax, 'var(--gd)')}${chipS('cash', '현금영수증', cCash, '#0f766e')}
+      ${chipS('notax', '계산서 미발행', cNoTax)}${chipS('tax', '계산서 발행', cTax, 'var(--gd)')}${chipS('cash', '현금영수증', cCash, '#0f766e')}${(cDed > 0 || fStat === 'deduct') ? chipS('deduct', '시공비 차감', cDed, '#6d28d9') : ''}
       <span style="width:1px;background:var(--bd);margin:2px 3px"></span>
       ${chipS('basin', '세면대 미발주', cBasin, 'var(--amber-t)')}
       ${(fConf !== 'all' || fStat !== 'all' || fCat !== 'all' || fBy !== 'all') ? `<button class="chip" style="margin-left:auto" onclick="quoteClearFilter()"><i class="ti ti-x"></i>필터 해제</button>` : ''}
