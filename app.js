@@ -5674,13 +5674,13 @@ const QUOTE_PRE_NOTE_DEF = '※ 본 견적은 가견적입니다. 실측 후 가
 function quotePreNote() { const m = (state.appmeta || []).find(x => x.key === 'quotePreNote'); const t = m ? String(m.text || '').trim() : ''; return t || QUOTE_PRE_NOTE_DEF; }
 function quoteKind(q) { const k = q && q.qKind; return k === 'pre' || k === 'fix' ? k : ''; }
 const QKIND_NAME = { pre: '가견적', fix: '확정견적' };
-const QKIND_COL = { pre: '#c0341d', fix: '#1f6b45' };
+const QKIND_COL = { pre: '#6b7280', fix: '#1f6b45' };   // ★ 2026-11-26 사용자: "가견적 회색 / 확정견적 초록색" (가견적 고정 문구는 그대로 빨간 글씨)
 /* ★ 2026-11-26 사용자: "견적서 토글이 너무 많아 — 가견적 확정견적은 토글로 하지 말고 색상으로 구분"
    → 목록 카드·견적 보기에서는 배지를 빼고 «왼쪽 색 띠»로만 구분한다 (빨강 가견적 · 초록 확정견적) */
 function quoteKindStripe(q) { const k = quoteKind(q); return k ? `;border-left:5px solid ${QKIND_COL[k]}` : ''; }
 function quoteKindPill(q) {
   const k = quoteKind(q); if (!k) return '';
-  return `<span class="pill" style="background:${k === 'pre' ? '#fdf0ed' : '#eef7f1'};color:${QKIND_COL[k]};border:1px solid ${k === 'pre' ? '#f1cfc7' : '#cfe3d6'};font-weight:800"><i class="ti ti-${k === 'pre' ? 'ruler-measure' : 'circle-check'}"></i> ${QKIND_NAME[k]}</span>`;
+  return `<span class="pill" style="background:${k === 'pre' ? '#f3f4f6' : '#eef7f1'};color:${QKIND_COL[k]};border:1px solid ${k === 'pre' ? '#d1d5db' : '#cfe3d6'};font-weight:800"><i class="ti ti-${k === 'pre' ? 'ruler-measure' : 'circle-check'}"></i> ${QKIND_NAME[k]}</span>`;
 }
 async function saveQuotePreNote() {
   const t = String((el('qs-prenote') && el('qs-prenote').value) || '').trim();
@@ -18507,7 +18507,7 @@ function _quoteSheetXml(q) {
   { const d = quoteDeposit(q); if (d) { span(rr, 0, 4, 10, '계약금 (' + _pctTxt(d.pct) + '%)', 's'); put(rr, 5, 11, d.amt, 'n'); rr++; span(rr, 0, 4, 10, '잔금', 's'); put(rr, 5, 11, d.rest, 'n'); rr++; } }
   { const b = quoteBalanceDue(q); if (b) { span(rr, 0, 4, 10, quotePrepaidLabel(q) + (b.from ? ' (' + b.from + ')' : ''), 's'); put(rr, 5, 11, -b.pre, 'n'); rr++; span(rr, 0, 4, 12, quoteDueLabel(q), 's'); put(rr, 5, 13, b.due, 'n'); rowH[rr] = 26; rr++; } }
   rr++;
-  if (quoteKind(q)) { span(rr, 0, 5, quoteKind(q) === 'pre' ? 20 : 15, '【' + QKIND_NAME[quoteKind(q)] + '】', 's'); rowH[rr] = 22; rr++; }   // ★ 가견적 / 확정견적 (2026-11-26)
+  if (quoteKind(q)) { span(rr, 0, 5, quoteKind(q) === 'pre' ? 16 : 15, '【' + QKIND_NAME[quoteKind(q)] + '】', 's'); rowH[rr] = 22; rr++; }   // ★ 가견적 / 확정견적 (2026-11-26)
   if (quoteKind(q) === 'pre') { span(rr, 0, 5, 20, quotePreNote(), 's'); rowH[rr] = 30; rr++; }
   if (q.memo) { span(rr, 0, 5, 14, '비고 : ' + q.memo, 's'); rowH[rr] = 44; rr++; }
   if (hasBasinItems(items)) { span(rr, 0, 5, 15, '⚠ 세면대 주문제작 특이사항 (필독)', 's'); rowH[rr] = 22; rr++; (typeof basinNoticeList === 'function' ? basinNoticeList() : []).forEach(l => {
