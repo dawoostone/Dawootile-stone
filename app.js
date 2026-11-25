@@ -5675,6 +5675,9 @@ function quotePreNote() { const m = (state.appmeta || []).find(x => x.key === 'q
 function quoteKind(q) { const k = q && q.qKind; return k === 'pre' || k === 'fix' ? k : ''; }
 const QKIND_NAME = { pre: '가견적', fix: '확정견적' };
 const QKIND_COL = { pre: '#c0341d', fix: '#1f6b45' };
+/* ★ 2026-11-26 사용자: "견적서 토글이 너무 많아 — 가견적 확정견적은 토글로 하지 말고 색상으로 구분"
+   → 목록 카드·견적 보기에서는 배지를 빼고 «왼쪽 색 띠»로만 구분한다 (빨강 가견적 · 초록 확정견적) */
+function quoteKindStripe(q) { const k = quoteKind(q); return k ? `;border-left:5px solid ${QKIND_COL[k]}` : ''; }
 function quoteKindPill(q) {
   const k = quoteKind(q); if (!k) return '';
   return `<span class="pill" style="background:${k === 'pre' ? '#fdf0ed' : '#eef7f1'};color:${QKIND_COL[k]};border:1px solid ${k === 'pre' ? '#f1cfc7' : '#cfe3d6'};font-weight:800"><i class="ti ti-${k === 'pre' ? 'ruler-measure' : 'circle-check'}"></i> ${QKIND_NAME[k]}</span>`;
@@ -13390,7 +13393,7 @@ function quoteCardHtml(q) {
   const balBadge = _bal
     ? `<span class="pill" style="background:#eef7f1;color:#0F6E56;border:1px solid #bfe3d0" title="${esc(quotePrepaidLabel(q))} ${fmtWon(_bal.pre)}원 차감"><i class="ti ti-receipt-2"></i> ${q.prepaidFromId ? '잔금 견적' : '과입금 차감'} · ${fmtWon(_bal.due)}</span>`
     : (quoteSuperseded(q) ? `<span class="pill" style="background:#f2f2f2;color:#666;border:1px solid #ddd" title="이 견적은 잔금 견적서로 대체되어 매출·미수에서 빠집니다"><i class="ti ti-arrow-right-bar"></i> 잔금 견적서로 대체됨</span>` : '');
-  return `<div class="card" style="margin-bottom:10px;padding:12px 14px${_bundle && _selQ ? ';border:2px solid var(--gd);background:#f2fbf6' : ''}">
+  return `<div class="card" style="margin-bottom:10px;padding:12px 14px${_bundle && _selQ ? ';border:2px solid var(--gd);background:#f2fbf6' : ''}${quoteKindStripe(q)}"${quoteKind(q) ? ` title="${QKIND_NAME[quoteKind(q)]}"` : ''}>
       ${_bundle ? `<label style="display:flex;align-items:center;gap:8px;margin-bottom:9px;cursor:pointer;font-size:12.5px;font-weight:700;color:${_selQ ? 'var(--gd)' : 'var(--t2)'}"><input type="checkbox" ${_selQ ? 'checked' : ''} onchange="toggleQSel('${q.id}')" style="width:17px;height:17px"> 청구 묶음에 포함</label>` : ''}
       <div onclick="openQuoteView('${q.id}')" title="눌러서 견적 내용 보기" style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;cursor:pointer">
         <div style="min-width:0"><div style="font-weight:700;font-size:14.5px">${esc(q.client || '-')} <i class="ti ti-chevron-right" style="font-size:14px;color:var(--t3);vertical-align:-2px"></i></div>
@@ -13403,7 +13406,7 @@ function quoteCardHtml(q) {
            <div style="font-size:10.5px;color:var(--t3);margin-top:3px;white-space:nowrap;border-top:1px dashed var(--bd);padding-top:3px">${quoteSuperseded(q) ? '<span style="color:#888">이 건은 대체됨</span>' : (_rem > 0 ? `이 건 미수 ${fmtWon(_rem)}` : (_pa > 0 ? '<span style="color:var(--gd);font-weight:700">이 건 결제완료</span>' : '이 건 미결제'))}</div>`
         : (_pa > 0 ? `<div style="font-size:12px;font-weight:700;color:var(--gd);margin-top:6px"><i class="ti ti-check"></i> 결제완료</div>` : (_rem > 0 ? `<div style="font-size:13.5px;font-weight:800;color:var(--red-t);margin-top:6px">미수 ${fmtWon(_rem)}</div>` : ''))}</div>
       </div>
-      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px">${quoteKindPill(q)}${balBadge}${catBadge}${(+q.rollCount || 0) ? `<span class="pill" style="background:#fff8e8;color:#b45309;border:1px solid #e6cf95" title="원래 ${esc((q.rollFrom || []).join(' → '))}"><i class="ti ti-calendar-plus"></i> 이월 ${+q.rollCount}회</span>` : ''}${paidPill}${taxPill}${depBadge}${shipBadge}${siteBadge}${basinBadge}${basinDrawsOf(q).length ? `<button class="pill" style="border:none;cursor:pointer;background:#eef4ff;color:#1b4fb0" onclick="event.stopPropagation();${basinDrawsOf(q).length > 1 ? `openQuoteView('${q.id}')` : `openQuoteDraw('${q.id}','${esc(basinDrawsOf(q)[0].id)}')`}" title="세면대 도면 보기"><i class="ti ti-ruler-2"></i> 도면 ${basinDrawsOf(q).length}</button>` : ''}${doneBadge}${canLedger() && _cRem > 0 ? `<button class="pill p-issue" style="border:none;cursor:pointer" onclick="openLedgerFor(${JSON.stringify(q.client || '').replace(/"/g, '&quot;')})" title="이 거래처 원장 보기"><i class="ti ti-book"></i> 거래처 미수 ${fmtWon(_cRem)}</button>` : ''}</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px">${balBadge}${catBadge}${(+q.rollCount || 0) ? `<span class="pill" style="background:#fff8e8;color:#b45309;border:1px solid #e6cf95" title="원래 ${esc((q.rollFrom || []).join(' → '))}"><i class="ti ti-calendar-plus"></i> 이월 ${+q.rollCount}회</span>` : ''}${paidPill}${taxPill}${depBadge}${shipBadge}${siteBadge}${basinBadge}${basinDrawsOf(q).length ? `<button class="pill" style="border:none;cursor:pointer;background:#eef4ff;color:#1b4fb0" onclick="event.stopPropagation();${basinDrawsOf(q).length > 1 ? `openQuoteView('${q.id}')` : `openQuoteDraw('${q.id}','${esc(basinDrawsOf(q)[0].id)}')`}" title="세면대 도면 보기"><i class="ti ti-ruler-2"></i> 도면 ${basinDrawsOf(q).length}</button>` : ''}${doneBadge}${canLedger() && _cRem > 0 ? `<button class="pill p-issue" style="border:none;cursor:pointer" onclick="openLedgerFor(${JSON.stringify(q.client || '').replace(/"/g, '&quot;')})" title="이 거래처 원장 보기"><i class="ti ti-book"></i> 거래처 미수 ${fmtWon(_cRem)}</button>` : ''}</div>
       <div class="frm-foot" style="margin-top:9px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
         ${q.siteDone && !isCustomerRole() ? `<button class="btn btn-sm" onclick="quoteLinkSite('${q.id}')" title="잘못 등록했으면 다른 현장으로 바꿉니다"><i class="ti ti-exchange"></i>현장 바꾸기</button><button class="btn btn-sm" style="color:var(--t3)" onclick="quoteUnlinkSite('${q.id}')" title="현장 연결만 풉니다 (현장은 안 지워집니다)"><i class="ti ti-unlink"></i>연결 해제</button>` : ''}
         ${(q.shipped || q.siteDone || q.basinDone) ? '' : (q.manualDone ? (canQuoteDone() ? `<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteUnmarkDone('${q.id}')" title="완료 취소"><i class="ti ti-arrow-back-up"></i>완료 취소</button>` : '') : (q.ordered ? `<button class="btn btn-sm btn-pri" onclick="quoteRegister('${q.id}')"><i class="ti ${_regIcon}"></i>${_regLabel}</button><button class="btn btn-sm" onclick="quoteLinkSite('${q.id}')" title="이미 등록된 현장에 연결"><i class="ti ti-link"></i>현장 연결</button>${canQuoteDone() ? `<button class="btn btn-sm" style="color:#0f766e;border-color:#0f766e" onclick="quoteMarkDone('${q.id}')" title="출고·현장·발주 등록 없이 바로 완료로 표시합니다"><i class="ti ti-checks"></i>완료 처리</button>` : ''}<button class="btn btn-sm" style="color:var(--t3)" onclick="quoteCancelOrder('${q.id}')" title="확정 주문 취소"><i class="ti ti-arrow-back-up"></i>확정취소</button>` : `<button class="btn btn-sm btn-pri" onclick="quoteConfirmOrder('${q.id}')"><i class="ti ti-clipboard-check"></i>확정주문</button><button class="btn btn-sm" style="${_old ? 'color:#b45309;border-color:#d9a441' : 'color:var(--t3)'}" onclick="quoteRollover('${q.id}')" title="오늘 날짜·새 견적번호로 넘깁니다 (내용은 그대로)"><i class="ti ti-calendar-plus"></i>이월</button>`))}
@@ -13437,7 +13440,6 @@ function openQuoteView(id) {
   const _cRem = clientRemOf(q.client);
   const badge = (on, cls, ic, txt) => on ? `<span class="pill ${cls}"><i class="ti ${ic}"></i> ${txt}</span>` : '';
   const badges = [
-    quoteKindPill(q),
     (_tt > 0 && _pa >= _tt) ? badge(1, 'p-done', 'ti-cash', '결제완료') : (_pa > 0 ? badge(1, 'p-prog', 'ti-cash', '입금 ' + fmtWon(_pa)) : badge(1, 'p-wait', 'ti-cash', '미결제')),
     isDeductPay(q) ? `<span class="pill" style="background:#f3e8ff;color:#6d28d9"><i class="ti ti-arrows-exchange"></i> 시공비 차감${q.deductDate ? ' ' + esc(String(q.deductDate).slice(5)) : ''}${(+q.deductAmt || 0) > 0 ? ' · ' + fmtWon(q.deductAmt) : ''}</span>` :
     isCashRcpt(q) ? badge(1, 'p-done', 'ti-receipt', '현금영수증 발행' + (q.cashRcptDate ? ' ' + esc(String(q.cashRcptDate).slice(5)) : ''))
@@ -13460,8 +13462,8 @@ function openQuoteView(id) {
   openModal(`
     <div class="sheet-h"><h3><i class="ti ti-file-invoice"></i>견적 내용</h3><button class="x" onclick="closeModal()">×</button></div>
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px">
-      <div style="min-width:0"><div style="font-size:17px;font-weight:800">${esc(q.client || '-')}</div>
-        <div style="font-size:11.5px;color:var(--t3);margin-top:2px">${esc(q.docNo || '')} · ${esc(qDate(q))}</div></div>
+      <div style="min-width:0${quoteKind(q) ? quoteKindStripe(q) + ';padding-left:9px' : ''}"><div style="font-size:17px;font-weight:800">${esc(q.client || '-')}</div>
+        <div style="font-size:11.5px;color:var(--t3);margin-top:2px">${esc(q.docNo || '')} · ${esc(qDate(q))}${quoteKind(q) ? ` · <b style="color:${QKIND_COL[quoteKind(q)]}">${QKIND_NAME[quoteKind(q)]}</b>` : ''}</div></div>
       <div style="text-align:right;flex:none"><div style="font-size:20px;font-weight:800;color:var(--gd)">${fmtWon(_tt)}<span style="font-size:12px;font-weight:600">원</span></div><div style="font-size:10.5px;color:var(--t3)">VAT 포함</div></div>
     </div>
     <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:11px">${badges}</div>
@@ -17198,6 +17200,7 @@ function _quoteListInner() {
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
       <span style="font-size:11px;color:var(--t3);width:38px;flex:none">주문</span>
       ${chipC('all', '전체')}${chipC('pending', '미확정', cPending, 'var(--amber-t)')}${chipC('conf', '확정', cConf, 'var(--gd)')}
+      <span style="margin-left:auto;font-size:11px;color:var(--t3);white-space:nowrap" title="견적 카드 왼쪽 색 띠"><span style="display:inline-block;width:4px;height:11px;background:${QKIND_COL.pre};vertical-align:-1px;margin-right:3px"></span>가견적 <span style="display:inline-block;width:4px;height:11px;background:${QKIND_COL.fix};vertical-align:-1px;margin:0 3px 0 6px"></span>확정견적</span>
     </div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
       <span style="font-size:11px;color:var(--t3);width:38px;flex:none">상태</span>
