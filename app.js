@@ -7122,13 +7122,14 @@ function renderQuoteForm() {
           </div>
         </div>
       </div>
-      <div class="frm-foot" style="position:sticky;bottom:calc(66px + env(safe-area-inset-bottom));z-index:30;margin-top:14px;background:var(--card);border:1.5px solid var(--bd2);border-radius:13px;box-shadow:0 5px 20px rgba(0,0,0,.13);padding:9px 11px;display:flex;align-items:center;gap:7px">
+      <div class="frm-foot" style="position:sticky;bottom:calc(66px + env(safe-area-inset-bottom));z-index:30;margin-top:14px;background:var(--card);border:1.5px solid var(--bd2);border-radius:13px;box-shadow:0 5px 20px rgba(0,0,0,.13);padding:9px 11px;display:flex;align-items:center;gap:7px;flex-wrap:wrap">
         <div style="margin-right:auto;line-height:1.15;padding-left:2px"><div style="font-size:10.5px;color:var(--t3)">합계금액</div><b id="q-total-foot" style="font-size:17px;color:var(--gd)">0</b></div>
         <button class="btn" onclick="quoteCancel()"><i class="ti ti-list"></i>목록</button>
         ${(() => { const _k = (editing ? quoteKind(q) : '') || 'pre';   /* ★ 새 견적·예전 견적은 가견적으로 시작 */
           const b = (k, ic) => { const on = _k === k, c = QKIND_COL[k];
-            return `<button class="btn" style="flex:1.2;font-weight:800;padding-left:8px;padding-right:8px;${on ? `background:${c};border-color:${c};color:#fff` : `background:#fff;border:1.5px solid ${c};color:${c}`}" onclick="submitQuote('${editing ? q.id : ''}','${k}')"><i class="ti ti-${ic}"></i>${QKIND_NAME[k]}으로 저장</button>`; };
-          return b('pre', 'ruler-measure') + b('fix', 'circle-check'); })()}</div>
+            return `<button class="btn" style="flex:1;min-width:0;white-space:nowrap;font-weight:800;padding-left:8px;padding-right:8px;${on ? `background:${c};border-color:${c};color:#fff` : `background:#fff;border:1.5px solid ${c};color:${c}`}" onclick="submitQuote('${editing ? q.id : ''}','${k}')"><i class="ti ti-${ic}"></i>${QKIND_NAME[k]}으로 저장</button>`; };
+          /* ★ 휴대폰처럼 좁으면 두 버튼이 아랫줄로 내려가 한 줄을 다 쓴다 (넓으면 한 줄) */
+          return `<div style="display:flex;gap:7px;flex:1 1 270px;min-width:0">${b('pre', 'ruler-measure') + b('fix', 'circle-check')}</div>`; })()}</div>
     </div>`;
   // 행 HTML 은 #q-ctype 이 화면에 붙기 전에 만들어지므로, 붙인 뒤에 세면대 업체구분을 다시 맞춘다
   bcSyncAllBiz(); bcNoteRefresh();
