@@ -23471,6 +23471,8 @@ const LV_TYPES = {
   pm: { n: '오후 반차', deduct: true, half: true },
   family: { n: '경조사' }, sick: { n: '병가' }, unpaid: { n: '무급휴가' }
 };
+/* 앱에서 연차 기록을 받기 시작한 날 — 이보다 먼저 끝난 기간은 사용 기록이 없으니 «소멸분»을 계산하지 않는다 */
+const LV_START = '2026-11-26';
 const LV_ST = { pending: ['결재 대기', '#b45309', '#fff8ec'], approved: ['승인', '#1f6b45', '#eef7f1'], rejected: ['반려', '#c0341d', '#fdf0ed'], canceled: ['취소', '#6b7280', '#f3f4f6'] };
 function lvParse(s) { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || '')); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; }
 function lvAddM(s, k) { const d = lvParse(s); if (!d) return ''; const y = d.getFullYear(), mo = d.getMonth() + k, day = d.getDate(); const last = new Date(y, mo + 1, 0).getDate(); return _ymd(new Date(y, mo, Math.min(day, last))); }
@@ -23524,7 +23526,7 @@ function lvStatus(m, asOf) {
   const ps = lvPeriods(h, asOf); if (!ps.length) return { before: true, hire: h };
   const cur = ps[ps.length - 1], c = lvCalc(m, cur, asOf);
   const prev = ps.length > 1 ? ps[ps.length - 2] : null;
-  const pc = prev ? lvCalc(m, prev, prev.end) : null;
+  const pc = (prev && prev.end >= LV_START) ? lvCalc(m, prev, prev.end) : null;
   const yrs = lvDiffD(h, asOf) / 365.25;
   return Object.assign({ hire: h, period: cur, prev, prevCalc: pc, years: yrs, dleft: lvDiffD(asOf, cur.end) }, c);
 }
@@ -23573,7 +23575,7 @@ function renderLeave() {
   const nPend = (state.leaves || []).filter(l => l.status === 'pending').length;
   const chip = (v, lab, n) => `<button class="chip ${t === v ? 'active' : ''}" onclick="lvSetTab('${v}')">${lab}${n ? ` <b style="color:${t === v ? 'inherit' : '#c0341d'}">${n}</b>` : ''}</button>`;
   const body = t === 'inbox' ? lvInboxHtml() : t === 'all' ? lvAllHtml() : t === 'pay' ? lvPayHtml() : lvMeHtml();
-  pg.innerHTML = `<div class="ph"><div><h2><i class="ti ti-calendar-event"></i>연차</h2><p>입사일 기준 자동 계산 · 1일 / 반차</p></div>
+  pg.innerHTML = `<style>#pg-leave table th,#pg-leave table td{padding:7px 8px;border-bottom:1px solid var(--soft);vertical-align:middle}#pg-leave table th{font-weight:600}</style><div class="ph"><div><h2><i class="ti ti-calendar-event"></i>연차</h2><p>입사일 기준 자동 계산 · 1일 / 반차</p></div>
       <button class="btn btn-pri btn-sm" onclick="openLeaveForm()"><i class="ti ti-plus"></i>연차 신청</button></div>
     ${adm ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${chip('me', '내 연차')}${chip('inbox', '결재함', nPend)}${chip('all', '전체 현황')}${chip('pay', '연차수당')}</div>` : ''}
     ${body}`;
