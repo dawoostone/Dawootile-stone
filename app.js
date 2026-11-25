@@ -16096,6 +16096,10 @@ function payCheckBuild() {
   if (_pcCache && _pcSrc && src.every((x, i) => x === _pcSrc[i])) return _pcCache;
   const P = purAll().filter(p => !p.exclude && Math.round(+p.total || 0) !== 0 && p.date);
   const O = (state.banktx || []).filter(t => txIsOut(t) && t.date);
+  /* ★ 시공비 차감 정산 (2026-11-25) — 견적 대금을 «우리가 줄 시공비»에서 뺀 것.
+     통장으로 나간 돈은 아니지만 그 시공팀에게 «지급한 것»과 같으므로 보낸 돈으로 함께 센다.
+     (견적 쪽에는 입금으로 들어가 있는 그 «직접» 한 줄을 그대로 쓴다) */
+  const D = (state.banktx || []).filter(t => t && t.deduct && txIsIn(t) && t.date && !txSkip(t));
   const sups = new Map();
   P.forEach(p => {
     const k = paySupKey(p);
@@ -16104,7 +16108,7 @@ function payCheckBuild() {
   });
   const al = payAliasMap(), supArr = [...sups.values()];
   const outSup = new Map();   // 출금 id → { key, how: 'manual'|'alias'|'name' }
-  O.forEach(t => {
+  O.concat(D).forEach(t => {
     const fix = String(t.paySup || '');
     if (fix === 'x') return;
     if (!fix && payOutForeign(t)) return;                         // 해외 송금은 국내 업체와 비교하지 않는다                                       // 사람이 «어느 업체도 아님» 으로 정함
@@ -16117,7 +16121,7 @@ function payCheckBuild() {
   /* 누적은 «출금 기록이 제대로 들어온 첫 달»부터 센다 — 그 전 계산서는 비교할 출금이 없다 */
   const om = {}; O.forEach(t => { const m = t.date.slice(0, 7); om[m] = (om[m] || 0) + 1; });
   const start = Object.keys(om).sort().find(m => om[m] >= 30) || (Object.keys(om).sort()[0] || '');
-  _pcCache = { P, O, sups, outSup, start, outMonths: om }; _pcSrc = src;
+  _pcCache = { P, O, D, sups, outSup, start, outMonths: om }; _pcSrc = src;
   return _pcCache;
 }
 function _pcEnd(ym) { return ym + '-31'; }
@@ -16132,7 +16136,7 @@ function payCheckMonth(ym) {
     if (d.startsWith(ym)) row(k).inv.push(p);
     if (d >= st && d <= end) row(k).invCum += Math.round(+p.total || 0);
   });
-  B.O.forEach(t => {
+  B.O.concat(B.D).forEach(t => {        // ★ 시공비 차감도 «보낸 돈»
     const m = B.outSup.get(t.id); if (!m) return;
     const d = t.date;
     if (d.startsWith(ym)) row(m.key).pay.push(t);
@@ -16147,7 +16151,8 @@ function payCheckMonth(ym) {
     r.state = r.other ? 'other' : (Math.abs(r.diff) <= 1000 ? 'ok' : (r.diff > 0 ? 'unpaid' : 'noinv'));
     return r;
   }).sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
-  const loose = B.O.filter(t => t.date.startsWith(ym) && payOutNeedsInv(t) && !B.outSup.has(t.id) && !payOutNoInv(t));
+  const loose = B.O.filter(t => t.date.startsWith(ym) && payOutNeedsInv(t) && !B.outSup.has(t.id) && !payOutNoInv(t))
+    .concat(B.D.filter(t => t.date.startsWith(ym) && !B.outSup.has(t.id) && !payOutNoInv(t) && String(t.paySup || '') !== 'x'));   // ★ 업체를 못 찾은 시공비 차감
   const noInv = B.O.filter(t => t.date.startsWith(ym) && !B.outSup.has(t.id) && payOutNoInv(t) && (payOutNeedsInv(t) || t.noInv));
   return { B, rows, loose, noInv };
 }
@@ -16174,7 +16179,7 @@ function payCheckCard(ym) {
         <div><div style="font-weight:700;color:var(--t2);margin-bottom:4px">이 달 받은 계산서 ${r.inv.length}장</div>
           ${r.inv.length ? r.inv.sort((a, b) => a.date.localeCompare(b.date)).map(p => `<div>${fd(p.date)} · ${esc(p.item || '')} <b style="float:right">${fmtWon(p.total)}</b></div>`).join('') : '<div style="color:var(--t3)">없음</div>'}</div>
         <div><div style="font-weight:700;color:var(--t2);margin-bottom:4px">이 달 보낸 돈 ${r.pay.length}건</div>
-          ${r.pay.length ? r.pay.sort((a, b) => a.date.localeCompare(b.date)).map(t => `<div>${fd(t.date)} · ${esc(t.payer || '')} <b style="float:right">${fmtWon(txMoney(t))}</b>
+          ${r.pay.length ? r.pay.sort((a, b) => a.date.localeCompare(b.date)).map(t => `<div>${fd(t.date)} · ${t.deduct ? '<span style="color:#6d28d9;font-weight:700">시공비 차감</span> · ' : ''}${esc(t.payer || '')} <b style="float:right">${fmtWon(txMoney(t))}</b>
             <div style="text-align:right"><a style="font-size:10.5px;color:#2f6fed;cursor:pointer" onclick="paySetSup('${t.id}','x')">이 업체 아님</a></div></div>`).join('') : '<div style="color:var(--t3)">없음</div>'}</div>
         <div style="grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
           <span style="color:var(--t3)">누적 (${esc(B.start.replace('-', '.'))}~${esc(ym.replace('-', '.'))}) 계산서 ${fmtWon(r.invCum)} · 보낸 돈 ${fmtWon(r.payCum)}</span>
@@ -16195,7 +16200,7 @@ function payCheckCard(ym) {
       const cand = [...B.sups.values()].map(s => ({ s, sc: payNameScore(s, t) + (s.invs.some(p => Math.round(+p.total || 0) === amt) ? 5 : 0) })).filter(x => x.sc > 0).sort((a, b) => b.sc - a.sc).slice(0, 3);
       return `<div style="border:1px solid var(--bd);border-radius:10px;padding:9px 11px;margin-bottom:7px">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="font-size:11.5px;color:var(--t3)">${fd(t.date)}</span><b style="font-size:13.5px">${esc(t.payer || '-')}</b>
-          <span class="pill" style="font-size:10.5px">${esc(acctCatOf(t) || '')}</span><b style="margin-left:auto;color:var(--red-t)">${fmtWon(amt)}원</b></div>
+          ${t.deduct ? '<span class="pill" style="font-size:10.5px;background:#f3e8ff;color:#6d28d9">시공비 차감</span>' : `<span class="pill" style="font-size:10.5px">${esc(acctCatOf(t) || '')}</span>`}<b style="margin-left:auto;color:var(--red-t)">${fmtWon(amt)}원</b></div>
         ${cand.length ? `<div style="font-size:11.5px;color:var(--t2);margin-top:6px">이 업체에 보낸 돈일까요? ${cand.map(x => `<button class="btn btn-sm" style="margin:3px 4px 0 0;padding:2px 8px;font-size:11.5px" onclick="paySetSup('${t.id}','${esc(x.s.key)}')"><i class="ti ti-link"></i> ${esc(x.s.name)}</button>`).join('')}</div>`
           : `<div style="font-size:11.5px;color:var(--t3);margin-top:5px">계산서를 보낸 업체 중에 비슷한 이름이 없습니다 — 계산서를 아직 못 받았을 수 있습니다</div>`}
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px">
@@ -16209,7 +16214,8 @@ function payCheckCard(ym) {
     <div class="banner info" style="margin-bottom:11px;font-size:12px"><i class="ti ti-info-circle"></i><span style="flex:1;min-width:0">
       <b>업체마다</b> 받은 매입 계산서 합계와 통장에서 보낸 돈 합계를 <b>${esc((B.start || '').replace('-', '.'))}부터 쌓아서</b> 맞춰 봅니다.
       <b style="color:var(--red-t)">결제 덜 됨</b> = 계산서는 받았는데 돈을 덜 보냄 · <b style="color:#b45309">계산서 덜 받음</b> = 돈은 보냈는데 계산서를 덜 받음.
-      <br>출금이 어느 업체 것인지는 적요 이름으로 찾습니다. 틀리면 업체를 펼쳐 «이 업체 아님», 못 찾은 출금은 «업체 못 찾은 출금»에서 골라 주세요 — 한 번 고르면 다음부터 자동입니다.</span></div>
+      <br>출금이 어느 업체 것인지는 적요 이름으로 찾습니다. 틀리면 업체를 펼쳐 «이 업체 아님», 못 찾은 출금은 «업체 못 찾은 출금»에서 골라 주세요 — 한 번 고르면 다음부터 자동입니다.
+      <br><b style="color:#6d28d9">시공비 차감</b> 정산한 금액도 그 시공팀에 <b>보낸 돈</b>으로 셉니다 (견적서 증빙 › 시공비 차감 정산).</span></div>
     ${thin ? `<div class="banner warn" style="margin-bottom:10px;font-size:12.5px"><i class="ti ti-alert-triangle"></i><span style="flex:1;min-width:0">이 달 출금 기록이 <b>${thinN}건</b>뿐입니다 (계산서 ${invN}장). 출금 통장 엑셀을 아직 안 올렸으면 «결제 덜 됨»으로 잘못 나옵니다 — 통장 내역에서 출금 파일을 먼저 올려 주세요.</span></div>` : ''}
     <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:11px">
       <button class="stat tap" onclick="payChkSetView('unpaid')"><div class="ic r"><i class="ti ti-file-alert"></i></div><div class="v" style="font-size:17px;color:${nUnpaid.length ? 'var(--red-t)' : 'var(--gd)'}">${nUnpaid.length}곳</div><div class="l">결제 덜 된 업체</div><div class="s">${fmtWon(sumAbs(nUnpaid))}원</div></button>
