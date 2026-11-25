@@ -29,7 +29,7 @@ function prefillEmail() {
 }
 function cref(name) { return db.collection('teams').doc(TEAM).collection(name); }
 
-const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients', 'issues', 'restocks', 'basins', 'holdRequests', 'shipments', 'chulgoReqs', 'chulgoHandlers', 'quotes', 'clientPrices', 'priceList', 'appmeta', 'expenses', 'banktx', 'purchases', 'cutPlans'];
+const COLLS = ['members', 'sites', 'inventory', 'holdings', 'transactions', 'specs', 'factories', 'teams', 'suppliers', 'clients', 'issues', 'restocks', 'basins', 'holdRequests', 'shipments', 'chulgoReqs', 'chulgoHandlers', 'quotes', 'clientPrices', 'priceList', 'appmeta', 'expenses', 'banktx', 'purchases', 'cutPlans', 'leaves'];
 /* ══════════════════════════════════════════════════════════
    ★★ 2026-09-16 — 「별도」를 없애고 신성그룹·현대엘앤씨를 각자 유형으로
    사용자: *"단가 유형에 신성그룹이랑 현대엘엔씨 각각 따로 만들어줘"* · *"「별도」는 없앤다"*
@@ -276,7 +276,7 @@ const Store = {
 if (bc) bc.onmessage = (e) => { const c = e.data; if (Store._watchers[c]) Store._watchers[c](Store.read(c)); };
 
 /* ---------- 1. 전역 상태 ---------- */
-const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [], issues: [], restocks: [], basins: [], holdRequests: [], shipments: [], chulgoReqs: [], banktx: [] };
+const state = { members: [], sites: [], inventory: [], holdings: [], transactions: [], specs: [], factories: [], teams: [], suppliers: [], clients: [], issues: [], restocks: [], basins: [], holdRequests: [], shipments: [], chulgoReqs: [], banktx: [], leaves: [], wages: [] };
 let me = null;          // 로그인한 사용자
 let tab = 'home';
 let filters = { sites: 'all', stock: 'all', stockSearch: '', siteSearch: '', siteSearchField: 'all', holdArchive: false, holdDone: false, holdSearch: '', holdGroup: 'none', custSearch: '', shipSearch: '', basinSearch: '' };
@@ -362,11 +362,11 @@ function custChromeCss() {
 function isCrewRole() { return me && me.role === 'crew'; }  // 시공팀 — 자기 시공 스케줄만
 function isRestrictedRole() { return isCustomerRole() || isCrewRole(); }
 /* ===== 메뉴 접근 권한 (직원별) ===== */
-const TAB_LABELS = { home: '홈', sites: '현장', stock: '재고·입고', ship: '출고', chulgo: '출고관리', hold: '홀딩', basin: '세면대 발주', quote: '견적서', clients: '거래처', archive: '자료실', settle: '정산', settings: '설정' };
-const TAB_ICONS = { sites: 'ti-building-community', stock: 'ti-packages', ship: 'ti-truck-delivery', chulgo: 'ti-clipboard-list', hold: 'ti-lock-square-rounded', basin: 'ti-bath', quote: 'ti-file-invoice', clients: 'ti-users', archive: 'ti-folder', settle: 'ti-report-money' };
+const TAB_LABELS = { home: '홈', sites: '현장', stock: '재고·입고', ship: '출고', chulgo: '출고관리', hold: '홀딩', basin: '세면대 발주', quote: '견적서', clients: '거래처', archive: '자료실', leave: '연차', settle: '정산', settings: '설정' };
+const TAB_ICONS = { sites: 'ti-building-community', stock: 'ti-packages', ship: 'ti-truck-delivery', chulgo: 'ti-clipboard-list', hold: 'ti-lock-square-rounded', basin: 'ti-bath', quote: 'ti-file-invoice', clients: 'ti-users', archive: 'ti-folder', leave: 'ti-calendar-event', settle: 'ti-report-money' };
 function menuPermAll(on) { document.querySelectorAll('.m-menu').forEach(c => { c.checked = !!on; }); }
-const ALL_TABS = ['home', 'sites', 'stock', 'ship', 'chulgo', 'hold', 'basin', 'quote', 'clients', 'archive', 'settle', 'settings'];
-const ALWAYS_TABS = ['home', 'settings'];
+const ALL_TABS = ['home', 'sites', 'stock', 'ship', 'chulgo', 'hold', 'basin', 'quote', 'clients', 'archive', 'leave', 'settle', 'settings'];
+const ALWAYS_TABS = ['home', 'settings', 'leave'];   // ★ 연차 탭은 직원 누구나 (2026-11-26)
 const RESTRICTED_TABS = ['settle'];
 function liveMe() { if (!me) return null; return (state.members || []).find(x => (x.email || '').toLowerCase() === (me.email || '').toLowerCase()) || me; }
 function allowedTabs() {
@@ -378,6 +378,7 @@ function allowedTabs() {
 function tabAllowed(t) { return allowedTabs().includes(t); }
 function applyMenuPerms() {
   if (isRestrictedRole()) return;
+  try { leaveNavEnsure(); } catch (e) { }
   const allow = allowedTabs();
   document.querySelectorAll('.nav-i[data-tab],.side-i[data-tab],.drawer-i[data-tab]').forEach(b => { b.style.display = allow.includes(b.dataset.tab) ? '' : 'none'; });
 }
@@ -673,6 +674,7 @@ function bulkBegin() { _bulkBusy++; }
 function bulkEnd() { _bulkBusy = Math.max(0, _bulkBusy - 1); if (!_bulkBusy && me) { moneyBust(); render(); } }
 function onData(coll) {
   _loadedColls[coll] = true;
+  if (coll === 'leaves' && me && !isRestrictedRole()) { try { leaveNavEnsure(); } catch (e) { } }   // 결재 대기 숫자
   if (['quotes', 'banktx', 'appmeta', 'clients'].includes(coll)) moneyBust();   // 돈 계산을 다시 하게 만든다
   if (['priceList', 'inventory', 'appmeta'].includes(coll)) catalogBust();     // 단가표·재고·설정이 바뀌면 분류 표를 다시 만든다
   if (['holdings', 'transactions'].includes(coll)) stockIxBust();             // 홀딩·입출고가 바뀌면 재고 계산표를 다시 만든다
@@ -1045,6 +1047,7 @@ setTimeout(killBotNav, 0);
 
 function go(t) {
   killBotNav();
+  try { leaveNavEnsure(); } catch (e) { }
   if (isRestrictedRole()) t = 'stock';   // 고객·시공팀은 전용 화면만
   else if (!tabAllowed(t)) t = 'home';   // 접근 권한 없는 메뉴 차단
   filters.costEdit = '';   // 원가 입력 폼은 메뉴 이동 시 항상 닫기
@@ -1534,6 +1537,7 @@ function render() {
   else if (tab === 'quote') renderQuote();
   else if (tab === 'clients') renderClients();
   else if (tab === 'archive') renderArchive();
+  else if (tab === 'leave') renderLeave();
   else if (tab === 'settle') renderSettle();
   else if (tab === 'settings') renderSettings();
 }
@@ -23449,3 +23453,377 @@ function calcQuote() {
   </div>`;
 }
 /* 다우세라믹앤석재 통합관리 v1.1 */
+/* ══════════════════════════════════════════════════════════════════
+   ★★★ 연차 · 결재 · 연차수당 (2026-11-26)
+   제안서 v2(11/19) + 사용자 결정:
+     · 승인: 관리자(임창걸 지사장 · 조은수 실장) — 한 분만 승인해도 처리
+     · 발생: 입사 1년 전 = 매달 입사일에 1일 (최대 11일, 입사 1년 되는 전날까지 사용)
+             1년마다 법정 연차 15일, 3년차부터 2년마다 +1 (최대 25)
+     · 만근: 출근 기록을 따로 받지 않는다 — «입사일 기준으로 날짜가 차면 만근» (사용자: "입사일자 기준으로 1년 채우면 만근으로")
+     · 단위: 1일 · 반차(0.5)
+     · 입사일은 관리자가 직원마다 지정 → 나머지는 자동 계산
+     · 월 통상임금: 관리자만 보는 «wages» 컬렉션에 저장 (문서 id = 직원 이메일 → 나중에 «자기 것만» 열람 규칙을 붙이기 쉽게)
+       ※ 화면은 관리자에게만 보이지만, 완전히 막으려면 Firestore 보안규칙이 따로 필요하다.
+   ══════════════════════════════════════════════════════════════════ */
+const LV_TYPES = {
+  annual: { n: '연차', deduct: true },
+  am: { n: '오전 반차', deduct: true, half: true },
+  pm: { n: '오후 반차', deduct: true, half: true },
+  family: { n: '경조사' }, sick: { n: '병가' }, unpaid: { n: '무급휴가' }
+};
+const LV_ST = { pending: ['결재 대기', '#b45309', '#fff8ec'], approved: ['승인', '#1f6b45', '#eef7f1'], rejected: ['반려', '#c0341d', '#fdf0ed'], canceled: ['취소', '#6b7280', '#f3f4f6'] };
+function lvParse(s) { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || '')); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; }
+function lvAddM(s, k) { const d = lvParse(s); if (!d) return ''; const y = d.getFullYear(), mo = d.getMonth() + k, day = d.getDate(); const last = new Date(y, mo + 1, 0).getDate(); return _ymd(new Date(y, mo, Math.min(day, last))); }
+function lvAddD(s, k) { const d = lvParse(s); if (!d) return ''; d.setDate(d.getDate() + k); return _ymd(d); }
+function lvDiffD(a, b) { const x = lvParse(a), y = lvParse(b); return (x && y) ? Math.round((y - x) / 864e5) : 0; }
+function lvAnnualDays(n) { return Math.min(25, 15 + Math.floor((n - 1) / 2)); }
+function lvWorkday(d) { const x = lvParse(d); if (!x) return false; const w = x.getDay(); return w !== 0 && w !== 6 && !HOLIDAYS[d]; }
+/* 한 건이 «어느 날 몇 일»을 쓰는지 — 주말·공휴일은 빼고, 반차는 0.5 */
+function lvDays(l) {
+  if (!l || !l.start) return [];
+  const t = LV_TYPES[l.type] || LV_TYPES.annual;
+  if (t.half) return lvWorkday(l.start) ? [{ d: l.start, v: 0.5 }] : [];
+  const out = []; let d = l.start; const end = l.end && l.end >= l.start ? l.end : l.start;
+  for (let i = 0; i < 400 && d <= end; i++) { if (lvWorkday(d)) out.push({ d, v: 1 }); d = lvAddD(d, 1); }
+  return out;
+}
+function lvDayCount(l) { return lvDays(l).reduce((a, x) => a + x.v, 0); }
+function lvStaff() { return (state.members || []).filter(m => m && (m.role === 'staff' || m.role === 'admin')).sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))); }
+function lvMeMember() { const lm = liveMe(); return lm && lm.id ? lm : null; }
+function lvOf(mid) { return (state.leaves || []).filter(l => l.mid === mid); }
+function lvApprovers() { return lvStaff().filter(m => m.role === 'admin'); }
+function lvCanApprove() { return isAdmin(); }
+/* 입사일 기준 «사용 기간» 목록 — 오늘(asOf)이 들어 있는 기간까지 */
+function lvPeriods(h, asOf) {
+  const out = []; if (!lvParse(h) || !asOf || asOf < h) return out;
+  const y1 = lvAddM(h, 12);
+  const g1 = []; for (let k = 1; k <= 11; k++) { const g = lvAddM(h, k); if (g >= y1) break; g1.push({ date: g, days: 1 }); }
+  out.push({ kind: 'first', n: 0, start: h, end: lvAddD(y1, -1), grants: g1 });
+  for (let n = 1; n < 80; n++) {
+    const s = lvAddM(h, 12 * n); if (s > asOf) break;
+    out.push({ kind: 'annual', n, start: s, end: lvAddD(lvAddM(h, 12 * (n + 1)), -1), grants: [{ date: s, days: lvAnnualDays(n) }] });
+  }
+  return out;
+}
+/* 한 기간의 계산 — asOf 까지 생긴 것 · 승인된 사용 · 대기 · 남음 */
+function lvCalc(m, p, asOf) {
+  const granted = p.grants.filter(g => g.date <= asOf).reduce((a, g) => a + g.days, 0);
+  const adj = +(((m && m.leaveAdj) || {})[p.start] || 0);
+  let used = 0, pend = 0;
+  lvOf(m.id).forEach(l => {
+    if (!(LV_TYPES[l.type] || {}).deduct) return;
+    if (l.status !== 'approved' && l.status !== 'pending') return;
+    lvDays(l).forEach(x => { if (x.d >= p.start && x.d <= p.end) { if (l.status === 'approved') used += x.v; else pend += x.v; } });
+  });
+  const next = p.grants.find(g => g.date > asOf);
+  return { granted, adj, used, pend, remain: granted + adj - used, next: next ? next.date : '', expire: p.end };
+}
+function lvStatus(m, asOf) {
+  asOf = asOf || todayStr();
+  const h = m && m.hireDate; if (!lvParse(h)) return null;
+  const ps = lvPeriods(h, asOf); if (!ps.length) return { before: true, hire: h };
+  const cur = ps[ps.length - 1], c = lvCalc(m, cur, asOf);
+  const prev = ps.length > 1 ? ps[ps.length - 2] : null;
+  const pc = prev ? lvCalc(m, prev, prev.end) : null;
+  const yrs = lvDiffD(h, asOf) / 365.25;
+  return Object.assign({ hire: h, period: cur, prev, prevCalc: pc, years: yrs, dleft: lvDiffD(asOf, cur.end) }, c);
+}
+function lvFmtD(v) { v = Math.round((+v || 0) * 10) / 10; return (v % 1 ? v.toFixed(1) : String(v)); }
+function lvTenure(h) {
+  const t = todayStr(); if (!lvParse(h) || h > t) return '-';
+  let mo = 0; while (mo < 1200 && lvAddM(h, mo + 1) <= t) mo++;
+  const y = Math.floor(mo / 12), r = mo % 12;
+  return (y ? y + '년 ' : '') + r + '개월';
+}
+function lvPill(l) { const s = LV_ST[l.status] || LV_ST.pending; return `<span class="pill" style="background:${s[2]};color:${s[1]};border:1px solid ${s[1]};font-weight:700">${s[0]}</span>`; }
+function lvRange(l) { const t = LV_TYPES[l.type] || LV_TYPES.annual; return (t.half || !l.end || l.end === l.start) ? esc(l.start) : `${esc(l.start)} ~ ${esc(l.end)}`; }
+
+/* ── 메뉴 · 화면 자리 (index.html 을 고치지 않고 앱이 직접 붙인다) ── */
+function leaveNavEnsure() {
+  if (isRestrictedRole && isRestrictedRole()) return;
+  const add = (sel, cls, fn) => {
+    if (document.querySelector('.' + cls + '[data-tab="leave"]')) return;
+    const ref = document.querySelector('.' + cls + '[data-tab="settle"]') || document.querySelector('.' + cls + '[data-tab="settings"]');
+    if (!ref) return;
+    const b = document.createElement('button'); b.className = cls; b.dataset.tab = 'leave';
+    b.setAttribute('onclick', fn + "('leave')"); b.innerHTML = '<i class="ti ti-calendar-event"></i>연차<span class="lv-nb" style="display:none;margin-left:auto;background:#c0341d;color:#fff;border-radius:99px;font-size:10.5px;font-weight:800;padding:0 7px;line-height:18px"></span>';
+    ref.parentNode.insertBefore(b, ref);
+  };
+  add('.side-i', 'side-i', 'go'); add('.drawer-i', 'drawer-i', 'goD');
+  if (!el('pg-leave')) { const a = el('pg-archive') || el('pg-settings'); if (a) { const d = document.createElement('div'); d.className = 'page'; d.id = 'pg-leave'; a.parentNode.insertBefore(d, a.nextSibling); } }
+  const n = isAdmin() ? (state.leaves || []).filter(l => l.status === 'pending').length : 0;
+  document.querySelectorAll('[data-tab="leave"] .lv-nb').forEach(s => { s.textContent = n; s.style.display = n ? '' : 'none'; });
+}
+/* 월 통상임금 — 관리자만 따로 받아 온다 (모두가 구독하는 COLLS 에 넣지 않는다) */
+let _wagesOn = false, _wagesErr = '';
+function wagesWatch() {
+  if (_wagesOn || !isAdmin()) return; _wagesOn = true;
+  if (!CLOUD) { Store.watch('wages', d => { state.wages = d; if (tab === 'leave') render(); }); return; }
+  cref('wages').onSnapshot(snap => { _wagesErr = ''; state.wages = snap.docs.map(d => Object.assign({ id: d.id }, d.data())); if (tab === 'leave') render(); },
+    err => { _wagesErr = (err && err.code) || 'error'; state.wages = []; if (tab === 'leave') render(); });
+}
+function wageOf(m) { const k = String((m && m.email) || '').toLowerCase(); return k ? (state.wages || []).find(w => w.id === k) : null; }
+
+function lvSetTab(t) { filters.lvTab = t; render(); }
+function renderLeave() {
+  leaveNavEnsure(); if (isAdmin()) wagesWatch();
+  const pg = el('pg-leave'); if (!pg) return;
+  const adm = isAdmin();
+  let t = filters.lvTab || 'me'; if (!adm && t !== 'me') t = 'me';
+  const nPend = (state.leaves || []).filter(l => l.status === 'pending').length;
+  const chip = (v, lab, n) => `<button class="chip ${t === v ? 'active' : ''}" onclick="lvSetTab('${v}')">${lab}${n ? ` <b style="color:${t === v ? 'inherit' : '#c0341d'}">${n}</b>` : ''}</button>`;
+  const body = t === 'inbox' ? lvInboxHtml() : t === 'all' ? lvAllHtml() : t === 'pay' ? lvPayHtml() : lvMeHtml();
+  pg.innerHTML = `<div class="ph"><div><h2><i class="ti ti-calendar-event"></i>연차</h2><p>입사일 기준 자동 계산 · 1일 / 반차</p></div>
+      <button class="btn btn-pri btn-sm" onclick="openLeaveForm()"><i class="ti ti-plus"></i>연차 신청</button></div>
+    ${adm ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${chip('me', '내 연차')}${chip('inbox', '결재함', nPend)}${chip('all', '전체 현황')}${chip('pay', '연차수당')}</div>` : ''}
+    ${body}`;
+}
+/* ── ① 내 연차 ── */
+function lvMeHtml() {
+  const m = lvMeMember();
+  if (!m) return `<div class="empty"><i class="ti ti-user-question"></i>직원 목록에서 내 계정을 찾지 못했습니다</div>`;
+  return lvSummaryCard(m, true) + lvListCard(lvOf(m.id), '내 신청 내역', true);
+}
+function lvSummaryCard(m, mine) {
+  const s = lvStatus(m);
+  if (!s) return `<div class="banner warn" style="margin-bottom:12px"><i class="ti ti-alert-triangle"></i><span style="flex:1">${mine ? '입사일이 아직 지정되지 않았습니다 — 관리자에게 입사일 지정을 요청해 주세요.' : esc(m.name) + ' 님 입사일이 없습니다.'}</span></div>`;
+  if (s.before) return `<div class="banner info" style="margin-bottom:12px"><i class="ti ti-info-circle"></i><span style="flex:1">입사일 ${esc(s.hire)} — 아직 입사 전입니다.</span></div>`;
+  const p = s.period;
+  const box = (lab, v, col, sub) => `<div class="stat"><div class="v" style="font-size:20px;color:${col || 'var(--t1)'}">${v}</div><div class="l">${lab}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
+  const hist = p.kind === 'first'
+    ? `<div style="font-size:12px;color:var(--t2);line-height:1.7">입사 1년 전 — 매달 입사일에 1일씩 생깁니다. ${p.grants.map(g => `<span style="display:inline-block;margin:2px 3px 0 0;padding:1px 7px;border-radius:99px;font-size:11px;${g.date <= todayStr() ? 'background:#eef7f1;color:#1f6b45' : 'background:#f3f4f6;color:#9ca3af'}">${esc(g.date.slice(5))}</span>`).join('')}</div>`
+    : `<div style="font-size:12px;color:var(--t2)">${p.n}년 근속 → 법정 연차 <b>${lvAnnualDays(p.n)}일</b> (${esc(p.start)} 발생)</div>`;
+  return `<div class="card" style="margin-bottom:12px;padding:13px 15px">
+    <div class="card-h"><h3><i class="ti ti-user"></i>${esc(m.name)}</h3><span class="more" style="font-size:11.5px;color:var(--t3)">입사 ${esc(s.hire)} · 근속 ${lvTenure(s.hire)}</span></div>
+    <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);margin:8px 0 10px">
+      ${box('발생', lvFmtD(s.granted + s.adj) + '일', '', s.adj ? '조정 ' + (s.adj > 0 ? '+' : '') + lvFmtD(s.adj) : (s.next ? '다음 발생 ' + esc(s.next.slice(5)) : ''))}
+      ${box('사용', lvFmtD(s.used) + '일')}
+      ${box('결재 대기', lvFmtD(s.pend) + '일', s.pend ? '#b45309' : '')}
+      ${box('남음', lvFmtD(s.remain) + '일', s.remain < 0 ? 'var(--red-t)' : 'var(--gd)')}
+    </div>
+    ${hist}
+    <div style="font-size:11.5px;color:${s.dleft <= 60 ? '#c0341d' : 'var(--t3)'};margin-top:6px">사용 기간 ${esc(p.start)} ~ ${esc(p.end)}${s.dleft <= 60 ? ` · <b>소멸까지 ${s.dleft}일</b>` : ''}</div>
+  </div>`;
+}
+function lvListCard(list, title, mine) {
+  const L = list.slice().sort((a, b) => String(b.start || '').localeCompare(String(a.start || '')) || (+b.createdAt || 0) - (+a.createdAt || 0));
+  const rows = L.length ? L.slice(0, 60).map(l => { const t = LV_TYPES[l.type] || LV_TYPES.annual;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:9px 2px;border-bottom:1px solid var(--soft);flex-wrap:wrap">
+      <div style="flex:1;min-width:180px"><div style="font-weight:700;font-size:13.5px">${mine ? '' : esc(l.name || '') + ' · '}${esc(t.n)} <span style="font-weight:500;color:var(--t2)">${lvRange(l)}</span></div>
+        <div style="font-size:11.5px;color:var(--t3);margin-top:2px">${t.deduct ? lvFmtD(+l.days || 0) + '일' : '연차에서 빼지 않음'}${l.reason ? ' · ' + esc(l.reason) : ''}${l.decBy ? ' · ' + esc(l.decBy) + (l.status === 'rejected' ? ' 반려' : l.status === 'approved' ? ' 승인' : '') : ''}${l.rejReason ? ' · <span style="color:#c0341d">사유: ' + esc(l.rejReason) + '</span>' : ''}</div></div>
+      ${lvPill(l)}
+      ${l.status === 'pending' && (mine || isAdmin()) ? `<button class="btn btn-sm btn-ghost" style="color:var(--t3)" onclick="leaveCancel('${l.id}')">취소</button>` : ''}
+      ${l.status === 'approved' && isAdmin() ? `<button class="btn btn-sm btn-ghost" style="color:var(--t3)" onclick="leaveCancel('${l.id}')">승인 취소</button>` : ''}
+    </div>`; }).join('') : `<div class="empty"><i class="ti ti-calendar-off"></i>내역이 없습니다</div>`;
+  return `<div class="card" style="padding:13px 15px;margin-bottom:12px"><div class="card-h"><h3><i class="ti ti-list"></i>${esc(title)}</h3></div>${rows}</div>`;
+}
+/* ── 신청서 ── */
+function openLeaveForm(mid) {
+  const adm = isAdmin();
+  const self = lvMeMember();
+  const target = mid ? (state.members || []).find(x => x.id === mid) : self;
+  if (!target) { toast('직원 정보를 찾지 못했습니다'); return; }
+  const byAdmin = adm && mid && (!self || mid !== self.id);
+  const inp = 'width:100%;font-size:14px;padding:8px 10px;border:1.5px solid var(--bd2);border-radius:9px';
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-calendar-plus"></i>${byAdmin ? '연차 기록 추가 — ' + esc(target.name) : '연차 신청'}</h3><button class="x" onclick="closeModal()">×</button></div>
+    ${byAdmin ? `<div class="banner info" style="margin-bottom:10px;font-size:12px"><i class="ti ti-info-circle"></i><span style="flex:1">관리자가 넣는 기록은 <b>바로 승인</b>으로 들어갑니다.</span></div>` : ''}
+    <div class="fld full" style="margin-bottom:10px"><label>종류</label><select id="lv-type" onchange="lvFormCalc()" style="${inp}">${Object.keys(LV_TYPES).map(k => `<option value="${k}">${LV_TYPES[k].n}${LV_TYPES[k].deduct ? '' : ' (연차에서 안 뺌)'}</option>`).join('')}</select></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      <div class="fld" style="flex:1;min-width:140px;margin:0"><label>시작일</label><input type="date" id="lv-s" value="${todayStr()}" onchange="lvFormCalc()" style="${inp}"></div>
+      <div class="fld" id="lv-ew" style="flex:1;min-width:140px;margin:0"><label>종료일</label><input type="date" id="lv-e" value="${todayStr()}" onchange="lvFormCalc()" style="${inp}"></div>
+    </div>
+    <div class="fld full" style="margin-bottom:10px"><label>사유 <span style="color:var(--t3);font-weight:500">(선택)</span></label><input id="lv-r" lang="ko" placeholder="예: 개인 사유" style="${inp}"></div>
+    <div id="lv-calc" style="font-size:12.5px;margin-bottom:12px"></div>
+    <input type="hidden" id="lv-mid" value="${esc(target.id)}"><input type="hidden" id="lv-adm" value="${byAdmin ? '1' : ''}">
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="saveLeave()"><i class="ti ti-check"></i>${byAdmin ? '기록 추가' : '신청하기'}</button></div>`);
+  lvFormCalc();
+}
+function lvFormRead() {
+  const type = (el('lv-type') || {}).value || 'annual', t = LV_TYPES[type] || LV_TYPES.annual;
+  const start = (el('lv-s') || {}).value || '';
+  let end = t.half ? start : ((el('lv-e') || {}).value || start);
+  if (end < start) end = start;
+  return { type, start, end, reason: String((el('lv-r') || {}).value || '').trim(), mid: (el('lv-mid') || {}).value || '', byAdmin: !!(el('lv-adm') || {}).value };
+}
+function lvFormCalc() {
+  const f = lvFormRead(), t = LV_TYPES[f.type];
+  const ew = el('lv-ew'); if (ew) ew.style.display = t.half ? 'none' : '';
+  const box = el('lv-calc'); if (!box) return;
+  const days = lvDayCount(f);
+  const m = (state.members || []).find(x => x.id === f.mid);
+  const s = m ? lvStatus(m) : null;
+  let h = `<b>${t.deduct ? '쓰는 날: ' + lvFmtD(days) + '일' : '연차에서 빼지 않는 기록입니다'}</b> <span style="color:var(--t3)">(주말·공휴일 제외)</span>`;
+  if (t.deduct && s && !s.before) { const after = s.remain - s.pend - days; h += `<br>지금 남음 ${lvFmtD(s.remain)}일${s.pend ? ' · 결재 대기 ' + lvFmtD(s.pend) + '일' : ''} → 승인되면 <b style="color:${after < 0 ? 'var(--red-t)' : 'var(--gd)'}">${lvFmtD(after)}일</b>`; }
+  if (t.deduct && !(days > 0)) h += `<br><span style="color:var(--red-t)">고른 날이 모두 주말·공휴일입니다</span>`;
+  box.innerHTML = h;
+}
+let _lvBusy = false;
+async function saveLeave() {
+  if (_lvBusy) return;
+  const f = lvFormRead(), t = LV_TYPES[f.type];
+  const m = (state.members || []).find(x => x.id === f.mid); if (!m) { toast('직원 정보를 찾지 못했습니다'); return; }
+  if (!lvParse(f.start)) { toast('날짜를 고르세요'); return; }
+  const days = lvDayCount(f);
+  if (t.deduct && !(days > 0)) { toast('고른 날이 모두 주말·공휴일입니다'); return; }
+  const mine = new Set(lvDays(f).map(x => x.d));
+  const clash = lvOf(m.id).find(l => (l.status === 'pending' || l.status === 'approved') && lvDays(l).some(x => mine.has(x.d) && !((LV_TYPES[l.type] || {}).half && t.half && l.type !== f.type)));
+  if (clash) { toast('같은 날 이미 ' + (LV_ST[clash.status] || [''])[0] + ' 건이 있습니다 (' + lvRange(clash) + ')'); return; }
+  if (t.deduct && !f.byAdmin) { const s = lvStatus(m); if (s && !s.before && s.remain - s.pend - days < 0 && !confirm('남은 연차보다 많이 신청합니다. 그래도 신청할까요?')) return; }
+  if (f.byAdmin && !isAdmin()) { toast('관리자만 기록을 넣을 수 있습니다'); return; }
+  const doc = { mid: m.id, name: m.name || '', email: String(m.email || '').toLowerCase(), type: f.type, start: f.start, end: f.end, days: t.deduct ? days : 0, reason: f.reason,
+    status: f.byAdmin ? 'approved' : 'pending', by: (me && me.name) || '', at: Date.now() };
+  if (f.byAdmin) { doc.decBy = (me && me.name) || ''; doc.decAt = Date.now(); doc.byAdmin = true; }
+  _lvBusy = true;
+  try { await Store.add('leaves', doc); closeModal(); toast(f.byAdmin ? '기록을 넣었습니다' : '신청했습니다 — 지사장님 · 실장님 중 한 분이 승인하면 처리됩니다'); }
+  catch (e) { toast('저장 실패: ' + ((e && e.code === 'permission-denied') ? '보안 설정에서 연차 기록 저장이 막혀 있습니다 — 관리자에게 알려주세요' : ((e && e.message) || e))); }
+  finally { _lvBusy = false; }
+}
+async function leaveCancel(id) {
+  const l = (state.leaves || []).find(x => x.id === id); if (!l) return;
+  const self = lvMeMember();
+  if (!isAdmin() && !(self && l.mid === self.id && l.status === 'pending')) { toast('취소할 수 없습니다'); return; }
+  if (!confirm((l.status === 'approved' ? '승인된 ' : '') + (LV_TYPES[l.type] || {}).n + ' ' + l.start + ' 건을 취소할까요?')) return;
+  try { await Store.update('leaves', id, { status: 'canceled', cancelBy: (me && me.name) || '', cancelAt: Date.now() }); toast('취소했습니다'); } catch (e) { toast('저장 실패'); }
+}
+/* ── ② 결재함 ── */
+function lvInboxHtml() {
+  const P = (state.leaves || []).filter(l => l.status === 'pending').sort((a, b) => String(a.start).localeCompare(String(b.start)));
+  const cards = P.length ? P.map(l => {
+    const t = LV_TYPES[l.type] || LV_TYPES.annual, m = (state.members || []).find(x => x.id === l.mid);
+    const s = m ? lvStatus(m) : null;
+    const ds = new Set(lvDays(l).map(x => x.d));
+    const others = (state.leaves || []).filter(o => o.id !== l.id && (o.status === 'approved' || o.status === 'pending') && lvDays(o).some(x => ds.has(x.d))).map(o => esc(o.name) + (o.status === 'pending' ? '(대기)' : ''));
+    return `<div class="card" style="margin-bottom:9px;padding:12px 14px;border-left:5px solid #b45309">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><div><b style="font-size:15px">${esc(l.name)}</b> · ${esc(t.n)} <span style="color:var(--t2)">${lvRange(l)}</span>
+        <div style="font-size:12px;color:var(--t3);margin-top:3px">${t.deduct ? lvFmtD(+l.days || 0) + '일' : '연차에서 빼지 않음'}${l.reason ? ' · ' + esc(l.reason) : ''} · 신청 ${esc(_ymd(new Date(+l.at || +l.createdAt || Date.now())))}</div></div>
+        ${t.deduct && s && !s.before ? `<div style="text-align:right;font-size:12px">남음 ${lvFmtD(s.remain)}일<br>승인하면 <b style="color:${s.remain - (+l.days || 0) < 0 ? 'var(--red-t)' : 'var(--gd)'}">${lvFmtD(s.remain - (+l.days || 0))}일</b></div>` : ''}</div>
+      ${others.length ? `<div style="font-size:12px;color:#b45309;margin-top:6px"><i class="ti ti-users"></i> 같은 날 휴가: ${others.join(', ')}</div>` : ''}
+      <div style="display:flex;gap:7px;margin-top:9px"><button class="btn btn-sm" style="flex:1;color:#c0341d" onclick="leaveReject('${l.id}')"><i class="ti ti-x"></i>반려</button><button class="btn btn-pri btn-sm" style="flex:2" onclick="leaveApprove('${l.id}')"><i class="ti ti-check"></i>승인</button></div>
+    </div>`; }).join('') : `<div class="empty"><i class="ti ti-circle-check"></i>결재할 신청이 없습니다</div>`;
+  const done = (state.leaves || []).filter(l => l.status !== 'pending').sort((a, b) => (+b.decAt || +b.cancelAt || 0) - (+a.decAt || +a.cancelAt || 0)).slice(0, 20);
+  return `<div style="font-size:12px;color:var(--t3);margin-bottom:9px">결재: ${lvApprovers().map(m => esc(m.name)).join(' · ')} — 한 분만 승인해도 처리됩니다</div>${cards}${done.length ? lvListCard(done, '최근 처리한 건', false) : ''}`;
+}
+async function leaveApprove(id) {
+  const l = (state.leaves || []).find(x => x.id === id); if (!l || !isAdmin()) return;
+  if (l.status !== 'pending') { toast('이미 처리된 건입니다'); return; }
+  try { await Store.update('leaves', id, { status: 'approved', decBy: (me && me.name) || '', decAt: Date.now() }); toast(l.name + ' ' + (LV_TYPES[l.type] || {}).n + ' 승인'); } catch (e) { toast('저장 실패'); }
+}
+async function leaveReject(id) {
+  const l = (state.leaves || []).find(x => x.id === id); if (!l || !isAdmin()) return;
+  if (l.status !== 'pending') { toast('이미 처리된 건입니다'); return; }
+  const r = prompt('반려 사유 (신청한 직원에게 보입니다)', ''); if (r === null) return;
+  try { await Store.update('leaves', id, { status: 'rejected', decBy: (me && me.name) || '', decAt: Date.now(), rejReason: String(r).trim() }); toast('반려했습니다'); } catch (e) { toast('저장 실패'); }
+}
+/* ── ③ 전체 현황 ── */
+function lvAllHtml() {
+  const S = lvStaff();
+  const rows = S.map(m => { const s = lvStatus(m);
+    const cell = v => `<td style="text-align:right">${v}</td>`;
+    return `<tr>
+      <td style="white-space:nowrap"><b>${esc(m.name)}</b>${m.role === 'admin' ? ' <span style="font-size:10px;color:var(--t3)">결재</span>' : ''}</td>
+      <td><input type="date" value="${esc(m.hireDate || '')}" onchange="lvSetHire('${m.id}',this.value)" style="font-size:12.5px;padding:4px 6px;border:1.5px solid ${m.hireDate ? 'var(--bd2)' : '#e8a99f'};border-radius:7px"></td>
+      <td style="white-space:nowrap;font-size:12px">${m.hireDate ? lvTenure(m.hireDate) : '-'}</td>
+      ${s && !s.before ? cell(lvFmtD(s.granted + s.adj)) + cell(lvFmtD(s.used)) + cell(s.pend ? `<span style="color:#b45309">${lvFmtD(s.pend)}</span>` : '0') + cell(`<b style="color:${s.remain < 0 ? 'var(--red-t)' : 'var(--gd)'}">${lvFmtD(s.remain)}</b>`)
+        + `<td style="white-space:nowrap;font-size:12px;${s.dleft <= 60 ? 'color:#c0341d;font-weight:700' : ''}">${esc(s.expire)}${s.dleft <= 60 ? ' (D-' + s.dleft + ')' : ''}</td>`
+        : `<td colspan="5" style="color:var(--t3);font-size:12px">${m.hireDate ? '입사 전' : '입사일을 넣으면 자동 계산됩니다'}</td>`}
+      <td style="white-space:nowrap">${s && !s.before ? `<button class="btn btn-sm btn-ghost" title="앱 쓰기 전 사용분·포상 등" onclick="lvAdjust('${m.id}')">조정${s.adj ? ' ' + (s.adj > 0 ? '+' : '') + lvFmtD(s.adj) : ''}</button>` : ''}<button class="btn btn-sm btn-ghost" onclick="openLeaveForm('${m.id}')">기록</button></td>
+    </tr>`; }).join('');
+  return `<div class="card" style="padding:13px 15px;margin-bottom:12px">
+      <div class="card-h"><h3><i class="ti ti-users"></i>직원별 현황</h3><button class="btn btn-sm" onclick="lvExcel()"><i class="ti ti-file-spreadsheet"></i>엑셀</button></div>
+      <div style="font-size:11.5px;color:var(--t3);margin-bottom:8px">입사일을 넣으면 발생·소멸이 자동으로 계산됩니다. «조정» = 앱 쓰기 전에 이미 쓴 연차(−)·포상 휴가(+) 등, 지금 사용 기간에만 적용됩니다.</div>
+      <div style="overflow-x:auto"><table class="tbl" style="width:100%;border-collapse:collapse;font-size:13px;min-width:720px">
+        <thead><tr style="text-align:left;color:var(--t3);font-size:11.5px"><th>직원</th><th>입사일</th><th>근속</th><th style="text-align:right">발생</th><th style="text-align:right">사용</th><th style="text-align:right">대기</th><th style="text-align:right">남음</th><th>소멸일</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div></div>
+    ${lvCalendarHtml()}
+    ${lvListCard((state.leaves || []).filter(l => l.status !== 'canceled'), '전체 내역 (최근 60건)', false)}`;
+}
+async function lvSetHire(mid, v) {
+  if (!isAdmin()) return;
+  if (v && !lvParse(v)) { toast('날짜 형식이 아닙니다'); return; }
+  try { await Store.update('members', mid, { hireDate: v || '' }); toast('입사일 저장 — 연차가 다시 계산됩니다'); } catch (e) { toast('저장 실패'); }
+}
+async function lvAdjust(mid) {
+  const m = (state.members || []).find(x => x.id === mid); const s = m && lvStatus(m); if (!s || s.before) return;
+  const cur = +(((m.leaveAdj || {})[s.period.start]) || 0);
+  const r = prompt(`${m.name} — 지금 사용 기간(${s.period.start} ~ ${s.period.end}) 조정 일수\n· 앱 쓰기 전에 이미 쓴 연차는 빼기 (예: -3)\n· 포상 휴가 등은 더하기 (예: 1)\n· 반차는 0.5`, String(cur));
+  if (r === null) return;
+  const v = Math.round((parseFloat(String(r).replace(/[^\d.\-]/g, '')) || 0) * 2) / 2;
+  const adj = Object.assign({}, m.leaveAdj || {}); if (v) adj[s.period.start] = v; else delete adj[s.period.start];
+  try { await Store.update('members', mid, { leaveAdj: adj }); toast('조정 저장: ' + (v > 0 ? '+' : '') + lvFmtD(v) + '일'); } catch (e) { toast('저장 실패'); }
+}
+function lvCalMove(k) { const b = filters.lvMonth || todayStr().slice(0, 7); filters.lvMonth = lvAddM(b + '-01', k).slice(0, 7); render(); }
+function lvCalendarHtml() {
+  const ym = filters.lvMonth || todayStr().slice(0, 7);
+  const first = lvParse(ym + '-01'), last = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  const by = {};
+  (state.leaves || []).filter(l => l.status === 'approved' || l.status === 'pending').forEach(l => lvDays(l).forEach(x => { if (x.d.startsWith(ym)) (by[x.d] = by[x.d] || []).push({ l, v: x.v }); }));
+  let cells = ''; for (let i = 0; i < first.getDay(); i++) cells += '<div></div>';
+  for (let d = 1; d <= last; d++) {
+    const ds = ym + '-' + String(d).padStart(2, '0'), w = (first.getDay() + d - 1) % 7, hol = HOLIDAYS[ds];
+    cells += `<div style="min-height:58px;border:1px solid var(--soft);border-radius:7px;padding:3px 4px;background:${ds === todayStr() ? '#f2fbf6' : (w === 0 || w === 6 || hol) ? '#fafafa' : '#fff'}">
+      <div style="font-size:11px;font-weight:700;color:${w === 0 || hol ? '#c0341d' : w === 6 ? '#2f6fed' : 'var(--t2)'}">${d}${hol ? ' <span style="font-weight:500;font-size:9.5px">' + esc(hol) + '</span>' : ''}</div>
+      ${(by[ds] || []).map(x => `<div style="font-size:10.5px;line-height:1.35;margin-top:2px;padding:0 4px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${x.l.status === 'pending' ? 'background:#fff8ec;color:#b45309' : 'background:#eef7f1;color:#1f6b45'}">${esc(String(x.l.name || '').split(' ')[0])}${x.v === 0.5 ? ' ½' : ''}</div>`).join('')}</div>`;
+  }
+  return `<div class="card" style="padding:13px 15px;margin-bottom:12px">
+    <div class="card-h"><h3><i class="ti ti-calendar"></i>휴가 달력</h3><span style="display:flex;gap:4px;align-items:center"><button class="btn btn-sm btn-ghost" onclick="lvCalMove(-1)"><i class="ti ti-chevron-left"></i></button><b>${esc(ym.replace('-', '년 '))}월</b><button class="btn btn-sm btn-ghost" onclick="lvCalMove(1)"><i class="ti ti-chevron-right"></i></button></span></div>
+    <div style="font-size:11px;color:var(--t3);margin-bottom:6px"><span style="color:#1f6b45">■</span> 승인 · <span style="color:#b45309">■</span> 결재 대기 · ½ 반차</div>
+    <div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;font-size:11px;text-align:left">${['일', '월', '화', '수', '목', '금', '토'].map((d, i) => `<div style="text-align:center;font-weight:700;color:${i === 0 ? '#c0341d' : i === 6 ? '#2f6fed' : 'var(--t3)'}">${d}</div>`).join('')}${cells}</div></div>`;
+}
+function lvExcel() {
+  if (typeof XLSX === 'undefined') { toast('엑셀 모듈을 못 불러왔습니다'); return; }
+  const aoa = [['직원', '입사일', '근속', '사용 기간 시작', '소멸일', '발생', '조정', '사용', '결재 대기', '남음']];
+  lvStaff().forEach(m => { const s = lvStatus(m);
+    aoa.push(s && !s.before ? [m.name, s.hire, lvTenure(s.hire), s.period.start, s.expire, s.granted, s.adj, s.used, s.pend, s.remain] : [m.name, m.hireDate || '', '', '', '', '', '', '', '', '']); });
+  aoa.push([]); aoa.push(['직원', '종류', '시작', '종료', '일수', '상태', '사유', '처리']);
+  (state.leaves || []).slice().sort((a, b) => String(a.start).localeCompare(String(b.start))).forEach(l => aoa.push([l.name, (LV_TYPES[l.type] || {}).n || '', l.start, l.end || l.start, +l.days || 0, (LV_ST[l.status] || [''])[0], l.reason || '', l.decBy || '']));
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '연차');
+  XLSX.writeFile(wb, '연차현황_' + todayStr() + '.xlsx');
+}
+/* ── ④ 연차수당 ── */
+function lvPayCalc(monthly, days) {
+  const mo = Math.round(+monthly || 0); if (!(mo > 0)) return null;
+  const hour = mo / 209, day = Math.round(hour * 8);
+  return { hour, day, amt: Math.round(day * Math.max(0, +days || 0)) };
+}
+function lvPayHtml() {
+  const warn = _wagesErr ? `<div class="banner warn" style="margin-bottom:10px;font-size:12px"><i class="ti ti-alert-triangle"></i><span style="flex:1">월 통상임금을 불러오지 못했습니다 (${esc(_wagesErr)}). 보안 설정에서 «wages» 읽기가 막혀 있을 수 있습니다.</span></div>` : '';
+  const rows = lvStaff().map(m => {
+    const s = lvStatus(m), w = wageOf(m), mo = w ? +w.monthly || 0 : 0;
+    const now = s && !s.before ? lvPayCalc(mo, s.remain) : null;
+    const pc = s && s.prevCalc && s.prevCalc.remain > 0 ? s.prevCalc : null, prevAmt = pc ? lvPayCalc(mo, pc.remain) : null;
+    return `<tr>
+      <td style="white-space:nowrap"><b>${esc(m.name)}</b></td>
+      <td>${m.email ? `<input inputmode="numeric" value="${mo ? fmtWon(mo) : ''}" placeholder="월 통상임금" onchange="lvSetWage('${m.id}',this.value)" style="width:120px;text-align:right;font-size:12.5px;padding:4px 6px;border:1.5px solid var(--bd2);border-radius:7px">` : '<span style="font-size:11px;color:var(--t3)">이메일 없음</span>'}</td>
+      <td style="text-align:right;font-size:12px">${now ? fmtWon(now.day) : '-'}</td>
+      <td style="text-align:right">${s && !s.before ? lvFmtD(s.remain) + '일' : '-'}</td>
+      <td style="white-space:nowrap;font-size:12px;${s && s.dleft <= 60 ? 'color:#c0341d;font-weight:700' : ''}">${s && !s.before ? esc(s.expire) + (s.dleft <= 60 ? ' (D-' + s.dleft + ')' : '') : '-'}</td>
+      <td style="text-align:right"><b>${now ? fmtWon(now.amt) : '-'}</b></td>
+      <td style="text-align:right;font-size:12px">${pc ? `${esc(s.prev.end)} 소멸 ${lvFmtD(pc.remain)}일${prevAmt ? '<br><b>' + fmtWon(prevAmt.amt) + '원</b>' : ''}` : '-'}</td>
+      <td>${s && !s.before ? `<button class="btn btn-sm btn-ghost" onclick="lvRetire('${m.id}')">퇴사 정산</button>` : ''}</td></tr>`; }).join('');
+  return `${warn}<div class="banner info" style="margin-bottom:10px;font-size:12px"><i class="ti ti-lock"></i><span style="flex:1;min-width:0">
+      월 통상임금은 <b>관리자만 보는 곳</b>에 저장됩니다 (직원 화면에는 안 나옵니다). 통상임금에 넣을 항목은 협의 중 — 금액은 <b>참고용 계산</b>입니다.<br>
+      계산: 통상시급 = 월 통상임금 ÷ 209 · 1일 = 시급 × 8 (원 미만 반올림) · 수당 = 1일 × 남은 일수</span></div>
+    <div class="card" style="padding:13px 15px"><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:760px">
+      <thead><tr style="text-align:left;color:var(--t3);font-size:11.5px"><th>직원</th><th>월 통상임금</th><th style="text-align:right">1일 통상임금</th><th style="text-align:right">지금 남음</th><th>소멸일</th><th style="text-align:right">지금 기준 예상 수당</th><th style="text-align:right">직전 소멸분</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table></div></div>`;
+}
+async function lvSetWage(mid, v) {
+  if (!isAdmin()) return;
+  const m = (state.members || []).find(x => x.id === mid); const k = String((m && m.email) || '').toLowerCase(); if (!k) { toast('이메일이 없는 직원입니다'); return; }
+  const mo = Math.round(_numv(v) || 0);
+  try { await Store.setMerge('wages', k, { monthly: mo, mid: m.id, name: m.name || '', at: Date.now(), by: (me && me.name) || '' }); toast(m.name + ' 월 통상임금 저장'); }
+  catch (e) { toast('저장 실패: ' + ((e && e.code === 'permission-denied') ? '보안 설정에서 막혀 있습니다' : ((e && e.message) || e))); }
+}
+function lvRetire(mid) {
+  const m = (state.members || []).find(x => x.id === mid); if (!m) return;
+  const d = prompt(m.name + ' — 퇴사일 (예: 2026-12-31)', todayStr()); if (d === null) return;
+  if (!lvParse(d)) { toast('날짜 형식이 아닙니다'); return; }
+  const s = lvStatus(m, d); if (!s || s.before) { toast('입사일 이전입니다'); return; }
+  const w = wageOf(m), c = lvPayCalc(w ? w.monthly : 0, s.remain);
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-calculator"></i>퇴사 정산 — ${esc(m.name)}</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:13.5px;line-height:1.9">퇴사일 <b>${esc(d)}</b> · 사용 기간 ${esc(s.period.start)} ~<br>
+      그날까지 발생 ${lvFmtD(s.granted + s.adj)}일 − 사용 ${lvFmtD(s.used)}일 = <b>남은 ${lvFmtD(s.remain)}일</b><br>
+      ${c ? `1일 통상임금 ${fmtWon(c.day)}원 × ${lvFmtD(s.remain)}일 = <b style="font-size:17px;color:var(--gd)">${fmtWon(c.amt)}원</b>` : '<span style="color:var(--t3)">월 통상임금을 넣으면 금액이 계산됩니다</span>'}
+      ${s.prevCalc && s.prevCalc.remain > 0 ? `<br><span style="font-size:12px;color:var(--t3)">※ 직전 기간(${esc(s.prev.end)} 소멸) 남은 ${lvFmtD(s.prevCalc.remain)}일은 따로 확인하세요</span>` : ''}
+      <div style="font-size:11.5px;color:var(--t3);margin-top:8px">참고용 계산입니다 — 실제 지급은 노무사·세무사와 확인하세요.</div></div>`);
+}
