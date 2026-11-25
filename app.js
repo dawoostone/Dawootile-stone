@@ -23458,7 +23458,9 @@ function calcQuote() {
    제안서 v2(11/19) + 사용자 결정:
      · 승인: 관리자(임창걸 지사장 · 조은수 실장) — 한 분만 승인해도 처리
      · 발생: 입사 1년 전 = 매달 입사일에 1일 (최대 11일, 입사 1년 되는 전날까지 사용)
-             1년마다 법정 연차 15일, 3년차부터 2년마다 +1 (최대 25)
+             1년 만근 → 15일, 그 뒤 1년 만근할 때마다 +1일 (최대 25)
+             ★ 2026-11-26 사용자: "입사 만근 1년 이후 법정연차 발생 / 그 이후 1년 만근시마다 연 1개씩 추가 발생"
+               (법은 2년마다 +1 — 회사 기준이 더 넉넉하므로 회사 기준으로 계산)
      · 만근: 출근 기록을 따로 받지 않는다 — «입사일 기준으로 날짜가 차면 만근» (사용자: "입사일자 기준으로 1년 채우면 만근으로")
      · 단위: 1일 · 반차(0.5)
      · 입사일은 관리자가 직원마다 지정 → 나머지는 자동 계산
@@ -23478,7 +23480,7 @@ function lvParse(s) { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || '')
 function lvAddM(s, k) { const d = lvParse(s); if (!d) return ''; const y = d.getFullYear(), mo = d.getMonth() + k, day = d.getDate(); const last = new Date(y, mo + 1, 0).getDate(); return _ymd(new Date(y, mo, Math.min(day, last))); }
 function lvAddD(s, k) { const d = lvParse(s); if (!d) return ''; d.setDate(d.getDate() + k); return _ymd(d); }
 function lvDiffD(a, b) { const x = lvParse(a), y = lvParse(b); return (x && y) ? Math.round((y - x) / 864e5) : 0; }
-function lvAnnualDays(n) { return Math.min(25, 15 + Math.floor((n - 1) / 2)); }
+function lvAnnualDays(n) { return Math.min(25, 15 + Math.max(0, n - 1)); }   // 1년 15 · 2년 16 · 3년 17 … 11년 이상 25
 function lvWorkday(d) { const x = lvParse(d); if (!x) return false; const w = x.getDay(); return w !== 0 && w !== 6 && !HOLIDAYS[d]; }
 /* 한 건이 «어느 날 몇 일»을 쓰는지 — 주말·공휴일은 빼고, 반차는 0.5 */
 function lvDays(l) {
