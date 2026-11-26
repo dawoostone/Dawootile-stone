@@ -10697,22 +10697,37 @@ function _moneyBuild() {
        · 견적별 결제 표시도 맞춘다 — 위에서 날짜 순서로 채우고 남은 돈은 «아직 덜 받은 견적»에
          오래된 것부터 날짜 상관없이 채운다 (다른 견적에 지정해 둔 돈은 그대로 둔다).
        ══════════════════════════════════════════════════════════ */
+    /* ★★ 2026-11-26 사용자: "왜 결제 안 된 게 다 결제완료로 잡히는지"
+       위 «전체 금액에서 차감» 때문에, 거래처가 예전에 더 보낸 돈(앱에 없는 거래 대금 등)이
+       몇 달 뒤 새 견적까지 «결제완료»로 채웠다 (실측 74건 · 1억 2,531만원 — 현대엘앤씨는 11/10 뒤 입금이
+       없는데 11/12~11/25 견적이 다 결제완료, 동양석재 11/23 견적 163만도 입금 없이 결제완료).
+       → 사용자 선택: «견적 이후 입금만 인정»
+         · 견적일 «7일 전»부터 들어온 돈까지만 그 견적 결제로 본다 (진상석재처럼 하루 먼저 보낸 돈은 그대로 붙는다)
+         · 그보다 앞선 돈은 «미배정 입금»(extra)으로 따로 남긴다 — 원장에서 견적에 직접 지정하면 붙는다
+         · 거래처 미수 = 아직 안 받은 견적(·이월) 합계
+         · 선입금 인정 거래처 · 지정(pin)한 돈은 예전처럼 날짜를 안 본다 */
     line.forEach(x => {
       if (!(x.need > 0)) return;
+      const lim = x.d ? _moneyMinusDays(x.d, MONEY_PRE_DAYS) : '';
       for (const i of ins) {
         if (x.need <= 0) break;
         if (i.left <= 0) continue;
         if (i.pin && i.pin !== x.id) continue;
+        if (!_prepay && !i.pin && lim && i.d && i.d < lim) continue;   // 견적보다 한참 먼저 들어온 돈은 이 견적 대금이 아니다
         const use = Math.min(x.need, i.left); i.left -= use; x.need -= use; x.got += use;
       }
     });
     line.forEach(x => { if (x.id) P[x.id] = x.got; else o.openingPaid = x.got; applied += x.got; });
     o.applied = applied;                                       // 견적(·이월)에 붙은 돈
-    o.rem = Math.max(0, (o.sale + (o.opening || 0)) - o.paid);  // 미수 = 앱 매출 + 이월 − 받은 돈 전체
-    o.extra = Math.max(0, o.paid - (o.sale + (o.opening || 0))); // 매출보다 더 받은 돈 (선입금 · 앱 밖 대금)
+    const _need = line.reduce((a, x) => a + Math.max(0, x.need || 0), 0);
+    const _left = ins.reduce((a, i) => a + Math.max(0, i.left || 0), 0) - (o.refund || 0);   // 어디에도 안 붙은 돈 − 돌려준 돈
+    o.rem = _need + Math.max(0, -_left);                       // 미수 = 아직 안 받은 견적(·이월) 합계
+    o.extra = Math.max(0, _left);                              // 미배정 입금 (선입금 · 앱 밖 대금 · 견적보다 한참 앞선 돈)
   });
   _cmAt = Date.now(); _cmCache = M; _qpCache = P;
 }
+const MONEY_PRE_DAYS = 7;   // 견적일 며칠 전 입금까지 그 견적 결제로 볼지 (2026-11-26)
+function _moneyMinusDays(d, k) { const x = new Date(String(d).slice(0, 10) + 'T00:00:00'); if (isNaN(x)) return ''; x.setDate(x.getDate() - k); return _ymd(x); }
 function clientMoneyMap() { _moneyBuild(); return _cmCache; }
 function quotePaidMap() { _moneyBuild(); return _qpCache; }
 const _MONEY0 = { sale: 0, paid: 0, applied: 0, rem: 0, extra: 0, qn: 0, opening: 0, openingPaid: 0 };
