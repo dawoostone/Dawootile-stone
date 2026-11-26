@@ -23601,7 +23601,7 @@ function renderLeave() {
 function lvMeHtml() {
   const m = lvMeMember();
   if (!m) return `<div class="empty"><i class="ti ti-user-question"></i>직원 목록에서 내 계정을 찾지 못했습니다</div>`;
-  return lvSummaryCard(m, true) + lvListCard(lvOf(m.id), '내 신청 내역', true);
+  return lvSummaryCard(m, true) + lvListCard(lvOf(m.id), '내 신청 내역', true) + lvCalendarHtml();   // ★ 2026-11-26 휴가 달력은 «내 신청 내역» 밑으로 (사용자 요청)
 }
 function lvSummaryCard(m, mine) {
   const s = lvStatus(m);
@@ -23753,7 +23753,6 @@ function lvAllHtml() {
       <div style="overflow-x:auto"><table class="tbl" style="width:100%;border-collapse:collapse;font-size:13px;min-width:720px">
         <thead><tr style="text-align:left;color:var(--t3);font-size:11.5px"><th>직원</th><th>입사일</th><th>근속</th><th style="text-align:right">발생</th><th style="text-align:right">사용</th><th style="text-align:right">대기</th><th style="text-align:right">남음</th><th>소멸일</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table></div></div>
-    ${lvCalendarHtml()}
     ${lvListCard((state.leaves || []).filter(l => l.status !== 'canceled'), '전체 내역 (최근 60건)', false)}`;
 }
 async function lvSetHire(mid, v) {
