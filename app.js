@@ -12442,6 +12442,7 @@ function cutRenderResult() {
       </span></div>` : ''}
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px">
       <button class="btn btn-sm" onclick="cutAddSheet()"><i class="ti ti-plus"></i>판재 추가</button>
+      <button class="btn btn-sm btn-pri" onclick="cutPlanPdf()"><i class="ti ti-file-type-pdf"></i>PDF 저장</button>
       ${_cutTouched ? `<button class="btn btn-sm" style="color:var(--gd);border-color:var(--gd)" onclick="cutAutoAgain()"><i class="ti ti-refresh"></i>자동배치로 되돌리기</button>` : ''}
     </div>`;
 
@@ -12509,6 +12510,72 @@ function _cutPieceText(x, y, w, h, sizeTxt, lb) {
   const room = w - 6 - String(sizeTxt).length * 5.8 - 12;          // 얇은 조각 — 옆에 붙일 자리가 있나
   if (room >= 20) return `<text x="${cx}" y="${(y + h / 2 + 3).toFixed(1)}" text-anchor="middle" font-size="10" fill="#333">${sizeTxt} · <tspan font-weight="800" fill="#1b4fb0">${esc(fit(lb, room))}</tspan></text>`;
   return plain;
+}
+/* ══════════════════════════════════════════════════════════
+   ★★ 커팅플랜 PDF 저장 (2026-11-26) — 사용자: "커팅플랜 PDF로 저장할 수 있게 해줘"
+   지금 화면에 그려진 배치(손으로 옮긴 것 포함) 그대로 A4 세로로 만든다.
+     1쪽: 제목 · 판재 규격 · 요약(조각수 · 면적 · 톱질 길이 · 판재 장수 · 자투리) · 부재 목록
+     그다음: 판재 그림 (한 쪽에 들어가는 만큼)
+   글자가 한글이라 PDF 글꼴 대신 «그림으로 찍어서» 넣는다 (견적서 PNG 와 같은 방식 — html2canvas).
+   ══════════════════════════════════════════════════════════ */
+async function cutPlanPdf() {
+  if (!_cutSheets || !_cutCtx) { toast('먼저 커팅플랜을 돌려 주세요'); return; }
+  toast('PDF 만드는 중…');
+  try {
+    await _ensureLib('html2canvas', 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');
+    await _ensureLib('jspdf', 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+  } catch (e) { toast('PDF 모듈을 불러오지 못했습니다 — 인터넷 연결을 확인해 주세요'); return; }
+  const c = _cutCtx, snap = cutPlanSnapshot(), parts = _collectCutParts();
+  const used = _cutSheets.filter(x => x.placed.length).length;
+  const sheetArea = used * c.Ws * c.Hs, sawLen = _cutTouched ? null : cutSawLength(_cutSheets);
+  const k = cutPieceCount(_cutSheets);
+  const m2 = v => (v / 1e6).toFixed(3);
+  const st = (lab, val) => `<div style="flex:1;min-width:100px;background:#f3f5f4;border-radius:8px;padding:7px 6px;text-align:center"><div style="font-size:10px;color:#666">${lab}</div><div style="font-size:14px;font-weight:800;color:#185fa5">${val}</div></div>`;
+  const head = `<div class="blk">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #222;padding-bottom:8px;margin-bottom:10px">
+      <div><div style="font-size:22px;font-weight:800;letter-spacing:2px">커팅플랜</div><div style="font-size:11px;color:#666;margin-top:3px">${esc(cutPlanTitle(snap))}</div></div>
+      <div style="text-align:right;font-size:11px;color:#444">${esc((companyInfo() || {}).name || '')}<br>${esc(todayStr())}${me && me.name ? ' · ' + esc(me.name) : ''}</div></div>
+    <div style="font-size:12px;margin-bottom:8px">판재 <b>${c.Ws}×${c.Hs}</b> · 톱날 ${c.kerf}mm${snap && snap.grain ? ' · <b>결방향 고정</b>' : ''}${_cutTouched ? ' · <b style="color:#b7791f">손으로 옮긴 배치</b>' : ''}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      ${st('총 조각수', k.pcs + ' 조각')}${st('부재 총 면적', m2(c.partArea) + ' ㎡')}${st('재단 길이', sawLen == null ? '—' : (sawLen / 1000).toFixed(2) + ' m')}
+      ${st('사용 판재', used + ' 장')}${st('자투리', m2(Math.max(0, sheetArea - c.partArea)) + ' ㎡')}</div>
+    ${(c.noFit || []).filter(x => !(x.subs && x.subs.length)).length || (c.gOver || []).length ? `<div style="background:#fdecea;color:#8a2b1a;border-left:4px solid #c0341d;padding:7px 10px;font-size:11.5px;margin-bottom:10px"><b>⚠ 판재에 들어가지 않는 부재가 있습니다 — 확인 후 사용하세요</b></div>` : ''}
+    <table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr style="background:#222;color:#fff"><th style="padding:5px">#</th><th style="padding:5px">가로×세로 (mm)</th><th style="padding:5px">수량</th><th style="padding:5px">라벨</th><th style="padding:5px">회전</th></tr></thead>
+      <tbody>${parts.map((p, i) => `<tr style="background:${i % 2 ? '#f7f7f7' : '#fff'}"><td style="padding:4px 6px;text-align:center">${p.idx}</td><td style="padding:4px 6px;text-align:center"><b>${p.l}×${p.w}</b></td><td style="padding:4px 6px;text-align:center">${p.q}</td><td style="padding:4px 6px">${esc(p.lb || '')}</td><td style="padding:4px 6px;text-align:center">${p.rot ? '가능' : '<b>결방향</b>'}</td></tr>`).join('')}</tbody></table>
+    <div style="font-size:10.5px;color:#888;margin-top:6px">빨간 점선 = 톱질선 · 빗금 = 남는 부분(자투리) · #번호 = 부재 번호</div></div>`;
+  const blocks = [head].concat(_cutSheets.filter(x => x.placed.length).map((sh, i) => `<div class="blk">${cutSheetSvg(sh, c.Ws, c.Hs, i + 1)}</div>`));
+  const ifr = document.createElement('iframe'); ifr.setAttribute('aria-hidden', 'true');
+  ifr.style.cssText = 'position:fixed;left:-10000px;top:0;width:760px;height:1200px;border:0;background:#fff';
+  document.body.appendChild(ifr);
+  try {
+    const d = ifr.contentDocument;
+    d.open(); d.write(`<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@1.3.9/dist/web/static/pretendard.min.css"><style>
+      :root{--t1:#111;--t2:#555;--t3:#888;--soft:#f3f5f4;--gd:#1f6b45}*{box-sizing:border-box}body{margin:0;background:#fff;font-family:'Pretendard Variable',Pretendard,'맑은 고딕','Malgun Gothic',sans-serif;color:#111}
+      .pg{width:718px;height:1015px;padding:26px 28px;background:#fff;overflow:hidden}.blk{margin-bottom:12px}svg{max-width:100%;height:auto}</style></head><body><div id="src" style="width:718px;padding:0 28px">${blocks.join('')}</div></body></html>`);
+    d.close();
+    await new Promise(r => setTimeout(r, 700));
+    /* 쪽 나누기 — 블록 높이를 재서 A4 한 쪽(여백 뺀 963px)에 들어가는 만큼씩 담는다 */
+    const srcEls = Array.from(d.querySelectorAll('#src > .blk')), MAXH = 963;
+    const pages = []; let cur = [], h = 0;
+    srcEls.forEach(b => { const bh = b.getBoundingClientRect().height + 12; if (cur.length && h + bh > MAXH) { pages.push(cur); cur = []; h = 0; } cur.push(b); h += bh; });
+    if (cur.length) pages.push(cur);
+    const pgEls = pages.map((list, i) => { const pg = d.createElement('div'); pg.className = 'pg'; list.forEach(b => pg.appendChild(b));
+      const ft = d.createElement('div'); ft.style.cssText = 'position:relative;font-size:9.5px;color:#aaa;text-align:right;margin-top:4px'; ft.textContent = (i + 1) + ' / ' + pages.length; pg.appendChild(ft);
+      d.body.appendChild(pg); return pg; });
+    d.getElementById('src').remove();
+    await new Promise(r => setTimeout(r, 200));
+    const pdf = new window.jspdf.jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    for (let i = 0; i < pgEls.length; i++) {
+      const cv = await html2canvas(pgEls[i], { scale: 2, backgroundColor: '#ffffff', width: 718, height: 1015, windowWidth: 760 });
+      if (i) pdf.addPage();
+      pdf.addImage(cv.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, 210, 297);
+    }
+    const nm = '커팅플랜_' + c.Ws + 'x' + c.Hs + '_' + todayStr() + '.pdf';
+    pdf.save(nm);
+    toast('PDF 저장됨 — ' + pgEls.length + '쪽');
+  } catch (e) { console.warn('cutPlanPdf', e); toast('PDF 만들기 실패 — ' + ((e && e.message) || e)); }
+  finally { ifr.remove(); }
 }
 function cutSheetSvg(sh, Ws, Hs, n, si) {
   const LB = (_cutCtx && _cutCtx.labels) || {};
