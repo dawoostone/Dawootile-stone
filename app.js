@@ -6292,7 +6292,7 @@ function qCtypeNoteRefresh() {
       + (_lock ? ` <span style="color:var(--t3)" title="사업자 조회·계산서 발행이 이 값을 못 바꿉니다"><i class="ti ti-lock" style="font-size:11px"></i> ${esc(_lock)} 지정</span>` : '');
     return;
   }
-  box.innerHTML = `<span style="color:#a2560f">거래처는 <b>${esc(cur || '미지정')}</b></span>
+  box.innerHTML = `<span style="color:#a2560f">거래처는 <b>${esc(cur || '미지정')}</b>${cur ? ` — 이 견적만 ${esc(pick)} 단가로 저장됩니다` : ''}</span>
     <button type="button" class="btn btn-sm" style="padding:1px 7px;font-size:10.5px;margin-left:4px;color:var(--gd);border-color:var(--gd)"
       onclick="qCtypeSaveToClient()"><i class="ti ti-device-floppy"></i>${esc(pick)}${_koRo(pick)} 저장</button>`;
 }
@@ -7456,8 +7456,14 @@ async function submitQuote(id, kind) {
     renderQuote(); qEditReturn();                  // ★ 저장 후 보던 자리 그대로
     /* ★ 거래처 «업체 구분» 을 견적에서 고른 값으로 맞춘다 — 바뀌면 말해 준다(예전엔 조용했다) */
     try {
+      /* ★★ 2026-11-26 사용자: "록스세라믹 유통인데 왜 업체구분 자꾸 인테리어로 뜨는지"
+         견적 한 장을 인테리어 단가로 저장하면 거래처 업체 구분까지 인테리어로 덮어써서,
+         그다음 새 견적이 전부 인테리어로 시작했다 (록스세라믹: 9/7~11/13 인테리어 견적 9건 — 저장할 때마다 뒤집힘).
+         → 견적 저장은 이제 «업체 구분이 비어 있는 거래처»에만 채워 넣는다.
+           이미 정해진 거래처는 견적에서 다른 유형을 골라도 그 견적에만 적용된다.
+           거래처 유형을 바꾸려면 업체 구분 밑의 «○○으로 저장» 버튼(또는 거래처 화면)으로 바꾼다. */
       const cdoc = (state.clients || []).find(x => _normName(x.value) === _normName(client));
-      if (cdoc && (cdoc.ctype || '') !== ctype) {
+      if (cdoc && !String(cdoc.ctype || '').trim() && ctype) {
         const _was = (cdoc.ctype || '').trim();
         await Store.update('clients', cdoc.id, ctypeStamp(ctype));
         setTimeout(() => toast(client + ' 업체 구분 ' + (_was ? (_was + ' → ') : '') + ctype + _koRo(ctype) + ' 저장됨'), 900);
