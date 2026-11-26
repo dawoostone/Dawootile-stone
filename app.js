@@ -6689,7 +6689,24 @@ function qDraftRestore() {
 }
 function qDraftClear() { qDraftDrop(); const n = document.getElementById('qd-note'); if (n) n.style.display = 'none'; renderQuoteForm(); }
 
+/* ★ 2026-11-26 사용자: "견적서 저장 후에 위로 안 올라가게 스크롤 고정"
+   견적 작성·수정 화면을 열 때 목록에서 보던 자리(목록 상자 + 페이지)를 기억해 두고,
+   저장하거나 목록으로 돌아오면 그 자리로 되돌린다. */
+let _qEditRet = null;
+function qEditRemember() {
+  if (filters.quoteEdit) return;                    // 이미 작성 화면이면 목록 자리를 덮어쓰지 않는다
+  const L = el('q-list');
+  _qEditRet = { list: L ? L.scrollTop : 0, page: _pageScrollTop() };
+}
+function qEditReturn() {
+  const r = _qEditRet; _qEditRet = null; if (!r) return;
+  const go = () => { const L = el('q-list'); if (L && r.list) L.scrollTop = r.list; };
+  requestAnimationFrame(() => { go(); requestAnimationFrame(go); });
+  setTimeout(go, 150); setTimeout(go, 450);
+  _pageScrollTo(r.page); setTimeout(() => _pageScrollTo(r.page), 450);
+}
 function openQuoteInline(id, copy) {
+  qEditRemember();
   qScreenClear();                                   // ★ 다른 화면 스위치를 반드시 끈다
   filters.quoteEdit = id || 'new'; filters.quoteCopy = !!copy; filters.quoteCat = '';
   renderQuote(); if (el('pg-quote')) el('pg-quote').scrollIntoView({ block: 'start' });
@@ -6701,7 +6718,7 @@ function quoteOpFill() {
   const e2 = el('q-op'); if (e2) { e2.value = ex; quoteRecalc(); }
 }
 function quoteOpClear() { const e2 = el('q-op'); if (e2) e2.value = ''; const n = el('q-opnote'); if (n) n.value = ''; quoteRecalc(); }
-function quoteCancel() { qDraftDrop(); filters.quoteEdit = ''; filters.quoteCopy = false; filters.quoteCat = ''; filters.quoteBalanceOf = ''; filters.quoteBalancePre = 0; renderQuote(); }
+function quoteCancel() { qDraftDrop(); filters.quoteEdit = ''; filters.quoteCopy = false; filters.quoteCat = ''; filters.quoteBalanceOf = ''; filters.quoteBalancePre = 0; renderQuote(); qEditReturn(); }
 /* ★ 계약금 받은 견적 → 수량 고쳐서 «잔금 견적서» 만들기 (2026-09-28)
    ★ 2026-09-28 고침 — 예전에는 «확정주문 + 앱이 자동으로 붙인 입금»이 있어야만 버튼이 떴다.
      그런데 계약금은 보통 «확정주문을 누르기 전»에 들어온다. 실제로 삼성타일 Q20260904-13 은
@@ -7436,7 +7453,7 @@ async function submitQuote(id, kind) {
     toast(_balQ ? ('잔금 견적서 저장됨 · 기받은 계약금 ' + fmtWon(data.prepaid) + '원 차감')
       : ((+data.prepaid || 0) > 0 ? (QKIND_NAME[data.qKind] + '으로 저장됨 · 과입금 ' + fmtWon(data.prepaid) + '원 차감') : (QKIND_NAME[data.qKind] + '으로 저장됨')));
     try { moneyBust(); } catch (e) { }
-    renderQuote();
+    renderQuote(); qEditReturn();                  // ★ 저장 후 보던 자리 그대로
     /* ★ 거래처 «업체 구분» 을 견적에서 고른 값으로 맞춘다 — 바뀌면 말해 준다(예전엔 조용했다) */
     try {
       const cdoc = (state.clients || []).find(x => _normName(x.value) === _normName(client));
