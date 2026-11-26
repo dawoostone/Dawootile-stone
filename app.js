@@ -23693,7 +23693,7 @@ async function saveLeave() {
     status: f.byAdmin ? 'approved' : 'pending', by: (me && me.name) || '', at: Date.now() };
   if (f.byAdmin) { doc.decBy = (me && me.name) || ''; doc.decAt = Date.now(); doc.byAdmin = true; }
   _lvBusy = true;
-  try { await Store.add('leaves', doc); closeModal(); toast(f.byAdmin ? '기록을 넣었습니다' : '신청했습니다 — 지사장님 · 실장님 중 한 분이 승인하면 처리됩니다'); }
+  try { await Store.add('leaves', doc); closeModal(); toast(f.byAdmin ? '기록을 넣었습니다' : '신청했습니다'); }
   catch (e) { toast('저장 실패: ' + ((e && e.code === 'permission-denied') ? '보안 설정에서 연차 기록 저장이 막혀 있습니다 — 관리자에게 알려주세요' : ((e && e.message) || e))); }
   finally { _lvBusy = false; }
 }
@@ -23720,7 +23720,7 @@ function lvInboxHtml() {
       <div style="display:flex;gap:7px;margin-top:9px"><button class="btn btn-sm" style="flex:1;color:#c0341d" onclick="leaveReject('${l.id}')"><i class="ti ti-x"></i>반려</button><button class="btn btn-pri btn-sm" style="flex:2" onclick="leaveApprove('${l.id}')"><i class="ti ti-check"></i>승인</button></div>
     </div>`; }).join('') : `<div class="empty"><i class="ti ti-circle-check"></i>결재할 신청이 없습니다</div>`;
   const done = (state.leaves || []).filter(l => l.status !== 'pending').sort((a, b) => (+b.decAt || +b.cancelAt || 0) - (+a.decAt || +a.cancelAt || 0)).slice(0, 20);
-  return `<div style="font-size:12px;color:var(--t3);margin-bottom:9px">결재: ${lvApprovers().map(m => esc(m.name)).join(' · ')} — 한 분만 승인해도 처리됩니다</div>${cards}${done.length ? lvListCard(done, '최근 처리한 건', false) : ''}`;
+  return `${cards}${done.length ? lvListCard(done, '최근 처리한 건', false) : ''}`;
 }
 async function leaveApprove(id) {
   const l = (state.leaves || []).find(x => x.id === id); if (!l || !isAdmin()) return;
