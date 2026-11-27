@@ -139,8 +139,16 @@ function quoteCatSplit(q) {
   const _raw = Math.round(+((q && q.total) || 0)), _net = quoteNetTotal(q);
   const _rt = (_raw > 0 && _net !== _raw) ? (_net / _raw) : 1;
   const sup0 = Math.round(Math.round(+((q && q.supply) || 0)) * _rt), tot0 = _net;
+  /* ★ 2026-11-27 사용자: "이런 거 세라믹으로 분류 들어가면 안 되는데 — 견적서 양식과 내용을 유지한 채 분류만 바꿀 수 있게"
+     견적마다 «분류 지정»(catFix)을 두면 품목을 안 보고 그 분류로 통째로 센다.
+     견적서 양식(category)·품목·금액은 그대로다 — 통계·필터·배지만 바뀐다. */
+  const _fix = String((q && q.catFix) || '').trim();
+  if (_fix && LCATS.indexOf(_fix) >= 0) { add(_fix, sup0, tot0); return out; }
   if (c0 === '통관비용') { add('통관비용', sup0, tot0); return out; }   // 통관 견적은 통째로 통관비용
   if (!its.length) { add(QCATS.indexOf(c0) >= 0 ? c0 : '세라믹', sup0, tot0); return out; }
+  /* ★ 2026-11-27 사용자: "통관비용이랑 세라믹은 같이 묶지 말고"
+     통관비용 품목이 하나라도 든 견적은 수입 통관 건이다 — 같이 적힌 물건값·이송비까지 통째로 «통관비용»으로 센다. */
+  if (its.some(it => itemCategory(it.name) === '통관비용')) { add('통관비용', sup0, tot0); return out; }
   let sumAll = 0; its.forEach(it => sumAll += Math.round(+it.amt || 0));
   its.forEach(it => { const amt = Math.round(+it.amt || 0); add(itemCategory(it.name), amt, sumAll ? Math.round(tot0 * (amt / sumAll)) : 0); });
   /* 나눠 담다 생긴 1~2원 오차는 금액이 가장 큰 분류에 얹어서 «분류별 합 = 견적 합계» 를 맞춘다 */
@@ -13496,7 +13504,7 @@ function quoteCardHtml(q) {
      단, 부대비용«만» 있는 견적(시공만 있는 건 등)은 그대로 보여준다 — 안 그러면 배지가 하나도 없다. */
   const _catAll = quoteCatSet(q);
   const _catMain = _catAll.filter(c => QCAT_MATERIAL.indexOf(c) >= 0);
-  const catBadge = (_catMain.length ? _catMain : _catAll).map(c => `<span class="pill" style="background:#fff;color:${QCAT_COL[c]};border:1px solid ${QCAT_COL[c]};font-weight:700"><i class="ti ti-${QCAT_ICON[c] || 'tag'}"></i> ${esc(c)}</span>`).join('');
+  const catBadge = (_catMain.length ? _catMain : _catAll).map(c => `<button class="pill" style="background:#fff;color:${QCAT_COL[c]};border:1px solid ${QCAT_COL[c]};font-weight:700;cursor:pointer" onclick="event.stopPropagation();openQuoteCatFix('${q.id}')" title="눌러서 분류 바꾸기"><i class="ti ti-${QCAT_ICON[c] || 'tag'}"></i> ${esc(c)}${q.catFix ? ' <i class="ti ti-pencil" style="font-size:10px"></i>' : ''}</button>`).join('');
   const _dep = quoteDeposit(q);
   const depBadge = _dep ? `<span class="pill" style="background:#eaf2ff;color:#1a56b8;border:1px solid #cfe0ff" title="잔금 ${fmtWon(_dep.rest)}원"><i class="ti ti-percentage"></i> 계약금 ${_pctTxt(_dep.pct)}% · ${fmtWon(_dep.amt)}</span>` : '';
   /* ★ 잔금 견적서 / 대체된 원본 */
@@ -17604,6 +17612,27 @@ function quoteSetView(v) { filters.quoteView = v; renderQuote(); }   // 버튼 �
 /* ★ 2026-11-27 사용자: "견적서 필터 중에 세라믹이랑 세면대 같이 선택해서 보는 등 이중 필터 적용 가능하게"
    filters.qCat = 'all' 또는 '세라믹,세면대' 처럼 쉼표로 여러 개. 칩을 누르면 넣었다 뺐다(토글), «전체»는 모두 해제.
    고른 분류 중 «하나라도» 든 견적이 나온다 (세라믹 + 세면대 → 세라믹 견적 · 세면대 견적 · 둘 다 든 견적). */
+/* ── 견적 분류 바꾸기 (catFix) ── */
+function openQuoteCatFix(id) {
+  const q = (state.quotes || []).find(x => x.id === id); if (!q) { toast('견적을 찾을 수 없습니다'); return; }
+  const cur = String(q.catFix || '');
+  const auto = (() => { const o = Object.assign({}, q); delete o.catFix; return quoteCatSet(o); })();
+  const opt = (v, lab, sub, col, ic) => `<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid ${cur === v ? (col || 'var(--gd)') : 'var(--bd2)'};border-radius:11px;margin-bottom:7px;cursor:pointer;background:${cur === v ? '#f2fbf6' : '#fff'}">
+      <input type="radio" name="qcf" value="${esc(v)}" ${cur === v ? 'checked' : ''} style="width:17px;height:17px">
+      <span style="flex:1"><b style="color:${col || 'var(--t1)'}">${ic ? `<i class="ti ti-${ic}"></i> ` : ''}${esc(lab)}</b>${sub ? `<span style="display:block;font-size:11.5px;color:var(--t3);margin-top:1px">${sub}</span>` : ''}</span></label>`;
+  openModal(`<div class="sheet-h"><h3><i class="ti ti-tags"></i>분류 바꾸기</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div style="font-size:12.5px;color:var(--t2);margin-bottom:10px"><b>${esc(q.client || '')}</b> · ${esc(q.docNo || '')} · ${fmtWon(q.total)}원</div>
+    <div class="banner info" style="margin-bottom:10px;font-size:12px"><i class="ti ti-info-circle"></i><span style="flex:1">견적서 양식·품목·금액은 <b>그대로</b>입니다. 목록 필터·분류별 매출에서만 이 분류로 셉니다.</span></div>
+    ${opt('', '자동 (품목 기준)', '지금 품목으로 보면: ' + esc(auto.join(' · ') || '-'), '', 'wand')}
+    ${LCATS.map(c => opt(c, c, '이 견적 금액을 통째로 «' + c + '»로', QCAT_COL[c], QCAT_ICON[c] || 'tag')).join('')}
+    <div class="frm-foot"><button class="btn" style="flex:1" onclick="closeModal()">취소</button><button class="btn btn-pri" style="flex:2" onclick="saveQuoteCatFix('${id}')"><i class="ti ti-check"></i>저장</button></div>`);
+}
+async function saveQuoteCatFix(id) {
+  const r = document.querySelector('input[name="qcf"]:checked'); const v = r ? r.value : '';
+  if (v && LCATS.indexOf(v) < 0) return;
+  try { await Store.update('quotes', id, { catFix: v }); closeModal(); toast(v ? '분류를 «' + v + '»로 바꿨습니다' : '분류를 품목 기준(자동)으로 되돌렸습니다'); }
+  catch (e) { toast('저장 실패'); }
+}
 function quoteCatSel() { const v = String(filters.qCat || 'all'); return v === 'all' ? [] : v.split(',').filter(c => LCATS.indexOf(c) >= 0); }
 function quoteSetCat(v) {
   if (v === 'all') filters.qCat = 'all';
