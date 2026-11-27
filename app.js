@@ -1051,6 +1051,8 @@ function go(t) {
   if (isRestrictedRole()) t = 'stock';   // 고객·시공팀은 전용 화면만
   else if (!tabAllowed(t)) t = 'home';   // 접근 권한 없는 메뉴 차단
   filters.costEdit = '';   // 원가 입력 폼은 메뉴 이동 시 항상 닫기
+  /* ★ 2026-11-27 사용자: "묶음 청구 할 때 다른 페이지 들어갔다가 나오면 알아서 풀리게" */
+  if (t !== 'quote' && filters.quoteBundle) { filters.quoteBundle = false; try { _qSel.clear(); } catch (e) { } _qSelClient = ''; }
   if (t !== 'quote') { filters.quoteEdit = ''; filters.quoteSettings = false; filters.taxEdit = ''; filters.cutSim = false; filters.bankList = false; filters.billEdit = false; _billEdit = null; }   // 견적 화면 상태 초기화
   if (t !== 'clients') { filters.clientDetail = ''; filters.ledger = false; filters.ledgerClient = ''; filters.ledgerFix = false; }   // 거래처 원장은 거래처 탭 것
   if (t !== 'settle') { filters.purSearch = ''; filters.purAll = false; }   // 매입 검색은 정산 화면을 떠나면 초기화
@@ -17278,10 +17280,11 @@ function _quoteListInner() {
        세라믹과 세면대가 같이 든 견적은 두 칩 어디를 눌러도 나온다 — 빠지는 게 없다.
        그래서 칩의 건수를 다 더하면 전체 건수보다 조금 많을 수 있다(섞인 견적이 두 번 세어져서). */
   const fCat = filters.qCat || 'all';
+  const _catSel = quoteCatSel();                    // ★ 2026-11-27 분류 여러 개 같이 고르기 (예: 세라믹 + 세면대)
   const cCat = {}; LCATS.forEach(c => cCat[c] = 0);
   _bStat.forEach(q => quoteCatSet(q).forEach(c => { if (cCat[c] != null) cCat[c]++; }));
   const _preCatList = list.slice();   // ★ 분류 카드는 «분류를 고르기 전» 목록으로 만든다 (골라도 다른 분류가 안 사라지게)
-  if (fCat !== 'all') list = list.filter(q => quoteCatSet(q).indexOf(fCat) >= 0);
+  if (_catSel.length) list = list.filter(q => quoteCatSet(q).some(c => _catSel.indexOf(c) >= 0));   // 고른 분류 중 하나라도 든 견적
   _qShownIds = list.map(q => q.id);   // 지금 화면(검색·필터 반영)에 뜬 견적 — 묶음청구 [전체 선택] 이 이걸 쓴다
   /* ★ 월별·일별 보기에서는 아래에서 그 기간 것만으로 다시 좁힌다 (안 그러면 화면에 없는 견적까지 선택된다) */
   // 검색 결과 요약 — 몇 건인지, 합계가 얼마인지 바로 보이게
@@ -17296,7 +17299,7 @@ function _quoteListInner() {
       <span style="margin-left:auto;text-align:right"><b style="font-size:15px;color:var(--gd)">${fmtWon(sum)}</b><span style="font-size:11.5px;color:var(--t2)">원</span>${rem > 0 ? `<span style="font-size:11.5px;color:var(--red-t);font-weight:700;margin-left:8px">미수 ${fmtWon(rem)}원</span>` : ''}</span>
     </div>` ;
   })() : '';
-  const chipK = (v, label, cnt) => `<button class="chip ${fCat === v ? 'active' : ''}" onclick="quoteSetCat('${v}')">${label}${cnt != null ? ` <b style="color:${cnt > 0 ? 'var(--gd)' : 'var(--t3)'}">${cnt}</b>` : ''}</button>`;
+  const chipK = (v, label, cnt) => `<button class="chip ${(v === 'all' ? !_catSel.length : _catSel.indexOf(v) >= 0) ? 'active' : ''}" onclick="quoteSetCat('${v}')"${v === 'all' ? '' : ' title="여러 개 같이 고를 수 있습니다"'}>${label}${cnt != null ? ` <b style="color:${cnt > 0 ? 'var(--gd)' : 'var(--t3)'}">${cnt}</b>` : ''}</button>`;
   const chipC = (v, label, cnt, col) => `<button class="chip ${fConf === v ? 'active' : ''}" onclick="quoteSetConf('${v}')">${label}${cnt != null ? ` <b style="color:${cnt > 0 ? (col || 'var(--t2)') : 'var(--t3)'}">${cnt}</b>` : ''}</button>`;
   const chipS = (v, label, cnt, col) => `<button class="chip ${fStat === v ? 'active' : ''}" onclick="quoteSetStat('${v}')">${label}${cnt != null ? ` <b style="color:${cnt > 0 ? (col || 'var(--red-t)') : 'var(--t3)'}">${cnt}</b>` : ''}</button>`;
   const _lbl = { all: '', conf: '확정', pending: '미확정' }[fConf] + (fConf !== 'all' && fStat !== 'all' ? ' · ' : '') +
@@ -17353,7 +17356,7 @@ function _quoteListInner() {
       <button class="btn btn-sm" style="margin-left:auto;padding:3px 9px;font-size:11.5px" onclick="openCatMonth()"><i class="ti ti-calendar-stats"></i> 월별로 보기</button>
     </div>
     ${_catShow.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:7px">
-      ${_catShow.map(c => `<button class="tap" style="padding:8px 7px;background:${fCat === c ? '#eefaf5' : 'var(--soft)'};border:1.5px solid ${fCat === c ? QCAT_COL[c] : 'transparent'};border-radius:10px;text-align:center;cursor:pointer;width:100%" onclick="quoteSetCat('${fCat === c ? 'all' : c}')" title="눌러서 이 분류만 보기">
+      ${_catShow.map(c => `<button class="tap" style="padding:8px 7px;background:${_catSel.indexOf(c) >= 0 ? '#eefaf5' : 'var(--soft)'};border:1.5px solid ${_catSel.indexOf(c) >= 0 ? QCAT_COL[c] : 'transparent'};border-radius:10px;text-align:center;cursor:pointer;width:100%" onclick="quoteSetCat('${c}')" title="눌러서 이 분류 보기 (여러 개 같이 고를 수 있음)">
         <div style="font-size:11px;color:var(--t2);margin-bottom:2px"><i class="ti ti-${QCAT_ICON[c] || 'tag'}"></i> ${esc(c)}</div>
         <div style="font-size:16px;font-weight:800;color:${QCAT_COL[c]}">${fmtWon(catAmt[c].sup)}</div>
         <div style="font-size:10px;color:var(--t3);margin-top:1px">VAT포함 ${fmtWon(catAmt[c].tot)} · ${catAmt[c].n}건</div>
@@ -17598,7 +17601,15 @@ function catMonthXls() {
   XLSX.writeFile(wb, '분류별매출_월별_' + yr + '.xlsx');
 }
 function quoteSetView(v) { filters.quoteView = v; renderQuote(); }   // 버튼 자체가 위쪽 카드에 있어 전체를 다시 그린다
-function quoteSetCat(v) { filters.qCat = v; quotesFilter(); }
+/* ★ 2026-11-27 사용자: "견적서 필터 중에 세라믹이랑 세면대 같이 선택해서 보는 등 이중 필터 적용 가능하게"
+   filters.qCat = 'all' 또는 '세라믹,세면대' 처럼 쉼표로 여러 개. 칩을 누르면 넣었다 뺐다(토글), «전체»는 모두 해제.
+   고른 분류 중 «하나라도» 든 견적이 나온다 (세라믹 + 세면대 → 세라믹 견적 · 세면대 견적 · 둘 다 든 견적). */
+function quoteCatSel() { const v = String(filters.qCat || 'all'); return v === 'all' ? [] : v.split(',').filter(c => LCATS.indexOf(c) >= 0); }
+function quoteSetCat(v) {
+  if (v === 'all') filters.qCat = 'all';
+  else { const s = quoteCatSel(); const i = s.indexOf(v); if (i >= 0) s.splice(i, 1); else s.push(v); filters.qCat = s.length ? LCATS.filter(c => s.indexOf(c) >= 0).join(',') : 'all'; }
+  quotesFilter();
+}
 function quoteSetConf(v) { filters.qConf = v; quotesFilter(); }
 function quoteSetStat(v) { filters.qStat = v; quotesFilter(); }
 function quoteClearFilter() { filters.qConf = 'all'; filters.qStat = 'all'; filters.qCat = 'all'; filters.qBy = 'all'; quotesFilter(); }
