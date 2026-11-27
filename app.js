@@ -6718,7 +6718,7 @@ function qEditReturn() {
 function openQuoteInline(id, copy) {
   qEditRemember();
   qScreenClear();                                   // ★ 다른 화면 스위치를 반드시 끈다
-  filters.quoteEdit = id || 'new'; filters.quoteCopy = !!copy; filters.quoteCat = '';
+  filters.quoteEdit = id || 'new'; filters.quoteCopy = !!copy; filters.quoteCat = ''; filters.qNormalCustoms = false;
   renderQuote(); if (el('pg-quote')) el('pg-quote').scrollIntoView({ block: 'start' });
 }
 /* 앱이 찾아 둔 «안 붙은 돈»을 과입금 칸에 넣는다 (넣고 나서 고쳐도 된다) */
@@ -7029,7 +7029,11 @@ function renderQuoteForm() {
   const rows = (matItems.length ? matItems : [{}]).map(qRowHtml).join('');
   const editing0 = q && !copy;
   const _formCat = filters.quoteCat || (editing0 ? quoteFormCat(v) : '') || '세라믹';
-  if (_formCat === '통관비용') { renderCustomsForm(q, copy); return; }
+  /* ★ 2026-11-27 사용자: "견적서 안에서 세라믹으로 되어 있는 것 통관비용으로 분류 바꿨을 때 단가 그대로 나오게"
+     «통관비 예상 견적»(전용 폼 · customs 칸이 있는 견적)과, 일반 견적서 양식 그대로 «분류만 통관비용»인 견적을 나눈다.
+     일반 폼에서 품목을 넣은 채 통관비용을 고르면 폼을 갈아끼우지 않는다 → 품목·단가가 그대로 남는다. */
+  const _cxLayout = !(filters.qNormalCustoms || (q && !q.customs && (q.items || []).length));   // 복사해서 새로 쓸 때도 원본 양식을 따른다
+  if (_formCat === '통관비용' && _cxLayout) { renderCustomsForm(q, copy); return; }
   const matOpts = quotePriceItems().map(i => `<option value="${esc(i.name)}">`).join('');   // 재고 + 단가표 통합
   const editing = q && !copy;
   el('pg-quote').innerHTML = `
@@ -13278,8 +13282,15 @@ function renderQuoteSettings() {
      '통관비용' 만 아예 다른 폼이라 그때만 다시 그리고, 거래처는 이어서 넣어준다. */
 function quoteCatChanged(v) {
   const nowCustoms = !!el('cx-rows');            // 지금 화면이 통관 폼인가
-  const wantCustoms = (v === '통관비용');
+  let wantCustoms = (v === '통관비용');
   filters.quoteCat = v;
+  /* ★ 일반 폼에 품목이 이미 들어 있으면 «분류만» 통관비용으로 — 양식·품목·단가는 그대로 둔다 */
+  if (wantCustoms && !nowCustoms && (filters.qNormalCustoms || collectQItems().length)) {
+    filters.qNormalCustoms = true;
+    toast('분류만 통관비용으로 바꿨습니다 — 품목·단가는 그대로입니다');
+    return;
+  }
+  if (!wantCustoms) filters.qNormalCustoms = false;
   if (nowCustoms === wantCustoms) return;        // 폼 모양이 같으면 그대로 둔다 (입력값 보존)
   const keep = ((el(nowCustoms ? 'cx-client' : 'q-client') || {}).value || '').trim();
   renderQuoteForm();
@@ -17649,7 +17660,7 @@ function quoteShowConfUnpaid() {
   const w = el('q-listwrap'); if (w) { try { w.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) { w.scrollIntoView(); } }
 }
 function quoteDocHtml(q) {
-  if (q.category === '통관비용') return customsDocHtml(q);
+  if (q.category === '통관비용' && q.customs) return customsDocHtml(q);   // ★ 일반 양식으로 쓴 «분류만 통관비용» 견적은 일반 견적서 그대로
   const e = s => esc(s == null ? '' : String(s));
   const _staff = (state.members || []).find(m => _normName(m.name) === _normName(q.by || '')); const _staffPhone = (_staff && _staff.phone) || '';
   const _salesCl = (state.clients || []).find(x => _normName(x.value) === _normName(q.client || ''));
