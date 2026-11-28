@@ -484,10 +484,18 @@ function init() {
       document.body.classList.remove('cust-mode');
       el('app').style.display = 'none';
       el('login').style.display = 'flex';
-      const e = el('login-err'); if (e) { e.style.color = ''; e.textContent = ''; }
+      const e = el('login-err'); if (e) { e.style.color = ''; e.textContent = _loginNote || ''; } _loginNote = '';
       prefillEmail();
     }
   });
+}
+/* ★ 2026-11-28 — 직원 목록·역할표에 없는 계정: 로그인 화면으로 돌려보내고 이유를 적어 준다 */
+let _loginNote = '';
+async function unregisteredBlock() {
+  _loginNote = '등록되지 않은 계정입니다 — 관리자에게 «직원 추가»(같은 이메일) 등록을 요청하세요.';
+  try { el('app').style.display = 'none'; el('login').style.display = 'flex'; } catch (e) { }
+  const _er = el('login-err'); if (_er) { _er.style.color = ''; _er.textContent = _loginNote; }
+  try { await auth.signOut(); } catch (e) { }
 }
 /* 로그인 성공 후: 직원 디렉터리에서 본인(이메일) 찾기 → 앱 진입 */
 async function afterAuth(user) {
@@ -511,6 +519,8 @@ async function afterAuth(user) {
         go('stock');
         return;
       }
+      /* ★ 2026-11-28 — 역할표에 직원·관리자로 없는 계정은 들어오지 못한다 (보안규칙과 같은 기준) */
+      if (_r !== 'staff' && _r !== 'admin') { await unregisteredBlock(); return; }
     } catch (e) { /* 역할 문서 읽기 실패 → 일반(직원) 흐름으로 진행 */ }
   }
   startSubscriptions();          // 직원/관리자: 전체 컬렉션 구독
@@ -518,12 +528,10 @@ async function afterAuth(user) {
   await whenMembersReady();       // 직원 목록 첫 로딩 대기
   let member = findMemberByEmail(user.email);
   if (!member) {
-    // 이메일이 연결된 직원이 한 명도 없으면, 첫 로그인자를 관리자로 부트스트랩
-    const anyLinked = state.members.some(m => m.email);
-    const role = anyLinked ? 'staff' : 'admin';
-    const name = (user.email || '사용자').split('@')[0];
-    member = { name, email: (user.email || '').toLowerCase(), role };
-    await Store.add('members', member);
+    /* ★★ 2026-11-28 보안 점검 — 예전엔 직원 목록에 없는 계정이 로그인하면 «직원»으로 자동 등록했다.
+       (관리자가 Firebase 계정만 만들고 «직원 추가»를 빠뜨리면 그 사람이 전체 자료를 봤다)
+       이제는 막는다 — 관리자가 설정 › 직원 추가에서 같은 이메일로 등록해야 들어올 수 있다. */
+    await unregisteredBlock(); return;
   }
   me = member;
   el('login').style.display = 'none';
@@ -1776,7 +1784,7 @@ function scheduleCustPriceSync() {
   _cpTimer = setTimeout(runCustPriceSync, 1200);
 }
 async function runCustPriceSync() {
-  if (!me || isCustomerRole() || !CLOUD) return;
+  if (!me || isCustomerRole() || !CLOUD || !isAdmin()) return;   // ★ 고객 단가 미리 적기는 관리자만 (보안규칙상 다른 사람 역할표는 관리자만 고칠 수 있다)
   if (_cpBusy) { scheduleCustPriceSync(); return; }
   if (!_loadedColls.priceList || !_loadedColls.members) { scheduleCustPriceSync(); return; }
   _cpBusy = true;
