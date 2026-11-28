@@ -6557,6 +6557,8 @@ function _pctTxt(p) { const n = Math.round((+p || 0) * 10) / 10; return String(n
    견적서 할인은 «부가세 포함 합계»에서 빼는 금액이다 (합계 = 공급가 + 부가세 − 할인).
    매출(공급가)에서는 ÷1.1 한 만큼만 빠진다 — 세금계산서 발행 때 쓰는 기준과 같다.
    금액은 견적서에 적은 값을 그대로 읽는다 (원가 화면에서 고치지 않는다). */
+/* ★ 할인 사유 (2026-11-28) — 할인이 들어간 견적들의 사유를 겹치지 않게 « · » 로 잇는다 */
+function quoteDcNotes(qs) { const seen = []; (qs || []).forEach(q => { const n = String((q && q.discountNote) || '').trim(); if (n && (+q.discount || 0) > 0 && seen.indexOf(n) < 0) seen.push(n); }); return seen.join(' · '); }
 function quoteDcRaw(q) { return Math.max(0, Math.round(+((q && q.discount) || 0)) || 0) + Math.max(0, Math.round(+((q && q.billDc) || 0)) || 0); }   // ★ 청구서 총액 D/C 포함 (2026-11-05)
 function quoteDcSupply(q) { const d = quoteDcRaw(q); return d > 0 ? Math.round(d / 1.1) : 0; }
 /* 할인까지 반영한 «진짜 매출(공급가)» */
@@ -7123,6 +7125,7 @@ function renderQuoteForm() {
               <button type="button" class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:11.5px" onclick="quoteTruncate(1000000)">백만원</button>
               <button type="button" class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:11.5px;color:#c0341d" onclick="quoteDcClear()">해제</button>
             </div>
+            <input id="q-dcnote" lang="ko" maxlength="60" value="${esc(editing ? (v.discountNote || '') : '')}" placeholder="할인 사유 (예: 타일 환불 · 현장 협의 할인)" style="width:100%;box-sizing:border-box;margin-top:7px;font-size:13px;padding:7px 9px;border:1.5px solid #e8a99f;border-radius:8px;background:#fff">
             <div id="q-dcbox" style="display:none;background:#fff;border:1.5px solid #f0c8c2;border-radius:9px;padding:8px 11px;margin-top:7px">
               <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;color:#c0341d;font-weight:700">할인 적용</span><b id="q-dcshow" style="font-size:15px;color:#c0341d">0</b></div>
               <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-top:4px;border-top:1px dashed #f0c8c2"><span style="font-size:12px;color:var(--t2)">할인 전 합계</span><b id="q-dcraw" style="font-size:13.5px;color:var(--t2)">0원</b></div>
@@ -7440,7 +7443,8 @@ async function submitQuote(id, kind) {
     const q = id ? (state.quotes || []).find(x => x.id === id) : null;
     const docNo = (q && q.docNo) || quoteNextDocNo();
     const useSalesRep = !!(el('q-userep') && el('q-userep').checked);
-    const data = { docNo, client, ctype, category, date, valid, attn, siteAddr, items, supply, vat, discount, total, depositPct, depositAmt, memo, qKind: (kind === 'fix' ? 'fix' : 'pre'), useSalesRep, by: (el('q-staff') && el('q-staff').value.trim()) || (me && me.name) || '', createdAt: (q && q.createdAt) || Date.now(), updatedAt: Date.now() };
+    const discountNote = (el('q-dcnote') && el('q-dcnote').value || '').trim();   // ★ 할인 사유 (2026-11-28) — 원가 화면의 «할인 사유»와 같은 칸
+    const data = { docNo, client, ctype, category, date, valid, attn, siteAddr, items, supply, vat, discount, discountNote, total, depositPct, depositAmt, memo, qKind: (kind === 'fix' ? 'fix' : 'pre'), useSalesRep, by: (el('q-staff') && el('q-staff').value.trim()) || (me && me.name) || '', createdAt: (q && q.createdAt) || Date.now(), updatedAt: Date.now() };
     // 홀딩에서 가져온 견적이면 그 홀딩 id 를 남긴다 → 출고로 돌릴 때 홀딩이 자동으로 풀린다
     data.fromHoldIds = (_qFromHolds || []).filter(hid => (state.holdings || []).some(h => h.id === hid));
     /* ★ 잔금 견적서로 만드는 중이면 — 기받은 계약금을 싣고, 원본을 «대체됨»으로 */
@@ -13615,7 +13619,7 @@ function openQuoteView(id) {
     <div style="border:1.5px solid var(--bd2);border-radius:11px;padding:10px 13px;margin-bottom:12px">
       ${sumRow('공급가액', fmtWon(q.supply) + '원')}
       ${sumRow('부가세', fmtWon(q.vat) + '원')}
-      ${(+q.discount || 0) ? sumRow('할인', '-' + fmtWon(q.discount) + '원') : ''}
+      ${(+q.discount || 0) ? sumRow('할인' + (String(q.discountNote || '').trim() ? ' <span style="font-size:11px;color:#c0341d;font-weight:500">(' + esc(String(q.discountNote).trim()) + ')</span>' : ''), '-' + fmtWon(q.discount) + '원') : ''}
       ${sumRow('합계', fmtWon(_tt) + '원', true)}
       ${(() => { const d = quoteDeposit(q); return d ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;margin-top:4px;border-top:1px dashed var(--bd2)"><span style="font-size:12px;color:#1a56b8;font-weight:700">계약금 ${_pctTxt(d.pct)}%</span><span style="font-size:14px;font-weight:800;color:#1a56b8">${fmtWon(d.amt)}원</span></div>
       <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:12px;color:var(--t2);font-weight:500">잔금</span><span style="font-size:13px;font-weight:700">${fmtWon(d.rest)}원</span></div>` : ''; })()}
@@ -17718,6 +17722,7 @@ function quoteDocHtml(q) {
 .sum .dc td{background:#fcf3f1;border-bottom:1px solid #f0dcd6}
 .sum .dc .k{color:#a8341f;font-weight:700;box-shadow:inset 3px 0 0 #c0341d}
 .sum .dc .v{color:#c0341d;font-weight:800;font-size:13.5px}
+.sum .dc .dcn{display:block;font-size:10.5px;font-weight:500;color:#a8341f;margin-top:2px}
 .sum .tot .was{display:block;font-size:10px;font-weight:500;color:#a89268;letter-spacing:.4px;margin-bottom:3px}
 .sum .tot .was s{color:#c3ac82}
 .notice{margin-top:15px;border:1px solid #cbb089;border-radius:2px;overflow:hidden}
@@ -17745,7 +17750,7 @@ function quoteDocHtml(q) {
     <table class="sum">
       <tr><td class="k">공급가액</td><td class="v">${fmtWon(q.supply)} 원</td></tr>
       <tr><td class="k">부가세 (10%)</td><td class="v">${fmtWon(q.vat)} 원</td></tr>
-      ${(+q.discount || 0) > 0 ? `<tr class="dc"><td class="k">할인 (D/C)</td><td class="v">- ${fmtWon(q.discount)} 원</td></tr>` : ''}
+      ${(+q.discount || 0) > 0 ? `<tr class="dc"><td class="k">할인 (D/C)${String(q.discountNote || '').trim() ? `<span class="dcn">${esc(String(q.discountNote).trim())}</span>` : ''}</td><td class="v">- ${fmtWon(q.discount)} 원</td></tr>` : ''}
       <tr class="tot"><td>합계금액</td><td style="text-align:right">${(+q.discount || 0) > 0 ? `<span class="was">할인 전 <s>${fmtWon((+q.supply || 0) + (+q.vat || 0))} 원</s></span>` : ''}${fmtWon(q.total)} 원</td></tr>
       ${(() => { const d = quoteDeposit(q); return d ? `<tr class="dep"><td class="k">계약금 (${_pctTxt(d.pct)}%)</td><td class="v">${fmtWon(d.amt)} 원</td></tr>
       <tr><td class="k">잔금</td><td class="v">${fmtWon(d.rest)} 원</td></tr>` : ''; })()}
@@ -18361,7 +18366,7 @@ function billXlsxSheet() {
        (빈칸처럼 보여도 글자 칸이면 더하기가 안 된다) */
     st[8] = _d > 0 ? N(-_d, S.stR) : N(0, S.stN);
     st[9] = F('G' + sn + '+H' + sn + '+I' + sn, _sup + _tax - _d, S.stN);
-    st[10] = T(_d > 0 ? ('견적 할인 -' + fmtWon(_d)) : '', S.stL);
+    st[10] = T(_d > 0 ? ('견적 할인 -' + fmtWon(_d) + (String(q.discountNote || '').trim() ? (' (' + String(q.discountNote).trim() + ')') : '')) : '', S.stL);
     rows.push(st); mrg(rows.length - 1, 1, 5); rowH[rows.length - 1] = { hpt: 21 };
     subG.push('G' + sn); subH.push('H' + sn); subI.push('I' + sn);
     rows.push([]);
@@ -18512,6 +18517,7 @@ function combinedBillDocHtml(qs, picked, extraDc) {
 .sum .dc td{background:#fcf3f1;border-bottom:1px solid #f0dcd6}
 .sum .dc .k{color:#a8341f;font-weight:700;box-shadow:inset 3px 0 0 #c0341d}
 .sum .dc .v{color:#c0341d;font-weight:800;font-size:13.5px}
+.sum .dc .dcn{display:block;font-size:10.5px;font-weight:500;color:#a8341f;margin-top:2px}
 .sum .tot .was{display:block;font-size:10px;font-weight:500;color:#a89268;letter-spacing:.4px;margin-bottom:3px}
 .sum .tot .was s{color:#c3ac82}
 .notice{margin-top:15px;border:1px solid #cbb089;border-radius:2px;overflow:hidden}
@@ -18537,7 +18543,7 @@ function combinedBillDocHtml(qs, picked, extraDc) {
     <table class="sum">
       <tr><td class="k">공급가액 합계</td><td class="v">${fmtWon(supply)} 원</td></tr>
       <tr><td class="k">부가세 (10%)</td><td class="v">${fmtWon(vat)} 원</td></tr>
-      ${disc > 0 ? `<tr class="dc"><td class="k">할인 (D/C)</td><td class="v">- ${fmtWon(disc)} 원</td></tr>` : ''}
+      ${disc > 0 ? `<tr class="dc"><td class="k">할인 (D/C)${quoteDcNotes(qs) ? `<span class="dcn">${e(quoteDcNotes(qs))}</span>` : ''}</td><td class="v">- ${fmtWon(disc)} 원</td></tr>` : ''}
       ${_xdc > 0 ? `<tr class="dc"><td class="k">${disc > 0 ? '총액 할인 (D/C)' : '할인 (D/C)'}</td><td class="v">- ${fmtWon(_xdc)} 원</td></tr>` : ''}
       <tr class="tot"><td>청구 합계</td><td style="text-align:right">${(disc + _xdc) > 0 ? `<span class="was">할인 전 <s>${fmtWon(supply + vat)} 원</s></span>` : ''}${fmtWon(total - _xdc)} 원</td></tr>
     </table>
@@ -18670,7 +18676,7 @@ function _quoteSheetXml(q) {
   let rr = 11 + items.length;
   span(rr, 0, 4, 10, '공급가액', 's'); put(rr, 5, 11, Math.round(+q.supply || 0), 'n'); rr++;
   span(rr, 0, 4, 10, '부가세 (10%)', 's'); put(rr, 5, 11, Math.round(+q.vat || 0), 'n'); rr++;
-  if ((+q.discount || 0) > 0) { span(rr, 0, 4, 10, '할인 (D/C)', 's'); put(rr, 5, 11, -Math.round(+q.discount || 0), 'n'); rr++; }
+  if ((+q.discount || 0) > 0) { span(rr, 0, 4, 10, '할인 (D/C)' + (String(q.discountNote || '').trim() ? (' · ' + String(q.discountNote).trim()) : ''), 's'); put(rr, 5, 11, -Math.round(+q.discount || 0), 'n'); rr++; }
   span(rr, 0, 4, 12, '합계금액', 's'); put(rr, 5, 13, Math.round(+q.total || 0), 'n'); rowH[rr] = 26; rr++;
   { const d = quoteDeposit(q); if (d) { span(rr, 0, 4, 10, '계약금 (' + _pctTxt(d.pct) + '%)', 's'); put(rr, 5, 11, d.amt, 'n'); rr++; span(rr, 0, 4, 10, '잔금', 's'); put(rr, 5, 11, d.rest, 'n'); rr++; } }
   { const b = quoteBalanceDue(q); if (b) { span(rr, 0, 4, 10, quotePrepaidLabel(q) + (b.from ? ' (' + b.from + ')' : ''), 's'); put(rr, 5, 11, -b.pre, 'n'); rr++; span(rr, 0, 4, 12, quoteDueLabel(q), 's'); put(rr, 5, 13, b.due, 'n'); rowH[rr] = 26; rr++; } }
